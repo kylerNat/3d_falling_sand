@@ -1,0 +1,9 @@
+magic handles that have n-buttons
+wire buttons to crystals to design wands
+magic juice flows from button through wires when you activate them
+magic juice contains information about projectiles, when it reaches an exit it fires the projectile
+crystals:
+    material crystals, imbues projectile with material
+    kinetic crystal, causes your wand to move when activated, useful for creating melee attacks
+    logic crsyal
+    containment crystal, allows you to put projectiles inside projectiles (ie create trigger projectiles)
