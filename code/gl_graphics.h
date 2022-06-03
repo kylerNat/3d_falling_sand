@@ -58,8 +58,8 @@ void APIENTRY gl_error_callback(GLenum source, GLenum type, GLuint id, GLenum se
     switch(severity)
     {
         case DEBUG_SEVERITY_HIGH:
-            // assert(0, "HIGH: ", message);
-            log_warning("HIGH: ");
+            assert(0, "HIGH: ", message);
+            // log_warning("HIGH: ");
             break;
         case DEBUG_SEVERITY_MEDIUM:
             log_warning("MEDIUM: ");
@@ -178,7 +178,7 @@ GLuint init_program(memory_manager* manager, size_t n_shaders, shader_source* so
     return program;
 }
 
-#define DEFAULT_HEADER "#version 440\n#define pi 3.14159265358979323846264338327950\n"
+#define DEFAULT_HEADER "#version 460\n#define pi 3.14159265358979323846264338327950\n"
 #define SHADER_SOURCE(source) #source
 
 struct attribute_value
@@ -226,6 +226,14 @@ GLuint blob_bottom_texture;
 
 GLuint frame_buffer;
 
+GLuint chunk_lookup_texture;
+
+#define active_regions_width 16
+#define active_regions_size (2*chunk_size/active_regions_width)
+
+GLuint active_regions_textures[2];
+int current_active_regions_texture = 0;
+
 #define N_MAX_PARTICLES 4096
 GLuint particles_x_texture;
 GLuint particles_x_dot_texture;
@@ -245,17 +253,37 @@ void gl_init_general_buffers(memory_manager* manager)
         glBufferData(GL_ARRAY_BUFFER, GENERAL_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
     }
 
+    glGenTextures(len(active_regions_textures), active_regions_textures);
+    for(int i = 0; i < len(active_regions_textures); i++)
+    {
+        glBindTexture(GL_TEXTURE_3D, active_regions_textures[i]);
+        glTexStorage3D(GL_TEXTURE_3D, 1, GL_R8UI, active_regions_size, active_regions_size, active_regions_size);
+        uint clear = 0x1;
+        glClearTexImage(active_regions_textures[i], 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, &clear);
+    }
+
     // glGenTextures(1, &round_line_texture);
     // glActiveTexture(GL_TEXTURE0);
     // glBindTexture(GL_TEXTURE_2D, round_line_texture);
     // glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, 2, N_MAX_LINE_POINTS);
 
-    glGenTextures(N_MAX_MATERIALS_TEXTURES, materials_textures);
-    for(int i = 0; i < N_MAX_MATERIALS_TEXTURES; i++)
+    glGenTextures(len(materials_textures), materials_textures);
+    for(int i = 0; i < len(materials_textures); i++)
     {
         glBindTexture(GL_TEXTURE_3D, materials_textures[i]);
-        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGB16I, chunk_size, chunk_size, chunk_size);
+        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGB16UI, materials_textures_size, materials_textures_size, chunk_size);
     }
+
+    glGenTextures(len(body_materials_textures), body_materials_textures);
+    for(int i = 0; i < len(body_materials_textures); i++)
+    {
+        glBindTexture(GL_TEXTURE_3D, body_materials_textures[i]);
+        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGB16I, 256, 256, 256);
+    }
+
+    glGenTextures(1, &chunk_lookup_texture);
+    glBindTexture(GL_TEXTURE_3D, chunk_lookup_texture);
+    glTexStorage3D(GL_TEXTURE_3D, 1, GL_RG8I, 2,2,2);
 
     glGenFramebuffers(1, &frame_buffer);
     // glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
@@ -517,19 +545,22 @@ void render_voxels(GLuint materials_texture, real_3x3 camera_axes, real_3 camera
     glUniform3fv(uniform_i++, 1, (GLfloat*) &camera_pos);
 
     glUniform1i(uniform_i++, texture_i++);
-    glActiveTexture(GL_TEXTURE0 + 0);
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_3D, materials_texture);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    // glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i++);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_3D, chunk_lookup_texture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
 
     glUniform3iv(uniform_i++, 1, (GLint*) &size);
 
@@ -551,7 +582,7 @@ void render_voxels(GLuint materials_texture, real_3x3 camera_axes, real_3 camera
 void render_chunk(chunk* c, real_3x3 camera_axes, real_3 camera_pos)
 {
     load_chunk_to_gpu(c);
-    render_voxels(c->materials_texture, camera_axes, camera_pos, {chunk_size, chunk_size, chunk_size});
+    render_voxels(materials_textures[current_materials_texture], camera_axes, camera_pos, {2*chunk_size, 2*chunk_size, 2*chunk_size});
 }
 
 void render_body(body* b, real_3x3 camera_axes, real_3 camera_pos)
@@ -567,6 +598,7 @@ void simulate_chunk(chunk* c)
     load_chunk_to_gpu(c);
 
     int texture_i = 0;
+    int image_i = 0;
     int uniform_i = 0;
 
     int layer_number_uniform = uniform_i++;
@@ -575,41 +607,72 @@ void simulate_chunk(chunk* c)
     glUniform1i(uniform_i++, frame_number++);
 
     glUniform1i(uniform_i++, texture_i++);
-    glActiveTexture(GL_TEXTURE0 + 0);
-    glBindTexture(GL_TEXTURE_3D, c->materials_texture);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
 
+    glUniform1i(uniform_i++, texture_i++);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_3D, chunk_lookup_texture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i++);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_3D, active_regions_textures[current_active_regions_texture]);
+    // glBindImageTexture(image_i++, active_regions_textures[current_active_regions_texture], 0, true, 0, GL_READ_ONLY, GL_R32UI);
+
+    glUniform1i(uniform_i++, image_i);
+    glBindImageTexture(image_i++, active_regions_textures[1-current_active_regions_texture], 0, true, 0, GL_WRITE_ONLY, GL_R8UI);
+    uint clear = 0;
+    glClearTexImage(active_regions_textures[1-current_active_regions_texture], 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, &clear);
+    current_active_regions_texture = 1-current_active_regions_texture;
+
     size_t offset = 0;
     int layout_location = 0;
 
     GLuint vertex_buffer = gl_general_buffers[0];
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
-    real vb[] = {-1,-1,0,
-                 -1,+1,0,
-                 +1,+1,0,
-                 +1,-1,0};
+    // real vb[] = {-1,-1,0,
+    //              -1,+1,0,
+    //              +1,+1,0,
+    //              +1,-1,0};
+    real vb[3*2*32*32] = {};
+    for(int i = 0; i < 2*32*32; i++)
+    {
+        vb[3*i+0] = i%32;
+        vb[3*i+1] = (i/32)%32;
+        vb[3*i+2] = 16*(i/(32*32));
+    }
     glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
     add_contiguous_attribute(3, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
 
-    glViewport(0, 0, chunk_size, chunk_size);
     glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+    glViewport(0, 0, materials_textures_size, materials_textures_size);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
 
     for(int l = 0; l < chunk_size; l++)
     {
         glUniform1i(layer_number_uniform, l);
 
         glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_3D,
-                               c->old_materials_texture, 0, l);
+                               materials_textures[1-current_materials_texture], 0, l);
 
-        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+        glDrawArrays(GL_POINTS, 0, 2*32*32);
     }
-    auto temp = c->materials_texture;
-    c->materials_texture = c->old_materials_texture;
-    c->old_materials_texture = temp;
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    current_materials_texture = 1-current_materials_texture;
 }
 
 void simulate_particles(chunk* c, real_3* xs, real_3* x_dots, int n_particles)
@@ -623,8 +686,8 @@ void simulate_particles(chunk* c, real_3* xs, real_3* x_dots, int n_particles)
     glUniform1i(uniform_i++, frame_number++);
 
     glUniform1i(uniform_i++, texture_i++);
-    glActiveTexture(GL_TEXTURE0 + 0);
-    glBindTexture(GL_TEXTURE_3D, c->materials_texture);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
@@ -632,7 +695,16 @@ void simulate_particles(chunk* c, real_3* xs, real_3* x_dots, int n_particles)
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
 
     glUniform1i(uniform_i++, texture_i++);
-    glActiveTexture(GL_TEXTURE0 + 1);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_3D, chunk_lookup_texture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i++);
+    glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, particles_x_texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -640,7 +712,7 @@ void simulate_particles(chunk* c, real_3* xs, real_3* x_dots, int n_particles)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
     glUniform1i(uniform_i++, texture_i++);
-    glActiveTexture(GL_TEXTURE0 + 2);
+    glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D, particles_x_dot_texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -721,7 +793,7 @@ void collide_body(memory_manager* manager, chunk* c, body* b, collision_point* c
 
     glUniform1i(uniform_i++, texture_i++);
     glActiveTexture(GL_TEXTURE0 + 0);
-    glBindTexture(GL_TEXTURE_3D, c->materials_texture);
+    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
@@ -729,7 +801,16 @@ void collide_body(memory_manager* manager, chunk* c, body* b, collision_point* c
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
 
     glUniform1i(uniform_i++, texture_i++);
-    glActiveTexture(GL_TEXTURE0 + 1);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_3D, chunk_lookup_texture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+
+    glUniform1i(uniform_i++, texture_i++);
+    glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_3D, b->materials_texture);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -834,9 +915,123 @@ collision_find_end:;
     unreserve_block(manager);
 }
 
+void simulate_body_physics(memory_manager* manager, chunk* c, body* b, int n_bodies)
+{
+    load_body_to_gpu(b);
+    glUseProgram(pinfo_simulate_body_physics.program);
+
+    int texture_i = 0;
+    int uniform_i = 0;
+
+    static int frame_number = 0;
+    glUniform1i(uniform_i++, frame_number++);
+
+    glUniform1i(uniform_i++, texture_i++);
+    glActiveTexture(GL_TEXTURE0 + 0);
+    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i++);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_3D, chunk_lookup_texture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+
+    glUniform1i(uniform_i++, texture_i++);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_3D, b->materials_texture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(bodies[0])*n_bodies, bodies);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, body_buffer);
+
+    size_t offset = 0;
+    int layout_location = 0;
+
+    GLuint vertex_buffer = gl_general_buffers[0];
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+    real vb[] = {-1,-1,0,
+                 -1,+1,0,
+                 +1,+1,0,
+                 +1,-1,0};
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
+    add_contiguous_attribute(3, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+
+    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+    glViewport(0, 0, 1, n_bodies);
+
+    glBindTexture(GL_TEXTURE_2D, particles_x_texture);
+    glTexSubImage2D(GL_TEXTURE_2D,
+                    0,
+                    0, 0,
+                    1, n_bodies,
+                    GL_RGB, GL_FLOAT, xs);
+
+    glBindTexture(GL_TEXTURE_2D, particles_x_dot_texture);
+    glTexSubImage2D(GL_TEXTURE_2D,
+                    0,
+                    0, 0,
+                    1, n_bodies,
+                    GL_RGB, GL_FLOAT, x_dots);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, particles_x_texture, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, particles_x_dot_texture, 0);
+
+    GLenum buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(len(buffers), buffers);
+
+    glDisable(GL_BLEND);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    glEnable(GL_BLEND);
+
+    size_t out_size = n_bodies*sizeof(float)*3;
+    byte* out_data = reserve_block(manager, 2*out_size);
+    real3* x_dots = out_data;
+    real3* omegas = out_data+out_size;
+
+    glGetTextureSubImage(particles_x_texture,
+                         0,
+                         0, 0, 0,
+                         1, n_bodies, 1,
+                         GL_RGB,
+                         GL_FLOAT,
+                         sizeof(x_dots[0])*n_bodies,
+                         x_dots);
+
+    glGetTextureSubImage(particles_x_dot_texture,
+                         0,
+                         0, 0, 0,
+                         1, n_bodies, 1,
+                         GL_RGB,
+                         GL_FLOAT,
+                         sizeof(omegas[0])*n_bodies,
+                         omegas);
+
+    for(int b = 0; b < n_bodies; b++)
+    {
+        bodies[b].x_dot = x_dots[b];
+        bodies[b].omega     = omegas[b];
+    }
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
+}
+
 void get_chunk_data(chunk* c, int_3 x, int_3 dim, uint16* data)
 {
-    glGetTextureSubImage(c->materials_texture,
+    glGetTextureSubImage(materials_textures[current_materials_texture],
                          0,
                          x.x, x.y, x.z,
                          dim.x, dim.y, dim.z,

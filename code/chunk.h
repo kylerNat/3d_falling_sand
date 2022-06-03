@@ -11,51 +11,100 @@ enum storage_mode
     sm_gpu,
 };
 
+struct chunk_gpu_entry;
+
 struct chunk
 {
-    uint16 materials[chunk_size*chunk_size*chunk_size];
-    GLuint materials_texture;
-    GLuint old_materials_texture;
+    uint16* materials;
     int storage_level;
 
-    chunk* neighbors[6]; //UDLRFB
+    int_3 chunk_pos;
+
+    chunk_gpu_entry* gpu_info;
 };
 
-#define N_MAX_MATERIALS_TEXTURES 16
-GLuint materials_textures[N_MAX_MATERIALS_TEXTURES];
-int n_materials_textures = 0;
+#define gpu_n_chunks_wide 4
+#define MAX_GPU_CHUNKS (gpu_n_chunks_wide*gpu_n_chunks_wide)
+#define materials_textures_size (chunk_size*gpu_n_chunks_wide)
+GLuint materials_textures[2];
+int current_materials_texture = 0;
 
-void load_chunk_to_gpu(chunk* c)
+GLuint body_materials_textures[2];
+int n_body_materials_textures = 0;
+
+struct chunk_gpu_entry
+{
+    chunk* c;
+    int8_2 memory_pos;
+};
+
+chunk_gpu_entry chunk_storage_offsets[MAX_GPU_CHUNKS];
+int n_stored_chunks = 0;
+int chunk_storage_offsets_start = 0;
+
+int8_2 load_chunk_to_gpu(chunk* c)
 {
     //TODO: handle lower storage levels
+
+    int8_2 offset = {0,0};
+
     if(c->storage_level < sm_gpu)
     {
-        c->materials_texture = materials_textures[n_materials_textures++];
-        c->old_materials_texture = materials_textures[n_materials_textures++];
+        if(n_stored_chunks >= MAX_GPU_CHUNKS) //unload oldest chunk
+        {
+            chunk_gpu_entry* oldest_entry = &chunk_storage_offsets[chunk_storage_offsets_start];
+            offset = oldest_entry->memory_pos;
+            oldest_entry->c->storage_level--;
+            oldest_entry->c->gpu_info = 0;
+            oldest_entry->c = c;
+            c->gpu_info = oldest_entry;
+            chunk_storage_offsets_start++;
 
-        glBindTexture(GL_TEXTURE_3D, c->materials_texture);
+            //TODO: copy unloaded chunk back to cpu memory
+        }
+        else
+        {
+            if(n_stored_chunks >= 1)
+            {
+                chunk_gpu_entry* latest_entry = &chunk_storage_offsets[chunk_storage_offsets_start+n_stored_chunks-1];
+                offset = latest_entry->memory_pos;
+                offset.x += 1;
+                if(offset.x >= gpu_n_chunks_wide)
+                {
+                    offset.x %= gpu_n_chunks_wide;
+                    offset.y += 1;
+                    offset.y %= gpu_n_chunks_wide;
+                }
+            }
+            chunk_storage_offsets[chunk_storage_offsets_start+(n_stored_chunks++)] = {c, offset};
+        }
+        // log_output("offset: ", offset.x, ", ", offset.y, "\n");
+
+        glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
         glTexSubImage3D(GL_TEXTURE_3D, 0,
-                        0, 0, 0,
+                        chunk_size*offset.x, chunk_size*offset.y, 0,
                         chunk_size, chunk_size, chunk_size,
                         GL_RED_INTEGER, GL_UNSIGNED_SHORT,
                         c->materials);
         c->storage_level = sm_gpu;
     }
+    return offset;
 }
 
-void load_body_to_gpu(body* b)
+void load_body_to_gpu(cpu_body_data* bc, gpu_body_data* bg)
 {
-    if(b->storage_level < sm_gpu)
+    if(bg->storage_level < sm_gpu)
     {
-        b->materials_texture = materials_textures[n_materials_textures++];
+        bc->materials_texture = body_materials_textures[n_body_materials_textures++];
+        bg->materials_origin = {0,0,0};
 
-        glBindTexture(GL_TEXTURE_3D, b->materials_texture);
+        glBindTexture(GL_TEXTURE_3D, bc->materials_texture);
         glTexSubImage3D(GL_TEXTURE_3D, 0,
                         0, 0, 0,
-                        b->size.x, b->size.y, b->size.z,
+                        bg->size.x, bg->size.y, bg->size.z,
                         GL_RED_INTEGER, GL_UNSIGNED_SHORT,
-                        b->materials);
-        b->storage_level = sm_gpu;
+                        bc->materials);
+        bc->storage_level = sm_gpu;
     }
 }
 

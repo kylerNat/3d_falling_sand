@@ -7,3 +7,11 @@ crystals:
     kinetic crystal, causes your wand to move when activated, useful for creating melee attacks
     logic crsyal
     containment crystal, allows you to put projectiles inside projectiles (ie create trigger projectiles)
+
+nerves connect brain to joints, the connection just lets the brain know the joint exists and that it can be controlled
+the brain figures out how to move the joint based in the joint type
+
+format
+10 bits - material index
+ 4 bits - distance field
+ 2 bits - corner/edge/face/middle, or maybe sharpness?

@@ -13,11 +13,15 @@ gl_load_operation(void, glGenBuffers, (GLsizei n, const GLuint * buffers));
 gl_load_operation(void, glDrawBuffers, (GLsizei n, GLenum * buffers));
 gl_load_operation(void, glBufferData, (GLenum target, GLsizei ptrsize, const GLvoid * data, GLenum usage));
 gl_load_operation(void, glBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid * data));
+gl_load_operation(void, glGetBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, GLvoid * data));
 gl_load_operation(void, glBindBuffer, (GLenum target, GLuint buffer));
+gl_load_operation(void, glBindBufferRange, (GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size));
 gl_load_operation(void, glVertexAttribPointer, (GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const GLvoid * pointer));
 gl_load_operation(void, glEnableVertexAttribArray, (GLuint index));
 gl_load_operation(void, glVertexAttribDivisor, (GLuint index, GLuint divisor));
 gl_load_operation(void, glDrawArraysInstanced, (GLenum mode, GLint first, GLsizei count, GLsizei primcount));
+
+gl_load_operation(void, glBindImageTexture, (GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access, GLenum format));
 
 gl_load_operation(void, glGetBufferParameteriv, (GLenum target, GLenum value, GLint * data));
 
@@ -71,6 +75,7 @@ gl_load_operation(void, glFramebufferRenderbuffer, (GLenum target, GLenum attach
 gl_load_operation(GLenum, glCheckFramebufferStatus, (GLenum target));
 gl_load_operation(void, glTexImage2DMultisample, (GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLboolean fixedsamplelocations));
 gl_load_operation(void, glTexImage3D, (GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void * data));
+gl_load_operation(void, glClearTexImage, (GLuint texture, GLint level, GLenum format, GLenum type, const void * data));
 gl_load_operation(void, glRenderbufferStorageMultisample, (GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height));
 
 gl_load_operation(void, glTextureSubImage2D, (GLuint texture, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels));

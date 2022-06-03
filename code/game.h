@@ -10,6 +10,8 @@
 
 real dt = 1.0/60.0; //simulate at 60 hz
 
+define_printer(real_3 a, ("(%f, %f, %f)", a.x, a.y, a.z));
+
 struct user_input
 {
     real_2 mouse;
@@ -204,10 +206,33 @@ struct world
     uint32 seed;
     entity player;
 
-    body * b;
+    cpu_body_data * bodies_cpu;
+    gpu_body_data * bodies_gpu;
 
-    chunk* c;
+    chunk * c;
 };
+
+void set_chunk_voxel(world* w, chunk* c, real_3 pos, uint16 material)
+{
+    // pos = clamp_per_axis(pos, 0, chunk_size-1);
+
+    uint16 materials_data[3] = {material, 0, 0};
+    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
+    glActiveTexture(GL_TEXTURE0 + 0);
+    glTexSubImage3D(GL_TEXTURE_3D, 0,
+                    pos.x, pos.y, pos.z,
+                    1, 1, 1,
+                    GL_RGB_INTEGER, GL_UNSIGNED_SHORT,
+                    materials_data);
+
+    glBindTexture(GL_TEXTURE_3D, active_regions_textures[current_active_regions_texture]);
+    uint active_data[] = {0xFFFFFFFF};
+    glTexSubImage3D(GL_TEXTURE_3D, 0,
+                    pos.x/16, pos.y/16, pos.z/16,
+                    1, 1, 1,
+                    GL_RGB_INTEGER, GL_UNSIGNED_INT,
+                    active_data);
+}
 
 void update_and_render(memory_manager* manager, world* w, render_data* rd, render_data* ui, audio_data* ad, user_input input)
 {
@@ -219,8 +244,8 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     };
 
     // static real theta = pi/6;
-    static real theta = atan(sqrt(0.5)); //isometric
-    static real phi = pi/4;
+    static real theta = pi/2;
+    static real phi = -pi/4;
     // static real phi = 0;
     // if(is_down(M3, input))
     {
@@ -235,7 +260,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     real_3 look_side    = {cos(phi), sin(phi), 0};
     #if 1
     real move_accel = 0.05;
-    real move_speed = 1.0;
+    real move_speed = 0.5;
     real speed = norm(player->x_dot.xy);
     real z_dot = player->x_dot.z;
     real_2 move_dir = player->x_dot.xy/speed;
@@ -285,12 +310,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         player->x_dot.y = 3*look_forward.y;
     }
 
-    real_3 foot_dist = (real_3){0,0,-12};
-
-    // particle particles[1] = {{player->, x_dotsx+foot_dist, player->x_dot}};
-    // simulate_particles(w->c, particles, len(xs));
-    // player->x = particles[0].x-foot_dist;
-    // player->x_dot = particles[0].x_dot;
+    real_3 foot_dist = (real_3){0,0,-15};
 
     real_3 xs[1] = {player->x+foot_dist};
     real_3 x_dots[1] = {player->x_dot};
@@ -298,50 +318,92 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     player->x = xs[0]-foot_dist;
     player->x_dot = x_dots[0];
 
+    // player->x += player->x_dot;
+
+    real_3 old_x = w->b->x;
+    quaternion old_orientation = w->b->orientation;
+
+    w->b->x_dot *= 0.995;
+    w->b->omega *= 0.995;
+
+    w->b->x_dot.z += -0.1;
+    w->b->x = old_x+w->b->x_dot;
+    w->b->orientation = old_orientation;
     real half_angle = 0.5*norm(w->b->omega);
-    real_3 axis = normalize(w->b->omega);
-    quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
-    w->b->orientation = w->b->orientation*rotation;
+    if(half_angle > 0.0001)
+    {
+        real_3 axis = normalize(w->b->omega);
+        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
+        w->b->orientation = rotation*w->b->orientation;
+    }
 
-    w->b->x += w->b->x_dot;
-
-    w->b->x_dot *= 0.95;
-    w->b->omega *= 0.95;
-
-    // collision_point collisions[1000];
+    // collision_point collisions[2000];
     // int n_collisions = 0;
-    // collide_body(manager, w->c, w->b, collisions, &n_collisions, len(collisions));
-    // real_3 deltaomega = {0,0,0};
-    // real_3 deltax_dot = {0,0,0};
-    // real k = 1;
+    // real k = 1.0;
 
     // real I = 100;
     // real m = 1;
 
     // // log_output("n_collisions: ", n_collisions, "\n");
 
-    // real max_depth = 0;
-    // for(int i = 0; i < n_collisions; i++)
+    // for(int i = 0; i < 20; i++)
     // {
-    //     real_3 force = k*pow(abs(collisions[i].depth), 3)*collisions[i].normal;
-    //     real_3 torque = cross(collisions[i].x - w->b->x, force);
-    //     deltax_dot += force/m;
-    //     deltaomega += torque/I;
-    //     max_depth = max(max_depth, -collisions[i].depth);
+    //     w->b->x = old_x+w->b->x_dot;
+    //     w->b->orientation = old_orientation;
+    //     real half_angle = 0.5*norm(w->b->omega);
+    //     if(half_angle > 0.0001)
+    //     {
+    //         real_3 axis = normalize(w->b->omega);
+    //         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
+    //         w->b->orientation = rotation*w->b->orientation;
+    //     }
+
+    //     collide_body(manager, w->c, w->b, collisions, &n_collisions, len(collisions));
+
+    //     real_3 deltaomega = {0,0,0};
+    //     real_3 deltax_dot = {0,0,0};
+
+    //     real max_depth = 0;
+    //     int deepest_c = -1;
+    //     for(int c = 0; c < n_collisions; c++)
+    //     {
+    //         real_3 r = collisions[c].x - w->b->x;
+    //         real u = dot(w->b->x_dot+cross(w->b->omega, r), collisions[c].normal);
+    //         if(collisions[c].depth < max_depth && u < 0) deepest_c = c;
+    //         if(u >= 0) draw_circle(rd, collisions[c].x, 0.1, {1,0,0,1});
+    //         else draw_circle(rd, collisions[c].x, 0.1, {0,1,0,1});
+    //     }
+
+    //     if(deepest_c == -1) break;
+
+    //     if(deepest_c >= 0)
+    //     {
+    //         int c = deepest_c;
+
+    //         real_3 r = collisions[c].x - w->b->x;
+    //         real u = dot(w->b->x_dot+cross(w->b->omega, r), collisions[c].normal);
+    //         real K = 1.0+m*(normsq(r)-sq(dot(r, collisions[c].normal)))/I;
+    //         // real K = 1.0+m*dot(cross(cross(r, collisions[c].normal), r), collisions[c].normal)/I;
+    //         deltax_dot = (-(1.0+0.1)*u/K-0.0*collisions[c].depth)*collisions[c].normal;
+    //         deltaomega = (m/I)*cross(r, deltax_dot);
+    //         // draw_circle(rd, collisions[c].x, 0.1, {1,1,1,1});
+    //         draw_circle(rd, collisions[c].x+20*(deltax_dot), 0.1, {0,1,0,1});
+    //         if(dot(deltax_dot, collisions[c].normal) < 0)
+    //         {
+    //             log_output("negative normal force\n");
+    //             log_output("r: ", r, "\n");
+    //             log_output("normal: ", collisions[c].normal, "\n");
+    //             log_output("omega: ", w->b->omega, "\n");
+    //             log_output("deltax_dot: ", deltax_dot, "\n");
+    //         }
+    //     }
+
+    //     w->b->x_dot += deltax_dot;
+    //     w->b->omega += deltaomega;
     // }
 
-    // w->b->x.z += 0.1*max_depth;
-
-    // real E = 0.5*m*normsq(w->b->x_dot)+0.5*I*normsq(w->b->omega);
-    // //rescale force and torque to conserve energy
-    // real force_denom = normsq(deltax_dot)+normsq(deltaomega);
-    // real force_scale = 0;
-    // if(force_denom > 0) force_scale = -2.0*(dot(w->b->x_dot, deltax_dot)+dot(w->b->omega, deltaomega))/force_denom;
-    // deltax_dot *= force_scale;
-    // deltaomega *= force_scale;
-
-    // w->b->x_dot += deltax_dot + (real_3){0,0,-0.08};
-    // w->b->omega += deltaomega;
+    draw_circle(rd, w->b->x, 1, {1,1,1,1});
+    draw_circle(rd, w->b->x+10.0*w->b->omega, 1, {0,0,1,1});
 
     // if(n_collisions > 0)
     // {
@@ -352,17 +414,15 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     w->b->x.z -= 0.5;
     // }
 
-    // uint16 material_data[10] = {};
-    // real_3 feet = player->x+(real_3){0,0,-20};
-    // feet = clamp_components(feet, 0, chunk_size-1);
-    // // get_chunk_data(int_cast(feet), {1,1,1}, material_data);
-
-    // player->x_dot.z -= 20.0;
-    // if(feet.z <= 0.0 or material_data[0] != 0)
-    // {
-    //     player->x_dot.z = 0;
-    //     player->x.z = ceil(player->x.z)+0.001;
-    // }
+    if(is_down('F', input))
+    {
+        real_3 r = {0,0,-27.0/2};
+        real_3 deltax_dot = {-sin(theta)*sin(phi), sin(theta)*cos(phi), -cos(theta)};
+        deltax_dot *= 0.1;
+        real_3 deltaomega = (m/I)*cross(r, deltax_dot);
+        w->b->x_dot += deltax_dot;
+        w->b->omega += deltaomega;
+    }
 
     real fov = pi*120.0/180.0;
     real screen_dist = 1.0/tan(fov/2);
@@ -395,61 +455,37 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     if(is_down(M1, input))
     {
         real_3 pos = player->x-placement_dist*camera_z;
-        pos = clamp_components(pos, 0, chunk_size-1);
-
-        uint16 materials_data[1] = {1};
-        glBindTexture(GL_TEXTURE_3D, w->c->materials_texture);
-        glActiveTexture(GL_TEXTURE0 + 0);
-        glTexSubImage3D(GL_TEXTURE_3D, 0,
-                        pos.x, pos.y, pos.z,
-                        1, 1, 1,
-                        GL_RED_INTEGER, GL_UNSIGNED_SHORT,
-                        materials_data);
+        pos = clamp_per_axis(pos, 0, chunk_size-1);
+        set_chunk_voxel(w, w->c, pos, 1);
     }
 
     if(is_down(M4, input))
     {
         real_3 pos = player->x-placement_dist*camera_z;
-        pos = clamp_components(pos, 0, chunk_size-1);
-
-        uint16 materials_data[3] = {2, 0, 0};
-        glBindTexture(GL_TEXTURE_3D, w->c->materials_texture);
-        glActiveTexture(GL_TEXTURE0 + 0);
-        glTexSubImage3D(GL_TEXTURE_3D, 0,
-                        pos.x, pos.y, pos.z,
-                        1, 1, 1,
-                        GL_RGB_INTEGER, GL_UNSIGNED_SHORT,
-                        materials_data);
+        pos = clamp_per_axis(pos, 0, chunk_size-1);
+        set_chunk_voxel(w, w->c, pos, 2);
     }
 
     if(is_down(M5, input))
     {
         real_3 pos = player->x-placement_dist*camera_z;
-        pos = clamp_components(pos, 0, chunk_size-1);
-
-        uint16 materials_data[1] = {0};
-        glBindTexture(GL_TEXTURE_3D, w->c->materials_texture);
-        glActiveTexture(GL_TEXTURE0 + 0);
-        glTexSubImage3D(GL_TEXTURE_3D, 0,
-                        pos.x, pos.y, pos.z,
-                        1, 1, 1,
-                        GL_RED_INTEGER, GL_UNSIGNED_SHORT,
-                        materials_data);
+        pos = clamp_per_axis(pos, 0, chunk_size-1);
+        set_chunk_voxel(w, w->c, pos, 0);
     }
 
     if(is_down(M3, input))
     {
         real_3 pos = player->x-placement_dist*camera_z;
-        pos = clamp_components(pos, 0, chunk_size-1);
+        pos = clamp_per_axis(pos, 0, chunk_size-1);
+        set_chunk_voxel(w, w->c, pos, 3);
+    }
 
-        uint16 materials_data[1] = {3};
-        glBindTexture(GL_TEXTURE_3D, w->c->materials_texture);
-        glActiveTexture(GL_TEXTURE0 + 0);
-        glTexSubImage3D(GL_TEXTURE_3D, 0,
-                        pos.x, pos.y, pos.z,
-                        1, 1, 1,
-                        GL_RED_INTEGER, GL_UNSIGNED_SHORT,
-                        materials_data);
+    if(is_down('G', input))
+    {
+        real_3 pos = player->x-placement_dist*camera_z;
+        w->b->x_dot += 0.1*(pos-w->b->x);
+        w->b->x_dot *= 0.95;
+        w->b->omega *= 0.95;
     }
 
     // for(int f = 0; f < AUDIO_BUFFER_MAX_LEN; f++)

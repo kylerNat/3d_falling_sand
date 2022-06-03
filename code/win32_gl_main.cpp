@@ -53,6 +53,7 @@ void* platform_big_alloc(size_t memory_size)
     assert(out, "VirtualAlloc failed allocating ", memory_size, " bytes, error code = ", (int) GetLastError());
     return out;
 }
+// #define platform_big_alloc(memory_size) malloc(memory_size);
 #include "memory.h"
 
 #include "win32_work_system.h"
@@ -571,45 +572,84 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // .player = {.x = {211.1,200.1,32.1}, .x_dot = {0,0,0}},
         // .player = {.x = {289.1,175.1, 302.1}, .x_dot = {0,0,0}},
         .player = {.x = {chunk_size/2+5.1, chunk_size/2+5.1, 42.1}, .x_dot = {0,0,0}},
-        .b = (body*) permalloc(manager, sizeof(body)),
-        .c = (chunk*) permalloc(manager, sizeof(chunk)),
+        .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, sizeof(cpu_body_data)),
+        .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, sizeof(gpu_body_data)),
+        .c = (chunk*) permalloc(manager, 8*sizeof(chunk)),
+        .chunk_lookup = {},
     };
 
-    for(int z = 0; z < chunk_size; z++)
-        for(int y = 0; y < chunk_size; y++)
-            for(int x = 0; x < chunk_size; x++)
-            {
-                int material = 0;
-                int prob = 200+1*sqrt((float) sq(x-(chunk_size/2))+sq(y-(chunk_size/2)));
-                int height = 10;
-                real rsq = sq(x-chunk_size/2)+sq(y-chunk_size/2);
-                // height += 0.03*rsq*(exp(-0.0005*rsq));
-                int ramp_height = 20;
-                height += clamp(ramp_height-abs(y-128), 0, ramp_height);
-                if(z < height) material = 1;
-                // else if(z < chunk_size-1) material = (randui(&w.seed)%prob)==0;
-                // if(x == chunk_size/2+0 && y == chunk_size/2+0) material = 2;
-                // if(x == chunk_size/2+0 && y == chunk_size/2-1) material = 2;
-                // if(x == chunk_size/2-1 && y == chunk_size/2-1) material = 2;
-                // if(x == chunk_size/2-1 && y == chunk_size/2+0) material = 2;
+    int max_3d_texture_size;
+    glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE, &max_3d_texture_size);
+    log_output("GL_MAX_3D_TEXTURE_SIZE: ", max_3d_texture_size, "\n");
 
-                if(y <= 10) material = 3;
-                if(x <= 10) material = 3;
-                if(chunk_size-y <= 10) material = 3;
-                if(chunk_size-x <= 10) material = 3;
-                // if(chunk_size-z <= 10) material = 3;
+    // for(int i = 0; i < 27; i++)
+    for(int i = 0; i < 8; i++)
+    {
+        chunk* c = w.c+i;
 
-                // material = randui(&w.seed)&1;
-                w.c->materials[x+chunk_size*y+chunk_size*chunk_size*z] = material;
-            }
+        c->materials = (uint16*) permalloc(manager, sizeof(uint16)*chunk_size*chunk_size*chunk_size);
 
-    w.b->size = {28,27,27};
-    w.b->materials = (uint16*) permalloc(manager, w.b->size.x*w.b->size.y*w.b->size.z*sizeof(uint16));
-    w.b->x_cm = 0.5*real_cast(w.b->size);
-    w.b->x = {chunk_size/2, chunk_size/2, 50};
-    w.b->x_dot = {0,0,0};
-    w.b->omega = {0.01,0.05,0.01};
-    w.b->orientation = {1,0,0,0};
+        for(int z = 0; z < chunk_size; z++)
+            for(int y = 0; y < chunk_size; y++)
+                for(int x = 0; x < chunk_size; x++)
+                {
+                    int material = 0;
+                    int height = 20;
+                    real rsq = sq(x-chunk_size/2)+sq(y-chunk_size/2);
+                    // height += 0.03*rsq*(exp(-0.0005*rsq));
+                    int ramp_height = 20;
+                    // height += clamp(ramp_height-abs(y-128), 0, ramp_height);
+                    height += clamp((float) ramp_height-abs(sqrt(rsq)-80), 0.0, (float) ramp_height);
+                    if(z+chunk_size*(i/4) < height) material = 1;
+                    // else if(z < chunk_size-1) material = (randui(&w.seed)%prob)==0;
+                    // if(x == chunk_size/2+0 && y == chunk_size/2+0) material = 2;
+                    // if(x == chunk_size/2+0 && y == chunk_size/2-1) material = 2;
+                    // if(x == chunk_size/2-1 && y == chunk_size/2-1) material = 2;
+                    // if(x == chunk_size/2-1 && y == chunk_size/2+0) material = 2;
+
+                    if(i <= 3 && z <= 5) material = 3;
+                    if(i > 3 && z > chunk_size-10) material = 3;
+
+                    int door_width = 200;
+                    if(abs(x-chunk_size/2) > door_width/2 && abs(y-chunk_size/2) > door_width/2 ||
+                       x <            5 && (i%4 == 0 || i%4 == 2) ||
+                       x > chunk_size-5 && (i%4 == 1 || i%4 == 3) ||
+                       y <            5 && (i%4 == 0 || i%4 == 1) ||
+                       y > chunk_size-5 && (i%4 == 3 || i%4 == 2))
+                    {
+                        if(y <= 10) material = 3;
+                        if(x <= 10) material = 3;
+                        if(chunk_size-y <= 10) material = 3;
+                        if(chunk_size-x <= 10) material = 3;
+                        // if(chunk_size-z <= 10) material = 3;
+                    }
+
+                    // if(y == chunk_size/2 && abs(x-chunk_size/2) <= 2*(i) && x%2 == 0) material = 3;
+                    if(y == chunk_size*3/4 && x == chunk_size*3/4 && z < 50) material = 3;
+
+                    // if(material == 0) material = 2*((randui(&w.seed)%10000)==0); //"rain"
+                    c->materials[x+chunk_size*y+chunk_size*chunk_size*z] = material;
+                }
+
+        int8_2 offset = load_chunk_to_gpu(c);
+        w.chunk_lookup[i] = offset;
+        log_output("offset for tile ", 7-i, ": ", offset.x, ", ", offset.y, "\n");
+    }
+
+    glBindTexture(GL_TEXTURE_3D, chunk_lookup_texture);
+    glTexSubImage3D(GL_TEXTURE_3D, 0,
+                    0, 0, 0,
+                    2, 2, 2,
+                    GL_RG_INTEGER, GL_BYTE,
+                    w.chunk_lookup);
+
+    w.bodies_gpu->size = {28,27,27};
+    w.bodies_cpu->materials = (uint16*) permalloc(manager, w.bodies_gpu->size.x*w.bodies_gpu->size.y*w.bodies_gpu->size.z*sizeof(uint16));
+    w.bodies_gpu->x_cm = 0.5*real_cast(w_bodies_gpu.b->size);
+    w.bodies_gpu->x = {chunk_size*3/4, chunk_size/2, 50};
+    w.bodies_gpu->x_dot = {0,0,0};
+    w.bodies_gpu->omega = {0.0,-0.5,0.0};
+    w.bodies_gpu->orientation = {1,0,0,0};
 
     real half_angle = 0.5*(pi/4);
     real_3 axis = {1,0,0};
@@ -627,7 +667,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 if(x_middle && y_middle) material = 0;
                 if(y_middle && z_middle) material = 0;
                 if(z_middle && x_middle) material = 0;
-                w.b->materials[x+y*w.b->size.x+z*w.b->size.x*w.b->size.y] = material;
+                // if(x_middle && y_middle) material = 1;
+                // if(y_middle && z_middle) material = 1;
+                // if(z_middle && x_middle) material = 1;
+                w.bodies_cpu->materials[x+y*w.bodies_gpu->size.x+z*w.bodies_gpu->size.x*w.bodies_gpu->size.y] = material;
             }
 
     // CreateDirectory(w.tim.savedir, 0);
@@ -780,12 +823,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     //TODO: make render loop evenly sample inputs when vsynced
     while(update_window(&wnd))
     {
-        while(Deltat <= dt)
-        {
-            wnd.last_time = wnd.this_time;
-            QueryPerformanceCounter(&wnd.this_time);
-            Deltat += ((real) (wnd.this_time.QuadPart - wnd.last_time.QuadPart))/(wnd.timer_frequency.QuadPart);
-        }
+        // while(Deltat <= dt)
+        // {
+        //     wnd.last_time = wnd.this_time;
+        //     QueryPerformanceCounter(&wnd.this_time);
+        //     Deltat += ((real) (wnd.this_time.QuadPart - wnd.last_time.QuadPart))/(wnd.timer_frequency.QuadPart);
+        // }
         // const int N_MAX_FRAMES = 2;
         // for(int i = 0; Deltat > 0 && i < N_MAX_FRAMES; Deltat -= dt, i++)
         {
@@ -811,9 +854,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             update_and_render(manager, &w, &rd, &ui, &ad, wnd.input);
 
             if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
-            // if(is_down('Z', wnd.input)) simulate_chunk(w.c);
-            for(int i =0 ; i < 2; i++)
+            // for(int i = 0 ; i < 8; i++)
             simulate_chunk(w.c);
+            // if(is_pressed('Z', wnd.input)) simulate_chunk(w.c);
 
             //TODO: seperate update and render to improve performance and allow for a partial step for visual updating
             memcpy(wnd.input.prev_buttons, wnd.input.buttons, sizeof(wnd.input.buttons));
@@ -826,7 +869,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         glEnable(GL_DEPTH_TEST);
         render_chunk(w.c, rd.camera_axes, rd.camera_pos);
 
-        // render_body(w.b, rd.camera_axes, rd.camera_pos);
+        render_body(w.b, rd.camera_axes, rd.camera_pos);
 
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);
