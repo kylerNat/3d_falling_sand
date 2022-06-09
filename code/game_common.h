@@ -44,16 +44,18 @@ struct cpu_body_data
     int n_special_voxels;
 };
 
+#pragma pack(push, 1)
 struct gpu_body_data
 {
     int_3 materials_origin;
     int_3 size;
-    real_3 x_cm
+    real_3 x_cm;
     real_3 x;
     real_3 x_dot;
     quaternion orientation;
     real_3 omega;
 };
+#pragma pack(pop)
 
 struct collision_point
 {

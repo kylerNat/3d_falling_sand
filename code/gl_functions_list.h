@@ -11,10 +11,12 @@ gl_load_operation(void, glDebugMessageCallbackARB, (GLDEBUGPROCARB callback, con
 
 gl_load_operation(void, glGenBuffers, (GLsizei n, const GLuint * buffers));
 gl_load_operation(void, glDrawBuffers, (GLsizei n, GLenum * buffers));
+gl_load_operation(void, glBufferStorage, (GLenum target, GLsizei ptrsize, const GLvoid * data, GLbitfield flags));
 gl_load_operation(void, glBufferData, (GLenum target, GLsizei ptrsize, const GLvoid * data, GLenum usage));
 gl_load_operation(void, glBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid * data));
 gl_load_operation(void, glGetBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, GLvoid * data));
 gl_load_operation(void, glBindBuffer, (GLenum target, GLuint buffer));
+gl_load_operation(void, glBindBufferBase, (GLenum target, GLuint index, GLuint buffer));
 gl_load_operation(void, glBindBufferRange, (GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size));
 gl_load_operation(void, glVertexAttribPointer, (GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const GLvoid * pointer));
 gl_load_operation(void, glEnableVertexAttribArray, (GLuint index));

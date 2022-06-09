@@ -610,7 +610,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     if(i <= 3 && z <= 5) material = 3;
                     if(i > 3 && z > chunk_size-10) material = 3;
 
-                    int door_width = 200;
+                    int door_width = 20;
                     if(abs(x-chunk_size/2) > door_width/2 && abs(y-chunk_size/2) > door_width/2 ||
                        x <            5 && (i%4 == 0 || i%4 == 2) ||
                        x > chunk_size-5 && (i%4 == 1 || i%4 == 3) ||
@@ -633,7 +633,6 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         int8_2 offset = load_chunk_to_gpu(c);
         w.chunk_lookup[i] = offset;
-        log_output("offset for tile ", 7-i, ": ", offset.x, ", ", offset.y, "\n");
     }
 
     glBindTexture(GL_TEXTURE_3D, chunk_lookup_texture);
@@ -645,10 +644,11 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     w.bodies_gpu->size = {28,27,27};
     w.bodies_cpu->materials = (uint16*) permalloc(manager, w.bodies_gpu->size.x*w.bodies_gpu->size.y*w.bodies_gpu->size.z*sizeof(uint16));
-    w.bodies_gpu->x_cm = 0.5*real_cast(w_bodies_gpu.b->size);
+    w.bodies_gpu->x_cm = 0.5*real_cast(w.bodies_gpu->size);
     w.bodies_gpu->x = {chunk_size*3/4, chunk_size/2, 50};
     w.bodies_gpu->x_dot = {0,0,0};
-    w.bodies_gpu->omega = {0.0,-0.5,0.0};
+    // w.bodies_gpu->omega = {0.0,-0.5,0.0};
+    w.bodies_gpu->omega = {0.0,0.0,0.0};
     w.bodies_gpu->orientation = {1,0,0,0};
 
     real half_angle = 0.5*(pi/4);
@@ -656,20 +656,32 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
     // w.b->orientation = w.b->orientation*rotation;
 
-    for(int z = 0; z < w.b->size.z; z++)
-        for(int y = 0; y < w.b->size.y; y++)
-            for(int x = 0; x < w.b->size.x; x++)
+    for(int z = 0; z < w.bodies_gpu->size.z; z++)
+        for(int y = 0; y < w.bodies_gpu->size.y; y++)
+            for(int x = 0; x < w.bodies_gpu->size.x; x++)
             {
-                int material = 1;
                 bool x_middle = x >= 9 && x < 18;
                 bool y_middle = y >= 9 && y < 18;
                 bool z_middle = z >= 9 && z < 18;
-                if(x_middle && y_middle) material = 0;
-                if(y_middle && z_middle) material = 0;
-                if(z_middle && x_middle) material = 0;
-                // if(x_middle && y_middle) material = 1;
-                // if(y_middle && z_middle) material = 1;
-                // if(z_middle && x_middle) material = 1;
+
+                // int material = 2;
+                // if((x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu->size.z-1)) material = 1;
+                // if((x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu->size.x-1)) material = 1;
+                // if((x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu->size.y-1)) material = 1;
+                // if(x_middle && y_middle) material = 0;
+                // if(y_middle && z_middle) material = 0;
+                // if(z_middle && x_middle) material = 0;
+
+                int material = 0;
+                if(x_middle && y_middle) material = 2;
+                if(y_middle && z_middle) material = 2;
+                if(z_middle && x_middle) material = 2;
+                if(material == 2 && (x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu->size.z-1)) material = 1;
+                if(material == 2 && (x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu->size.x-1)) material = 1;
+                if(material == 2 && (x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu->size.y-1)) material = 1;
+
+                if(abs(y - 14) > 2 || abs(x - 14) > 2) material = 0;
+
                 w.bodies_cpu->materials[x+y*w.bodies_gpu->size.x+z*w.bodies_gpu->size.x*w.bodies_gpu->size.y] = material;
             }
 
@@ -869,7 +881,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         glEnable(GL_DEPTH_TEST);
         render_chunk(w.c, rd.camera_axes, rd.camera_pos);
 
-        render_body(w.b, rd.camera_axes, rd.camera_pos);
+        render_body(w.bodies_cpu, w.bodies_gpu, rd.camera_axes, rd.camera_pos);
 
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);

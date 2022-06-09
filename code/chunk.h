@@ -29,8 +29,12 @@ struct chunk
 GLuint materials_textures[2];
 int current_materials_texture = 0;
 
+#define body_texture_size 128
 GLuint body_materials_textures[2];
 int n_body_materials_textures = 0;
+
+GLuint body_forces_texture;
+GLuint body_shifts_texture;
 
 struct chunk_gpu_entry
 {
@@ -93,14 +97,14 @@ int8_2 load_chunk_to_gpu(chunk* c)
 
 void load_body_to_gpu(cpu_body_data* bc, gpu_body_data* bg)
 {
-    if(bg->storage_level < sm_gpu)
+    if(bc->storage_level < sm_gpu)
     {
         bc->materials_texture = body_materials_textures[n_body_materials_textures++];
-        bg->materials_origin = {0,0,0};
+        bg->materials_origin = {1,1,1};
 
         glBindTexture(GL_TEXTURE_3D, bc->materials_texture);
         glTexSubImage3D(GL_TEXTURE_3D, 0,
-                        0, 0, 0,
+                        bg->materials_origin.x, bg->materials_origin.y, bg->materials_origin.z,
                         bg->size.x, bg->size.y, bg->size.z,
                         GL_RED_INTEGER, GL_UNSIGNED_SHORT,
                         bc->materials);

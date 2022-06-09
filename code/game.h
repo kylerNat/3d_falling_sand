@@ -210,6 +210,7 @@ struct world
     gpu_body_data * bodies_gpu;
 
     chunk * c;
+    int8_2 chunk_lookup[2*2*2];
 };
 
 void set_chunk_voxel(world* w, chunk* c, real_3 pos, uint16 material)
@@ -232,6 +233,42 @@ void set_chunk_voxel(world* w, chunk* c, real_3 pos, uint16 material)
                     1, 1, 1,
                     GL_RGB_INTEGER, GL_UNSIGNED_INT,
                     active_data);
+}
+
+void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, int_3 size, uint16 material)
+{
+    // pos = clamp_per_axis(pos, 0, chunk_size-1);
+
+    int_3 active_data_size = {(int(pos.x)%16+size.x+15)/16, (int(pos.y)%16+size.y+15)/16, (int(pos.z)%16+size.z+15)/16};
+
+    byte* data = reserve_block(manager, size.x*size.y*size.z*3*sizeof(uint16)
+                               + active_data_size.x*active_data_size.y*active_data_size.z*sizeof(uint));
+    uint16* materials_data = (uint16*) data;
+    uint* active_data = (uint*) (data+size.x*size.y*size.z*3*sizeof(uint16));
+    for(int i = 0; i < active_data_size.x*active_data_size.y*active_data_size.z; i++)
+        active_data[i] = {0xFFFFFFFF};
+
+    for(int i = 0; i < size.x*size.y*size.z; i++)
+    {
+        materials_data[3*i+0] = material;
+        materials_data[3*i+1] = 0;
+        materials_data[3*i+2] = 0;
+    }
+    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
+    glActiveTexture(GL_TEXTURE0 + 0);
+    glTexSubImage3D(GL_TEXTURE_3D, 0,
+                    pos.x, pos.y, pos.z,
+                    size.z, size.y, size.z,
+                    GL_RGB_INTEGER, GL_UNSIGNED_SHORT,
+                    materials_data);
+
+    glBindTexture(GL_TEXTURE_3D, active_regions_textures[current_active_regions_texture]);
+    glTexSubImage3D(GL_TEXTURE_3D, 0,
+                    pos.x/16, pos.y/16, pos.z/16,
+                    active_data_size.x, active_data_size.y, active_data_size.z,
+                    GL_RGB_INTEGER, GL_UNSIGNED_INT,
+                    active_data);
+    unreserve_block(manager);
 }
 
 void update_and_render(memory_manager* manager, world* w, render_data* rd, render_data* ui, audio_data* ad, user_input input)
@@ -320,90 +357,35 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     // player->x += player->x_dot;
 
-    real_3 old_x = w->b->x;
-    quaternion old_orientation = w->b->orientation;
+    // real_3 old_x = w->bodies_gpu->x;
+    // quaternion old_orientation = w->bodies_gpu->orientation;
 
-    w->b->x_dot *= 0.995;
-    w->b->omega *= 0.995;
-
-    w->b->x_dot.z += -0.1;
-    w->b->x = old_x+w->b->x_dot;
-    w->b->orientation = old_orientation;
-    real half_angle = 0.5*norm(w->b->omega);
-    if(half_angle > 0.0001)
-    {
-        real_3 axis = normalize(w->b->omega);
-        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
-        w->b->orientation = rotation*w->b->orientation;
-    }
-
-    // collision_point collisions[2000];
-    // int n_collisions = 0;
-    // real k = 1.0;
-
-    // real I = 100;
-    // real m = 1;
-
-    // // log_output("n_collisions: ", n_collisions, "\n");
+    w->bodies_gpu->x_dot *= 0.995;
+    w->bodies_gpu->omega *= 0.995;
+    w->bodies_gpu->x_dot.z += -0.1;
 
     // for(int i = 0; i < 20; i++)
     // {
-    //     w->b->x = old_x+w->b->x_dot;
-    //     w->b->orientation = old_orientation;
-    //     real half_angle = 0.5*norm(w->b->omega);
-    //     if(half_angle > 0.0001)
-    //     {
-    //         real_3 axis = normalize(w->b->omega);
-    //         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
-    //         w->b->orientation = rotation*w->b->orientation;
-    //     }
-
-    //     collide_body(manager, w->c, w->b, collisions, &n_collisions, len(collisions));
-
-    //     real_3 deltaomega = {0,0,0};
-    //     real_3 deltax_dot = {0,0,0};
-
-    //     real max_depth = 0;
-    //     int deepest_c = -1;
-    //     for(int c = 0; c < n_collisions; c++)
-    //     {
-    //         real_3 r = collisions[c].x - w->b->x;
-    //         real u = dot(w->b->x_dot+cross(w->b->omega, r), collisions[c].normal);
-    //         if(collisions[c].depth < max_depth && u < 0) deepest_c = c;
-    //         if(u >= 0) draw_circle(rd, collisions[c].x, 0.1, {1,0,0,1});
-    //         else draw_circle(rd, collisions[c].x, 0.1, {0,1,0,1});
-    //     }
-
-    //     if(deepest_c == -1) break;
-
-    //     if(deepest_c >= 0)
-    //     {
-    //         int c = deepest_c;
-
-    //         real_3 r = collisions[c].x - w->b->x;
-    //         real u = dot(w->b->x_dot+cross(w->b->omega, r), collisions[c].normal);
-    //         real K = 1.0+m*(normsq(r)-sq(dot(r, collisions[c].normal)))/I;
-    //         // real K = 1.0+m*dot(cross(cross(r, collisions[c].normal), r), collisions[c].normal)/I;
-    //         deltax_dot = (-(1.0+0.1)*u/K-0.0*collisions[c].depth)*collisions[c].normal;
-    //         deltaomega = (m/I)*cross(r, deltax_dot);
-    //         // draw_circle(rd, collisions[c].x, 0.1, {1,1,1,1});
-    //         draw_circle(rd, collisions[c].x+20*(deltax_dot), 0.1, {0,1,0,1});
-    //         if(dot(deltax_dot, collisions[c].normal) < 0)
-    //         {
-    //             log_output("negative normal force\n");
-    //             log_output("r: ", r, "\n");
-    //             log_output("normal: ", collisions[c].normal, "\n");
-    //             log_output("omega: ", w->b->omega, "\n");
-    //             log_output("deltax_dot: ", deltax_dot, "\n");
-    //         }
-    //     }
-
-    //     w->b->x_dot += deltax_dot;
-    //     w->b->omega += deltaomega;
+    //     simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, 1, rd);
+    // }
+    // for(int i = 0; i < 1; i++)
+    // {
+    //     simulate_bodies(w->bodies_cpu, w->bodies_gpu, 1);
+    //     simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, 1, rd);
     // }
 
-    draw_circle(rd, w->b->x, 1, {1,1,1,1});
-    draw_circle(rd, w->b->x+10.0*w->b->omega, 1, {0,0,1,1});
+    simulate_bodies(w->bodies_cpu, w->bodies_gpu, 1);
+    simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, 1, rd);
+
+    w->bodies_gpu->x += w->bodies_gpu->x_dot;
+    // w->bodies_gpu->orientation = old_orientation;
+    real half_angle = 0.5*norm(w->bodies_gpu->omega);
+    if(half_angle > 0.0001)
+    {
+        real_3 axis = normalize(w->bodies_gpu->omega);
+        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
+        w->bodies_gpu->orientation = rotation*w->bodies_gpu->orientation;
+    }
 
     // if(n_collisions > 0)
     // {
@@ -414,14 +396,17 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     w->b->x.z -= 0.5;
     // }
 
+    const real I = 100;
+    const real m = 1;
+
     if(is_down('F', input))
     {
         real_3 r = {0,0,-27.0/2};
         real_3 deltax_dot = {-sin(theta)*sin(phi), sin(theta)*cos(phi), -cos(theta)};
         deltax_dot *= 0.1;
         real_3 deltaomega = (m/I)*cross(r, deltax_dot);
-        w->b->x_dot += deltax_dot;
-        w->b->omega += deltaomega;
+        w->bodies_gpu->x_dot += deltax_dot;
+        w->bodies_gpu->omega += deltaomega;
     }
 
     real fov = pi*120.0/180.0;
@@ -459,6 +444,13 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         set_chunk_voxel(w, w->c, pos, 1);
     }
 
+    if(is_down('T', input))
+    {
+        real_3 pos = player->x-placement_dist*camera_z;
+        pos = clamp_per_axis(pos, 0, chunk_size-1);
+        set_chunk_region(manager, w, w->c, pos, {10,10,10}, 2);
+    }
+
     if(is_down(M4, input))
     {
         real_3 pos = player->x-placement_dist*camera_z;
@@ -483,9 +475,9 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     if(is_down('G', input))
     {
         real_3 pos = player->x-placement_dist*camera_z;
-        w->b->x_dot += 0.1*(pos-w->b->x);
-        w->b->x_dot *= 0.95;
-        w->b->omega *= 0.95;
+        w->bodies_gpu->x_dot += 0.1*(pos-w->bodies_gpu->x);
+        w->bodies_gpu->x_dot *= 0.95;
+        w->bodies_gpu->omega *= 0.95;
     }
 
     // for(int f = 0; f < AUDIO_BUFFER_MAX_LEN; f++)
