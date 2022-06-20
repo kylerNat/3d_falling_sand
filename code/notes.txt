@@ -15,3 +15,7 @@ format
 10 bits - material index
  4 bits - distance field
  2 bits - corner/edge/face/middle, or maybe sharpness?
+
+
+joint - 2 voxels in 2 bodies
+brain - 1 voxel and a tree/graph of bodies

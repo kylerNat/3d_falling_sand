@@ -572,8 +572,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // .player = {.x = {211.1,200.1,32.1}, .x_dot = {0,0,0}},
         // .player = {.x = {289.1,175.1, 302.1}, .x_dot = {0,0,0}},
         .player = {.x = {chunk_size/2+5.1, chunk_size/2+5.1, 42.1}, .x_dot = {0,0,0}},
-        .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, sizeof(cpu_body_data)),
-        .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, sizeof(gpu_body_data)),
+        .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, 1024*sizeof(cpu_body_data)),
+        .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, 1024*sizeof(gpu_body_data)),
+        .n_bodies = 0,
+        .joints = (joint*) permalloc_clear(manager, 1024*sizeof(joint)),
+        .n_joints = 0,
+        .parts = (body_part*) permalloc_clear(manager, 1024*sizeof(body_part)),
+        .n_parts = 0,
         .c = (chunk*) permalloc(manager, 8*sizeof(chunk)),
         .chunk_lookup = {},
     };
@@ -582,108 +587,241 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE, &max_3d_texture_size);
     log_output("GL_MAX_3D_TEXTURE_SIZE: ", max_3d_texture_size, "\n");
 
-    // for(int i = 0; i < 27; i++)
-    for(int i = 0; i < 8; i++)
-    {
-        chunk* c = w.c+i;
+    chunk* c = w.c;
 
-        c->materials = (uint16*) permalloc(manager, sizeof(uint16)*chunk_size*chunk_size*chunk_size);
+    c->materials = (uint16*) permalloc(manager, sizeof(uint16)*chunk_size*chunk_size*chunk_size);
 
-        for(int z = 0; z < chunk_size; z++)
-            for(int y = 0; y < chunk_size; y++)
-                for(int x = 0; x < chunk_size; x++)
+    for(int z = 0; z < chunk_size; z++)
+        for(int y = 0; y < chunk_size; y++)
+            for(int x = 0; x < chunk_size; x++)
+            {
+                int material = 0;
+                int height = 20;
+                real rsq = sq(x-chunk_size/2)+sq(y-chunk_size/2);
+                // height += 0.03*rsq*(exp(-0.0005*rsq));
+                int ramp_height = 20;
+                // height += clamp(ramp_height-abs(y-128), 0, ramp_height);
+                height += clamp((float) ramp_height-abs(sqrt(rsq)-80), 0.0, (float) ramp_height);
+                if(z < height) material = 1;
+                // else if(z < chunk_size-1) material = (randui(&w.seed)%prob)==0;
+                // if(x == chunk_size/2+0 && y == chunk_size/2+0) material = 2;
+                // if(x == chunk_size/2+0 && y == chunk_size/2-1) material = 2;
+                // if(x == chunk_size/2-1 && y == chunk_size/2-1) material = 2;
+                // if(x == chunk_size/2-1 && y == chunk_size/2+0) material = 2;
+
+                if(z <= 5) material = 3;
+                if(z > chunk_size-10) material = 3;
+
+                int door_width = 20;
+                if(abs(x-chunk_size/2) > door_width/2 && abs(y-chunk_size/2) > door_width/2 ||
+                   x <            5 ||
+                   x > chunk_size-5 ||
+                   y <            5 ||
+                   y > chunk_size-5)
                 {
-                    int material = 0;
-                    int height = 20;
-                    real rsq = sq(x-chunk_size/2)+sq(y-chunk_size/2);
-                    // height += 0.03*rsq*(exp(-0.0005*rsq));
-                    int ramp_height = 20;
-                    // height += clamp(ramp_height-abs(y-128), 0, ramp_height);
-                    height += clamp((float) ramp_height-abs(sqrt(rsq)-80), 0.0, (float) ramp_height);
-                    if(z+chunk_size*(i/4) < height) material = 1;
-                    // else if(z < chunk_size-1) material = (randui(&w.seed)%prob)==0;
-                    // if(x == chunk_size/2+0 && y == chunk_size/2+0) material = 2;
-                    // if(x == chunk_size/2+0 && y == chunk_size/2-1) material = 2;
-                    // if(x == chunk_size/2-1 && y == chunk_size/2-1) material = 2;
-                    // if(x == chunk_size/2-1 && y == chunk_size/2+0) material = 2;
-
-                    if(i <= 3 && z <= 5) material = 3;
-                    if(i > 3 && z > chunk_size-10) material = 3;
-
-                    int door_width = 20;
-                    if(abs(x-chunk_size/2) > door_width/2 && abs(y-chunk_size/2) > door_width/2 ||
-                       x <            5 && (i%4 == 0 || i%4 == 2) ||
-                       x > chunk_size-5 && (i%4 == 1 || i%4 == 3) ||
-                       y <            5 && (i%4 == 0 || i%4 == 1) ||
-                       y > chunk_size-5 && (i%4 == 3 || i%4 == 2))
-                    {
-                        if(y <= 10) material = 3;
-                        if(x <= 10) material = 3;
-                        if(chunk_size-y <= 10) material = 3;
-                        if(chunk_size-x <= 10) material = 3;
-                        // if(chunk_size-z <= 10) material = 3;
-                    }
-
-                    // if(y == chunk_size/2 && abs(x-chunk_size/2) <= 2*(i) && x%2 == 0) material = 3;
-                    if(y == chunk_size*3/4 && x == chunk_size*3/4 && z < 50) material = 3;
-
-                    // if(material == 0) material = 2*((randui(&w.seed)%10000)==0); //"rain"
-                    c->materials[x+chunk_size*y+chunk_size*chunk_size*z] = material;
+                    if(y <= 10) material = 3;
+                    if(x <= 10) material = 3;
+                    if(chunk_size-y <= 10) material = 3;
+                    if(chunk_size-x <= 10) material = 3;
+                    // if(chunk_size-z <= 10) material = 3;
                 }
 
-        int8_2 offset = load_chunk_to_gpu(c);
-        w.chunk_lookup[i] = offset;
+                if(abs(z-chunk_size/2) < 5 && abs(x-chunk_size/2)+abs(y-chunk_size/2) > 30) material = 3;
+
+                // if(y == chunk_size/2 && abs(x-chunk_size/2) <= 2*(i) && x%2 == 0) material = 3;
+                if(y == chunk_size*3/4 && x == chunk_size*3/4 && z < 50) material = 3;
+
+                // if(material == 0) material = 2*((randui(&w.seed)%10000)==0); //"rain"
+                c->materials[x+chunk_size*y+chunk_size*chunk_size*z] = material;
+            }
+
+    load_chunk_to_gpu(c);
+
+    for(int b = 0; b < 4; b++)
+    {
+        w.bodies_gpu[b].size = {12,12,12};
+        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
+        w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
+        w.bodies_gpu[b].x = {chunk_size*3/4-5*b, chunk_size/2, 50};
+        w.bodies_gpu[b].x_dot = {0,0,0};
+        // w.bodies_gpu[b].omega = {0.0,-0.5,0.0};
+        w.bodies_gpu[b].omega = {0.0,0.0,0.0};
+        w.bodies_gpu[b].orientation = {1,0,0,0};
+
+        real half_angle = 0.5*(pi/4);
+        real_3 axis = {1,0,0};
+        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
+        // w.b->orientation = w.b->orientation*rotation;
+
+        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
+            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
+                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+                {
+                    bool x_middle = x >= w.bodies_gpu[b].size.x/3 && x < w.bodies_gpu[b].size.x*2/3;
+                    bool y_middle = y >= w.bodies_gpu[b].size.x/3 && y < w.bodies_gpu[b].size.x*2/3;
+                    bool z_middle = z >= w.bodies_gpu[b].size.x/3 && z < w.bodies_gpu[b].size.x*2/3;
+
+                    // int material = 2;
+                    // if((x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu[b].size.z-1)) material = 1;
+                    // if((x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu[b].size.x-1)) material = 1;
+                    // if((x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu[b].size.y-1)) material = 1;
+                    // if(x_middle && y_middle) material = 0;
+                    // if(y_middle && z_middle) material = 0;
+                    // if(z_middle && x_middle) material = 0;
+
+                    int material = 0;
+                    if(x_middle && y_middle) material = 2;
+                    if(y_middle && z_middle) material = 2;
+                    if(z_middle && x_middle) material = 2;
+                    if(material == 2 && (x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu[b].size.z-1)) material = 1;
+                    if(material == 2 && (x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu[b].size.x-1)) material = 1;
+                    if(material == 2 && (x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu[b].size.y-1)) material = 1;
+
+                    // if(abs(y - 12) > 2 || abs(x - 12) > 2) material = 0;
+
+                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+                }
+        w.n_bodies++;
     }
 
-    glBindTexture(GL_TEXTURE_3D, chunk_lookup_texture);
-    glTexSubImage3D(GL_TEXTURE_3D, 0,
-                    0, 0, 0,
-                    2, 2, 2,
-                    GL_RG_INTEGER, GL_BYTE,
-                    w.chunk_lookup);
+    int limb_length = 6;
+    int body_length = 8;
+    int body_width = 5;
 
-    w.bodies_gpu->size = {28,27,27};
-    w.bodies_cpu->materials = (uint16*) permalloc(manager, w.bodies_gpu->size.x*w.bodies_gpu->size.y*w.bodies_gpu->size.z*sizeof(uint16));
-    w.bodies_gpu->x_cm = 0.5*real_cast(w.bodies_gpu->size);
-    w.bodies_gpu->x = {chunk_size*3/4, chunk_size/2, 50};
-    w.bodies_gpu->x_dot = {0,0,0};
-    // w.bodies_gpu->omega = {0.0,-0.5,0.0};
-    w.bodies_gpu->omega = {0.0,0.0,0.0};
-    w.bodies_gpu->orientation = {1,0,0,0};
+    int limb_start_id = w.n_bodies;
+    int body_id;
+    int head_id;
+    for(int i = 0; i < 8; i++) //limbs
+    {
+        int b = w.n_bodies;
+        w.bodies_gpu[b].size = {limb_length,1,1};
+        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
+        w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
+        w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
+        w.bodies_gpu[b].x_dot = {0,0,0};
+        w.bodies_gpu[b].omega = {0.0,0.0,0.0};
+        w.bodies_gpu[b].orientation = {1,0,0,0};
 
-    real half_angle = 0.5*(pi/4);
-    real_3 axis = {1,0,0};
-    quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
-    // w.b->orientation = w.b->orientation*rotation;
+        real half_angle = 0.5*(pi/4);
+        real_3 axis = {1,0,0};
+        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
+        // w.b->orientation = w.b->orientation*rotation;
 
-    for(int z = 0; z < w.bodies_gpu->size.z; z++)
-        for(int y = 0; y < w.bodies_gpu->size.y; y++)
-            for(int x = 0; x < w.bodies_gpu->size.x; x++)
-            {
-                bool x_middle = x >= 9 && x < 18;
-                bool y_middle = y >= 9 && y < 18;
-                bool z_middle = z >= 9 && z < 18;
+        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
+            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
+                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+                {
+                    int material = 2;
+                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+                }
+        w.n_bodies++;
+    }
 
-                // int material = 2;
-                // if((x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu->size.z-1)) material = 1;
-                // if((x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu->size.x-1)) material = 1;
-                // if((x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu->size.y-1)) material = 1;
-                // if(x_middle && y_middle) material = 0;
-                // if(y_middle && z_middle) material = 0;
-                // if(z_middle && x_middle) material = 0;
+    {
+        int b = w.n_bodies;
+        body_id = b;
+        w.bodies_gpu[b].size = {body_length,body_width,1};
+        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
+        w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
+        w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
+        w.bodies_gpu[b].x_dot = {0,0,0};
+        w.bodies_gpu[b].omega = {0.0,0.0,0.0};
+        w.bodies_gpu[b].orientation = {1,0,0,0};
 
-                int material = 0;
-                if(x_middle && y_middle) material = 2;
-                if(y_middle && z_middle) material = 2;
-                if(z_middle && x_middle) material = 2;
-                if(material == 2 && (x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu->size.z-1)) material = 1;
-                if(material == 2 && (x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu->size.x-1)) material = 1;
-                if(material == 2 && (x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu->size.y-1)) material = 1;
+        real half_angle = 0.5*(pi/4);
+        real_3 axis = {1,0,0};
+        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
+        // w.b->orientation = w.b->orientation*rotation;
 
-                if(abs(y - 14) > 2 || abs(x - 14) > 2) material = 0;
+        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
+            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
+                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+                {
+                    int material = 0;
+                    if(x < limb_length || (z == 0 && y == body_width/2)) material = 2;
+                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+                }
+        w.n_bodies++;
+    }
 
-                w.bodies_cpu->materials[x+y*w.bodies_gpu->size.x+z*w.bodies_gpu->size.x*w.bodies_gpu->size.y] = material;
-            }
+    {
+        int b = w.n_bodies;
+        head_id = b;
+        w.bodies_gpu[b].size = {6,6,6};
+        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
+        w.bodies_gpu[b].x_cm = {2.5,2.5,2.5};
+        w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
+        w.bodies_gpu[b].x_dot = {0,0,0};
+        w.bodies_gpu[b].omega = {0.0,0.0,0.0};
+        w.bodies_gpu[b].orientation = {1,0,0,0};
+
+        real half_angle = 0.5*(pi/4);
+        real_3 axis = {1,0,0};
+        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
+        // w.b->orientation = w.b->orientation*rotation;
+
+        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
+            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
+                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+                {
+                    if(x >= 5 || y >= 5 || z >= 5) continue;
+                    int material = 2;
+                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+                }
+        w.n_bodies++;
+    }
+
+    w.joints[w.n_joints++] = {
+        .type = joint_hinge,
+        .body_id = {0, 1},
+        .pos = {{4,4,0}, {4,4,0}},
+        .axis = {0,0},
+    };
+
+    for(int i = 0; i < 4; i++)
+    {
+        w.joints[w.n_joints++] = {
+            .type = joint_hinge,
+            .body_id = {limb_start_id+2*i, limb_start_id+2*i+1},
+            .pos = {{limb_length-1,0,0}, {0,0,0}},
+            .axis = {1,1},
+        };
+    }
+
+    w.joints[w.n_joints++] = {
+        .type = joint_ball,
+        .body_id = {limb_start_id+0, body_id},
+        .pos = {{0,0,0},{0,0,0}},
+        .axis = {1,1},
+    };
+    w.joints[w.n_joints++] = {
+        .type = joint_ball,
+        .body_id = {limb_start_id+2, body_id},
+        .pos = {{0,0,0},{0,body_width-1,0}},
+        .axis = {1,1},
+    };
+    w.joints[w.n_joints++] = {
+        .type = joint_ball,
+        .body_id = {limb_start_id+4, body_id},
+        .pos = {{0,0,0},{limb_length-1,0,0}},
+        .axis = {1,1},
+    };
+    w.joints[w.n_joints++] = {
+        .type = joint_ball,
+        .body_id = {limb_start_id+6, body_id},
+        .pos = {{0,0,0},{limb_length-1,body_width-1,0}},
+        .axis = {1,1},
+    };
+    w.joints[w.n_joints++] = {
+        .type = joint_ball,
+        .body_id = {head_id, body_id},
+        .pos = {{2,2,0}, {body_length-1,body_width/2,0}},
+    };
+
+    for(int j = 0; j < w.n_joints; j++)
+    {
+        w.parts[w.n_parts++] = {part_joint, (void*) &w.joints[j]};
+    }
 
     // CreateDirectory(w.tim.savedir, 0);
     // w.entity_savefile = open_file("entities.dat");
@@ -866,8 +1004,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             update_and_render(manager, &w, &rd, &ui, &ad, wnd.input);
 
             if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
+            simulate_chunk(w.c, 1);
             // for(int i = 0 ; i < 8; i++)
-            simulate_chunk(w.c);
+            //     simulate_chunk(w.c, 0);
             // if(is_pressed('Z', wnd.input)) simulate_chunk(w.c);
 
             //TODO: seperate update and render to improve performance and allow for a partial step for visual updating
@@ -881,7 +1020,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         glEnable(GL_DEPTH_TEST);
         render_chunk(w.c, rd.camera_axes, rd.camera_pos);
 
-        render_body(w.bodies_cpu, w.bodies_gpu, rd.camera_axes, rd.camera_pos);
+        for(int b = 0; b < w.n_bodies; b++)
+        {
+            render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
+        }
 
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);
