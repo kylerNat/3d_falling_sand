@@ -648,6 +648,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
         w.bodies_gpu[b].orientation = {1,0,0,0};
 
+        w.bodies_gpu[b].m = 1.0;
+        w.bodies_cpu[b].I = real_identity_3(10.0);
+
         real half_angle = 0.5*(pi/4);
         real_3 axis = {1,0,0};
         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
@@ -702,6 +705,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
         w.bodies_gpu[b].orientation = {1,0,0,0};
 
+        w.bodies_gpu[b].m = 0.0;
+        w.bodies_cpu[b].I = {};
+
         real half_angle = 0.5*(pi/4);
         real_3 axis = {1,0,0};
         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
@@ -713,6 +719,17 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 {
                     int material = 2;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+
+                    real m = 0.001;
+                    if(material == 0) m = 0;
+                    w.bodies_gpu[b].m += m;
+
+                    real_3 r = {x+0.5,y+0.5,z+0.5};
+                    r += -w.bodies_gpu[b].x_cm;
+                    w.bodies_cpu[b].I += real_identity_3(m*(0.4*sq(0.5)+normsq(r)));
+                    for(int i = 0; i < 3; i++)
+                        for(int j = 0; j < 3; j++)
+                            w.bodies_cpu[b].I[i][j] += -m*r[i]*r[j];
                 }
         w.n_bodies++;
     }
@@ -728,6 +745,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
         w.bodies_gpu[b].orientation = {1,0,0,0};
 
+        w.bodies_gpu[b].m = 0.0;
+        w.bodies_cpu[b].I = {};
+
         real half_angle = 0.5*(pi/4);
         real_3 axis = {1,0,0};
         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
@@ -740,6 +760,17 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     int material = 0;
                     if(x < limb_length || (z == 0 && y == body_width/2)) material = 2;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+
+                    real m = 0.001;
+                    if(material == 0) m = 0;
+                    w.bodies_gpu[b].m += m;
+
+                    real_3 r = {x+0.5,y+0.5,z+0.5};
+                    r += -w.bodies_gpu[b].x_cm;
+                    w.bodies_cpu[b].I += real_identity_3(m*(0.4*sq(0.5)+normsq(r)));
+                    for(int i = 0; i < 3; i++)
+                        for(int j = 0; j < 3; j++)
+                            w.bodies_cpu[b].I[i][j] += -m*r[i]*r[j];
                 }
         w.n_bodies++;
     }
@@ -755,6 +786,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
         w.bodies_gpu[b].orientation = {1,0,0,0};
 
+        w.bodies_gpu[b].m = 0.0;
+        w.bodies_cpu[b].I = {};
+
         real half_angle = 0.5*(pi/4);
         real_3 axis = {1,0,0};
         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
@@ -767,7 +801,64 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     if(x >= 5 || y >= 5 || z >= 5) continue;
                     int material = 2;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+                    real m = 0.001;
+                    if(material == 0) m = 0;
+                    w.bodies_gpu[b].m += m;
+
+                    real_3 r = {x+0.5,y+0.5,z+0.5};
+                    r += -w.bodies_gpu[b].x_cm;
+                    w.bodies_cpu[b].I += real_identity_3(m*(0.4*sq(0.5)+normsq(r)));
+                    for(int i = 0; i < 3; i++)
+                        for(int j = 0; j < 3; j++)
+                            w.bodies_cpu[b].I[i][j] += -m*r[i]*r[j];
                 }
+        w.n_bodies++;
+    }
+
+    {
+        int b = w.n_bodies;
+        w.bodies_gpu[b].size = {20,10,5};
+        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
+        w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
+        w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
+        w.bodies_gpu[b].x_dot = {0,0,0};
+        w.bodies_gpu[b].omega = {0.0,0.0,0.0};
+        w.bodies_gpu[b].orientation = {1,0,0,0};
+
+        w.bodies_gpu[b].m = 0.0;
+        w.bodies_cpu[b].I = {};
+
+        real half_angle = 0.5*(pi/4);
+        real_3 axis = {1,0,0};
+        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
+        // w.b->orientation = w.b->orientation*rotation;
+
+        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
+            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
+                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+                {
+                    int material = 2;
+                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+                    real m = 0.001;
+                    w.bodies_gpu[b].m += m;
+
+                    real_3 r = {x+0.5,y+0.5,z+0.5};
+                    r += -w.bodies_gpu[b].x_cm;
+                    w.bodies_cpu[b].I += real_identity_3(m*(0.4*sq(0.5)+normsq(r)));
+                    for(int i = 0; i < 3; i++)
+                        for(int j = 0; j < 3; j++)
+                            w.bodies_cpu[b].I[i][j] += -m*r[i]*r[j];
+                }
+
+        // for(int i = 0; i < 3; i++)
+        // {
+        //     for(int j = 0; j < 3; j++)
+        //         log_output(w.bodies_cpu[b].I[i][j], " ");
+        //     log_output("\n");
+        // }
+        // log_output("\n");
+        // log_output(w.bodies_gpu[b].m, "\n");
+        // log_output("\n");
         w.n_bodies++;
     }
 
@@ -821,6 +912,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     for(int j = 0; j < w.n_joints; j++)
     {
         w.parts[w.n_parts++] = {part_joint, (void*) &w.joints[j]};
+    }
+
+    for(int b = 0; b < w.n_bodies; b++)
+    {
+        w.bodies_cpu[b].invI = inverse(w.bodies_cpu[b].I);
+        update_inertia(&w.bodies_cpu[b], &w.bodies_gpu[b]);
     }
 
     // CreateDirectory(w.tim.savedir, 0);

@@ -28,6 +28,7 @@ int current_materials_texture = 0;
 
 #define body_texture_size 128
 GLuint body_materials_textures[2];
+int current_body_materials_texture = 0;
 int n_body_materials_textures = 0;
 
 GLuint body_forces_texture;

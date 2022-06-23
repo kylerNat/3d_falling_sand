@@ -75,8 +75,14 @@ struct cpu_body_data
     GLuint materials_texture;
     int storage_level;
 
+    real_3 last_contact_point;
+
     int* part_ids;
     int n_parts;
+
+    //these are in body coordinates, while the gpu versions are in world coordinates
+    real_3x3 I;
+    real_3x3 invI;
 };
 
 #pragma pack(push, 1)
@@ -89,6 +95,9 @@ struct gpu_body_data
     real_3 x_dot;
     quaternion orientation;
     real_3 omega;
+    real m;
+    real_3x3 I;
+    real_3x3 invI;
 };
 #pragma pack(pop)
 
@@ -124,6 +133,15 @@ bool is_intersecting(bounding_box a, bounding_box b)
     return is_inside(closest_a_point_to_b, {2*b.l, 2*b.u}) || is_inside(closest_b_point_to_a, {2*a.l, 2*a.u});
 }
 
+void update_inertia(cpu_body_data* body_cpu, gpu_body_data* body_gpu)
+{
+    //NOTE: techincally the innermost I should be transposed, but it should be a symmetric matrix
+    body_gpu->I = apply_rotation(body_gpu->orientation, transpose(apply_rotation(body_gpu->orientation, body_cpu->I)));
+    // log_output("I: ", body_gpu->I, "\n");
+    body_gpu->invI = inverse(body_gpu->I);
+    // body_gpu->invI = apply_rotation(body_gpu->orientation, transpose(apply_rotation(body_gpu->orientation, transpose(body_cpu->invI))));
+}
+
 // void simulate_special_voxels(gpu_body_data* bodies_gpu, special_voxel* special_voxels, int n_special_voxels)
 // {
 //     for(int v = 0; v < n_special_voxels; v++)
@@ -147,7 +165,7 @@ bool is_intersecting(bounding_box a, bounding_box b)
 //     }
 // }
 
-void simulate_body_parts(gpu_body_data* bodies_gpu, body_part* parts, int n_parts)
+void simulate_body_parts(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, body_part* parts, int n_parts)
 {
     for(int i = 0; i < n_parts; i++)
     { //TODO: want to randomize joint update order
@@ -157,29 +175,28 @@ void simulate_body_parts(gpu_body_data* bodies_gpu, body_part* parts, int n_part
         {
             case joint_ball:
             {
-                real I = 10;
-                real m = 1;
-
                 real_3 u = {0,0,0};
+                real mu = 0; //reduced mass
                 for(int a = 0; a <= 1; a++)
                 {
                     gpu_body_data* body = &bodies_gpu[j->body_id[a]];
                     real_3 r = apply_rotation(body->orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
                     real_3 velocity = cross(body->omega, r)+body->x_dot;
                     u += (a?-1:1)*velocity;
+                    mu += 1.0/body->m;
                 }
+                mu = 1.0/mu;
 
-                real_3 deltax_dot = 0.1*u;
+                real_3 deltap = 0.2*u*mu;
 
                 for(int a = 0; a <= 1; a++)
                 {
                     gpu_body_data* body = &bodies_gpu[j->body_id[a]];
                     real_3 r = apply_rotation(body->orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
                     real s = (a?1:-1);
-                    body->x_dot += s*deltax_dot;
-                    body->omega += (m/I)*cross(r, s*deltax_dot);
+                    body->x_dot += s*deltap/body->m;
+                    body->omega += body->invI*cross(r, s*deltap);
                 }
-
 
                 { //position correction
                     real_3 u = {0,0,0};
@@ -192,109 +209,29 @@ void simulate_body_parts(gpu_body_data* bodies_gpu, body_part* parts, int n_part
                         u += (a?-1:1)*pos;
                     }
 
-                    real_3 deltax = 0.1*u;
+                    real_3 pseudo_force = 0.2*u*mu;
 
                     for(int a = 0; a <= 1; a++)
                     {
                         gpu_body_data* body = &bodies_gpu[j->body_id[a]];
                         real_3 r = apply_rotation(body->orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
                         real s = (a?1:-1);
-                        body->x += s*deltax;
-                        real_3 pseudo_omega = (m/I)*cross(r, s*deltax);
+                        body->x += s*pseudo_force/body->m;
+                        real_3 pseudo_omega = body->invI*cross(r, s*pseudo_force);
                         body->orientation = axis_to_quaternion(pseudo_omega)*body->orientation;
+                        cpu_body_data* body_cpu = &bodies_cpu[j->body_id[a]];
+                        update_inertia(body_cpu, body);
                     }
                 }
-
-
-                // //TODO: apply equal forces to both bodies
-                // real I = 10;
-                // real m = 1;
-
-                // real_3x3 jacobian = real_identity_3(2.0);
-                // real_3 u = {0,0,0};
-                // for(int a = 0; a <= 1; a++)
-                // {
-                //     gpu_body_data* body = &bodies_gpu[j->body_id[a]];
-                //     real_3 r = apply_rotation(body->orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
-                //     real_3 velocity = cross(body->omega, r)+body->x_dot;
-                //     real_3x3 inverse_inertia = real_identity_3(1.0/I);
-                //     u += (a?-1:1)*velocity;
-                //     for(int n = 0; n < 3; n++)
-                //         for(int l = 0; l < 3; l++)
-                //             for(int s = 1; s <= 2; s++)
-                //                 for(int t = 1; t <= 2; t++)
-                //                     jacobian[n][l] +=
-                //                         (t%2?1:-1)*(s%2?1:-1) //levi-cevita sign stuff
-                //                         * m*inverse_inertia[(n+s)%3][(l+t)%3]
-                //                         * r[(l+2*t)%3]*r[(n+2*s)%3];
-                // }
-
-                // real_3 deltax_dot = inverse(jacobian)*u;
-
-                // for(int a = 0; a <= 1; a++)
-                // {
-                //     gpu_body_data* body = &bodies_gpu[j->body_id[a]];
-                //     real_3 r = apply_rotation(body->orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
-                //     real s = (a?1:-1);
-                //     body->x_dot += s*deltax_dot;
-                //     body->omega += (m/I)*cross(r, s*deltax_dot);
-                // }
-
-                // // real_3 u_final = {0,0,0};
-                // // for(int a = 0; a <= 1; a++)
-                // // {
-                // //     gpu_body_data* body = &bodies_gpu[j->body_id[a]];
-                // //     real_3 r = apply_rotation(body->orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
-                // //     real_3 velocity = cross(body->omega, r)+body->x_dot;
-                // //     real_3x3 inverse_inertia = real_identity_3(1.0/I);
-                // //     u_final += (a?-1:1)*velocity;
-                // // }
-                // // log_output(u, " : ", u_final, ", ", u-jacobian*deltax_dot, "\n");
-
-                // { //position correction
-                //     real_3x3 jacobian = real_identity_3(2.0);
-                //     real_3 u = {0,0,0};
-                //     for(int a = 0; a <= 1; a++)
-                //     {
-                //         gpu_body_data* body = &bodies_gpu[j->body_id[a]];
-                //         quaternion orientation = axis_to_quaternion(body->omega)*body->orientation;
-                //         real_3 r = apply_rotation(orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
-                //         real_3 pos = r+body->x+body->x_dot;
-                //         real_3x3 inverse_inertia = real_identity_3(1.0/I);
-                //         u += (a?-1:1)*pos;
-                //         for(int n = 0; n < 3; n++)
-                //             for(int l = 0; l < 3; l++)
-                //                 for(int s = 1; s <= 2; s++)
-                //                     for(int t = 1; t <= 2; t++)
-                //                         jacobian[n][l] +=
-                //                             (t%2?1:-1)*(s%2?1:-1) //levi-cevita sign stuff
-                //                             * m*inverse_inertia[(n+s)%3][(l+t)%3]
-                //                             * r[(l+2*t)%3]*r[(n+2*s)%3];
-                //     }
-
-                //     real_3 deltax_dot = inverse(jacobian)*u;
-
-                //     for(int a = 0; a <= 1; a++)
-                //     {
-                //         gpu_body_data* body = &bodies_gpu[j->body_id[a]];
-                //         real_3 r = apply_rotation(body->orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
-                //         real s = (a?1:-1);
-                //         body->x += s*deltax_dot;
-                //         real_3 pseudo_omega = (m/I)*cross(r, s*deltax_dot);
-                //         body->orientation = axis_to_quaternion(pseudo_omega)*body->orientation;
-                //     }
-                // }
-
                 break;
             }
 
             case joint_hinge:
             {
-                real I = 10;
-                real m = 1;
-
                 real_3 u = {0,0,0};
                 real_3 nu = {0,0,0};
+                real mu = 0.0;
+                real_3x3 reduced_I = {};
                 for(int a = 0; a <= 1; a++)
                 {
                     gpu_body_data* body = &bodies_gpu[j->body_id[a]];
@@ -305,20 +242,23 @@ void simulate_body_parts(gpu_body_data* bodies_gpu, body_part* parts, int n_part
                     axis = apply_rotation(body->orientation, axis);
                     u += (a?-1:1)*velocity;
                     nu += (a?-1:1)*rej(body->omega, axis);
+                    mu += 1.0/body->m;
+                    reduced_I += body->invI;
                 }
+                mu = 1.0/mu;
+                reduced_I = inverse(reduced_I);
 
-                real_3 deltax_dot = 0.1*u;
-                real_3 deltaL = 0.1*nu*I;
-                //TODO: figure out how to scale by I for the full matrix
-                //TODO: want to make sure to apply no torque along the axis
+                real_3 deltap = 0.2*u*mu;
+                real_3 deltaL = reduced_I*(0.2*nu);
+                //TODO: want to avoid applying torque along the axis
 
                 for(int a = 0; a <= 1; a++)
                 {
                     gpu_body_data* body = &bodies_gpu[j->body_id[a]];
                     real_3 r = apply_rotation(body->orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
                     real s = (a?1:-1);
-                    body->x_dot += s*deltax_dot;
-                    body->omega += (m/I)*cross(r, s*deltax_dot) + s*deltaL/I;
+                    body->x_dot += s*deltap/body->m;
+                    body->omega += s*body->invI*(cross(r, deltap) + deltaL);
                 }
 
                 { //position correction
@@ -338,19 +278,22 @@ void simulate_body_parts(gpu_body_data* bodies_gpu, body_part* parts, int n_part
                         else nu = cross(axis, nu);
                     }
 
-                    real_3 deltax = 0.1*u;
-                    real_3 deltaorientation = 0.1*nu*I;
+                    real_3 pseudo_force = 0.2*u*mu;
+                    real_3 pseudo_torque = reduced_I*(0.2*nu);
 
                     for(int a = 0; a <= 1; a++)
                     {
                         gpu_body_data* body = &bodies_gpu[j->body_id[a]];
                         real_3 r = apply_rotation(body->orientation, real_cast(j->pos[a])+(real_3){0.5,0.5,0.5}-body->x_cm);
                         real s = (a?1:-1);
-                        body->x_dot += s*deltax;
-                        real_3 pseudo_omega = (m/I)*cross(r, s*deltax) + s*deltaorientation/I;
+                        body->x += s*pseudo_force/body->m;
+                        real_3 pseudo_omega = s*(body->invI*(cross(r, pseudo_force) + pseudo_torque));
                         body->orientation = axis_to_quaternion(pseudo_omega)*body->orientation;
+                        cpu_body_data* body_cpu = &bodies_cpu[j->body_id[a]];
+                        update_inertia(body_cpu, body);
                     }
                 }
+                break;
             }
             default:;
         }

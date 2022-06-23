@@ -11,6 +11,8 @@ crystals:
 nerves connect brain to joints, the connection just lets the brain know the joint exists and that it can be controlled
 the brain figures out how to move the joint based in the joint type
 
+brain can magically apply forces to the aether, which allows air strafign and slow/fast falling, or flight for sufficiently small creatures
+
 format
 10 bits - material index
  4 bits - distance field
