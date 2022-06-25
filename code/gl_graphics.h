@@ -244,7 +244,7 @@ GLuint particles_x_texture;
 GLuint particles_x_dot_texture;
 
 GLuint body_x_dot_texture;
-GLuint body_r_texture;
+GLuint body_omega_texture;
 
 #define N_MAX_CAPSULES 4096
 GLuint capsules_texture;
@@ -252,8 +252,22 @@ GLuint capsules_texture;
 GLuint collision_point_texture;
 GLuint collision_normal_texture;
 
+GLuint color_texture;
+GLuint depth_buffer;
+
+int resolution_x = 640;
+int resolution_y = 360;
+
 void gl_init_general_buffers(memory_manager* manager)
 {
+    glGenTextures(1, &color_texture);
+    glBindTexture(GL_TEXTURE_2D, color_texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, resolution_x, resolution_y);
+
+    glGenRenderbuffers(1, &depth_buffer);
+    glBindRenderbuffer(GL_RENDERBUFFER, depth_buffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32, resolution_x, resolution_y);
+
     glGenBuffers(N_GENERAL_BUFFERS, gl_general_buffers);
     for(int i = 0; i < N_GENERAL_BUFFERS; i++)
     {
@@ -285,14 +299,14 @@ void gl_init_general_buffers(memory_manager* manager)
     for(int i = 0; i < len(materials_textures); i++)
     {
         glBindTexture(GL_TEXTURE_3D, materials_textures[i]);
-        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGB16I, chunk_size, chunk_size, chunk_size);
+        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RG32I, chunk_size, chunk_size, chunk_size);
     }
 
     glGenTextures(len(body_materials_textures), body_materials_textures);
     for(int i = 0; i < len(body_materials_textures); i++)
     {
         glBindTexture(GL_TEXTURE_3D, body_materials_textures[i]);
-        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGB16I, body_texture_size, body_texture_size, body_texture_size);
+        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RG32I, body_texture_size, body_texture_size, body_texture_size);
     }
 
     glGenTextures(1, &body_forces_texture);
@@ -321,9 +335,9 @@ void gl_init_general_buffers(memory_manager* manager)
     glBindTexture(GL_TEXTURE_2D, body_x_dot_texture);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, 1, N_MAX_BODIES);
 
-    glGenTextures(1, &body_r_texture);
+    glGenTextures(1, &body_omega_texture);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, body_r_texture);
+    glBindTexture(GL_TEXTURE_2D, body_omega_texture);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, 1, N_MAX_BODIES);
 
     glGenBuffers(1, &body_buffer);
@@ -375,6 +389,37 @@ void gl_load_programs(memory_manager* manager)
     #include "gl_shader_list.h"
     #undef define_program
 }
+
+void draw_to_screen(GLuint texture)
+{
+    glUseProgram(pinfo_fullscreen_texture.program);
+
+    int texture_i = 0;
+    int uniform_i = 0;
+
+    glUniform1i(uniform_i++, texture_i++);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+    size_t offset = 0;
+    int layout_location = 0;
+
+    //buffer square coord data (bounding box of circle)
+    real vb[] = {-1,-1,0,
+                 -1,+1,0,
+                 +1,+1,0,
+                 +1,-1,0};
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
+
+    add_contiguous_attribute(3, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+}
+
 
 void draw_sprites(GLuint spritesheet_texture, sprite_render_info* sprites, int n_sprites, real_4x4 camera)
 {
@@ -682,19 +727,21 @@ void simulate_chunk(chunk* c, int update_cells)
 
     GLuint vertex_buffer = gl_general_buffers[0];
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
-    // real vb[] = {-1,-1,0,
-    //              -1,+1,0,
-    //              +1,+1,0,
-    //              +1,-1,0};
-    real vb[3*32*32] = {};
+    real vb[] = {0,0,
+                 0,1,
+                 1,1,
+                 1,0};
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
+    add_contiguous_attribute(2, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+
+    real region_pos[2*32*32] = {};
     for(int i = 0; i < 32*32; i++)
     {
-        vb[3*i+0] = i%32;
-        vb[3*i+1] = (i/32)%32;
-        vb[3*i+2] = 0;
+        region_pos[2*i+0] = i%32;
+        region_pos[2*i+1] = (i/32)%32;
     }
-    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
-    add_contiguous_attribute(3, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(region_pos), (void*) region_pos);
+    add_interleaved_attribute(2, GL_FLOAT, false, 2*sizeof(region_pos[0]), 1);
 
     glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
     glViewport(0, 0, chunk_size, chunk_size);
@@ -709,7 +756,7 @@ void simulate_chunk(chunk* c, int update_cells)
         glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_3D,
                                materials_textures[1-current_materials_texture], 0, l);
 
-        glDrawArrays(GL_POINTS, 0, 32*32);
+        glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, 32*32);
     }
 
     glEnable(GL_DEPTH_TEST);
@@ -864,7 +911,7 @@ void simulate_bodies(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 
-    GLenum buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+    GLenum buffers[] = {GL_COLOR_ATTACHMENT0};
     glDrawBuffers(len(buffers), buffers);
 
     for(int l = 0; l < body_texture_size; l++)
@@ -873,17 +920,11 @@ void simulate_bodies(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n
 
         glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_3D,
                                body_materials_textures[1-current_body_materials_texture], 0, l);
-        glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_3D,
-                               body_forces_texture, 0, l);
-        glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_3D,
-                               body_shifts_texture, 0, l);
 
         glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, n_bodies);
     }
 
     glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_3D, 0, 0, 0);
-    glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_3D, 0, 0, 0);
-    glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_3D, 0, 0, 0);
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
@@ -893,7 +934,6 @@ void simulate_bodies(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n
 
 void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_bodies, render_data* rd)
 {
-    load_body_to_gpu(bodies_cpu, bodies_gpu);
     glUseProgram(pinfo_simulate_body_physics.program);
 
     int texture_i = 0;
@@ -958,7 +998,7 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
     glViewport(0, 0, 1, n_bodies);
 
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, body_x_dot_texture, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, body_r_texture, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, body_omega_texture, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, particles_x_texture, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, particles_x_dot_texture, 0);
 
@@ -972,7 +1012,7 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
     size_t out_size = n_bodies*sizeof(float)*3;
     byte* out_data = reserve_block(manager, 4*out_size);
     real_3* deltax_dots = (real_3*) out_data;
-    real_3* rs     = (real_3*) (out_data+out_size);
+    real_3* deltaomegas     = (real_3*) (out_data+out_size);
     real_3* pseudo_x_dots = (real_3*) (out_data+2*out_size);
     real_3* pseudo_omegas     = (real_3*) (out_data+3*out_size);
 
@@ -985,14 +1025,14 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
                          sizeof(deltax_dots[0])*n_bodies,
                          deltax_dots);
 
-    glGetTextureSubImage(body_r_texture,
+    glGetTextureSubImage(body_omega_texture,
                          0,
                          0, 0, 0,
                          1, n_bodies, 1,
                          GL_RGB,
                          GL_FLOAT,
-                         sizeof(rs[0])*n_bodies,
-                         rs);
+                         sizeof(deltaomegas[0])*n_bodies,
+                         deltaomegas);
 
     glGetTextureSubImage(particles_x_texture,
                          0,
@@ -1016,12 +1056,13 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
     {
         // draw_circle(rd, x_dots[b], 1.0, {1,0,0,1});
         // draw_circle(rd, omegas[b], 1.0, {0,1,0,1});
-        // draw_circle(rd, bodies_gpu[b].x, 0.2, {0,1,0,1});
-        // draw_circle(rd, bodies_gpu[b].x+20*(x_dots[b]-bodies_gpu[b].x_dot), 0.2, {1,0,0,1});
+        draw_circle(rd, bodies_gpu[b].x, 0.2, {0,1,0,1});
+        draw_circle(rd, bodies_gpu[b].x+20*(deltax_dots[b]), 0.2, {1,0,0,1});
         bodies_gpu[b].x_dot += deltax_dots[b];
-        bodies_gpu[b].omega     += bodies_gpu[b].m*bodies_gpu[b].invI*cross(rs[b], deltax_dots[b]);
+        // bodies_gpu[b].omega     += bodies_gpu[b].m*bodies_gpu[b].invI*cross(rs[b], deltax_dots[b]);
+        bodies_gpu[b].omega     += deltaomegas[b];
 
-        bodies_cpu[b].last_contact_point = rs[b];
+        bodies_cpu[b].last_contact_point = deltaomegas[b];
 
         bodies_gpu[b].x += pseudo_x_dots[b];
         real half_angle = 0.5*norm(pseudo_omegas[b]);

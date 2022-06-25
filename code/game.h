@@ -362,9 +362,6 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     // player->x += player->x_dot;
 
-    // real_3 old_x = w->bodies_gpu->x;
-    // quaternion old_orientation = w->bodies_gpu->orientation;
-
     for(int b = 0; b < w->n_bodies; b++)
     {
         w->bodies_gpu[b].x_dot *= 0.995;
@@ -379,25 +376,25 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     static float supported_weight = 0.0;
     // if(touching_grass > 0.0)
     {
-        real multiplier = 10;
-        real target_height = 14;
-        multiplier *= -(1.0*(w->bodies_gpu[13].x.z-0.5*w->bodies_gpu[5].x.z-0.5*w->bodies_gpu[7].x.z-target_height));
-        if(is_down('T', input)) multiplier = 100;
-        w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
-        w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[5].m;
-        w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[7].m;
-        // w->bodies_gpu[13].x_dot.z *= 0.8;
-        touching_grass -= 1.0;
+        // real multiplier = 10;
+        // real target_height = 14;
+        // multiplier *= -(1.0*(w->bodies_gpu[13].x.z-0.5*w->bodies_gpu[5].x.z-0.5*w->bodies_gpu[7].x.z-target_height));
+        // if(is_down('T', input)) multiplier = 100;
+        // w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
+        // w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[5].m;
+        // w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[7].m;
+        // // w->bodies_gpu[13].x_dot.z *= 0.8;
+        // touching_grass -= 1.0;
     }
 
     real_3 old_xl = w->bodies_gpu[5].x_dot;
     real_3 old_xr = w->bodies_gpu[7].x_dot;
 
-    for(int i = 0; i < 3; i++)
-    {
-        simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
-        simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
-    }
+    // simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
+    // for(int i = 0; i < 1; i++)
+    // {
+    //     simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
+    // }
 
     real_3 new_xl = w->bodies_gpu[5].x_dot;
     real_3 new_xr = w->bodies_gpu[7].x_dot;
@@ -597,12 +594,8 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     if(is_down(M1, input))
     {
-        // real_3 pos = player->x-placement_dist*camera_z;
-        // pos = clamp_per_axis(pos, 0, chunk_size-1);
-        // set_chunk_voxel(w, w->c, pos, 1);
-
-        real_3 pos = player->x-placement_dist*camera_z;
         int brush_size = 50;
+        real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
         pos = clamp_per_axis(pos, 0, chunk_size-brush_size-1);
         set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, 1);
     }

@@ -67,7 +67,7 @@ gl_load_operation(void, glPatchParameteri, (GLenum pname, GLint value));
 
 gl_load_operation(void, glGenRenderbuffers, (GLsizei n, GLuint *renderbuffers));
 gl_load_operation(void, glBindRenderbuffer, (GLenum target, GLuint renderbuffer));
-gl_load_operation(void, glRenderbufferStorage, ());
+gl_load_operation(void, glRenderbufferStorage, (GLenum target, GLenum internalformat, GLsizei width, GLsizei height));
 gl_load_operation(void, glGenFramebuffers, (GLsizei n, GLuint *framebuffers));
 gl_load_operation(void, glBindFramebuffer, (GLenum target, GLuint framebuffer));
 gl_load_operation(void, glFramebufferTexture, (GLenum target, GLenum attachment, GLuint texture, GLint level));

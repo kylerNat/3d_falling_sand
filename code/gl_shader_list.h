@@ -89,6 +89,42 @@ define_program(
         ));
 
 define_program(
+    fullscreen_texture,
+    ( //shaders
+    {GL_VERTEX_SHADER, "<2d circle vertex shader>",
+            DEFAULT_HEADER SHADER_SOURCE(
+                /////////////////<2d circle vertex shader>/////////////////
+                layout(location = 0) in vec3 x;
+
+                layout(location = 0) uniform mat4 t;
+
+                smooth out vec2 uv;
+
+                void main()
+                {
+                    gl_Position.xyz = x;
+                    gl_Position.w = 1.0;
+                    uv = 0.5f*x.xy+0.5f;
+                }
+                /*/////////////////////////////////////////////////////////////*/)},
+    {GL_FRAGMENT_SHADER, "<2d circle fragment shader>",
+            DEFAULT_HEADER SHADER_SOURCE(
+                ////////////////<2d circle fragment shader>////////////////
+                layout(location = 0) out vec4 frag_color;
+
+                layout(location = 1) uniform sampler2D color;
+
+                smooth in vec2 uv;
+
+                void main()
+                {
+                    frag_color = texture(color, uv);
+                }
+                /*/////////////////////////////////////////////////////////////*/)}
+        ));
+
+
+define_program(
     rectangle,
     ( //shaders
     {GL_VERTEX_SHADER, "<2d rectangle vertex shader>",
@@ -265,9 +301,13 @@ define_program(
                  return seed;
              }
 
-             float float_noise(uint seed)
-             {
-                 return float(int(seed))/1.0e10;
+             // float float_noise(uint seed)
+             // {
+             //     return fract(float(int(seed))/1.0e9);
+             // }
+
+             float float_noise(vec2 co){
+                 return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
              }
 
              ivec4 voxelFetch(isampler3D tex, ivec3 coord)
@@ -298,25 +338,23 @@ define_program(
                  //                 -        cos(screen_pos.x)*cos(screen_pos.y)*screen_dist *camera_axes[2]);
                  ray_dir = normalize(ray_dir);
 
+                 int bounces_remaining = 1;
+                 frag_color = vec4(0,0,0,1);
+                 vec3 color_multiplier = vec3(1,1,1);
+                 bool first_hit = true;
+                 float coarse_step = 1.0;
+
                  vec3 pos = camera_pos;
-                 vec3 sign = vec3(ray_dir.x > 0 ? 1: -1,
-                                  ray_dir.y > 0 ? 1: -1,
-                                  ray_dir.z > 0 ? 1: -1);
+                 vec3 ray_sign = sign(ray_dir);
 
-                 ivec3 isign = ivec3(ray_dir.x > 0 ? 1: -1,
-                                     ray_dir.y > 0 ? 1: -1,
-                                     ray_dir.z > 0 ? 1: -1);
+                 vec3 invabs_ray_dir = ray_sign/ray_dir;
 
-                 int hit_dir = 0;
+                 vec3 hit_dir = vec3(0);
 
                  float epsilon = 0.02;
-                 int max_iterations = 200;
+                 int max_iterations = 150;
                  int i = 0;
                  float total_dist = 0;
-                 vec3 invabs_ray_dir = sign/ray_dir;
-                 // if(abs(ray_dir.x) <= 0.002) {frag_color.rgba = vec4(1,0,0,1); return;};
-                 // if(abs(ray_dir.y) <= 0.002) {frag_color.rgba = vec4(1,0,0,1); return;};
-                 // if(abs(ray_dir.z) <= 0.002) {frag_color.rgba = vec4(1,0,0,1); return;};
 
                  if(pos.x < 0 && ray_dir.x > 0)      total_dist = max(total_dist, -epsilon+(-pos.x)/(ray_dir.x));
                  if(pos.x > size.x && ray_dir.x < 0) total_dist = max(total_dist, -epsilon+(size.x-pos.x)/(ray_dir.x));
@@ -329,21 +367,21 @@ define_program(
 
                  ivec3 ipos = ivec3(floor(pos));
 
-                 {
-                     vec3 dist = ((0.5*sign+0.5)*size-sign*pos)*invabs_ray_dir;
-                     float min_dist = dist.x;
-                     int min_dir = 0;
-                     if(dist.y < min_dist) {
-                         min_dist = dist.y;
-                         min_dir = 1;
-                     }
-                     if(dist.z < min_dist) {
-                         min_dist = dist.z;
-                         min_dir = 2;
-                     }
-                     ivec3 max_displacement = ivec3(ceil(abs(min_dist*ray_dir)));
-                     max_iterations = max_displacement.x+max_displacement.y+max_displacement.z;
-                 }
+                 // {
+                 //     vec3 dist = ((0.5*ray_sign+0.5)*size-ray_sign*pos)*invabs_ray_dir;
+                 //     float min_dist = dist.x;
+                 //     int min_dir = 0;
+                 //     if(dist.y < min_dist) {
+                 //         min_dist = dist.y;
+                 //         min_dir = 1;
+                 //     }
+                 //     if(dist.z < min_dist) {
+                 //         min_dist = dist.z;
+                 //         min_dir = 2;
+                 //     }
+                 //     ivec3 max_displacement = ivec3(ceil(abs(min_dist*ray_dir)));
+                 //     max_iterations = max_displacement.x+max_displacement.y+max_displacement.z;
+                 // }
                  // max_iterations = min(max_iterations, 100);
                  // max_iterations = max(max_iterations, 100);
 
@@ -352,74 +390,124 @@ define_program(
                      if(ipos.x < -1 || ipos.y < -1 || ipos.z < -1
                         || ipos.x > size.x || ipos.y > size.y || ipos.z > size.z)
                      {
-                         discard;
                          return;
                      }
                      while(texelFetch(occupied_regions, ipos/16, 0).r == 0)
                      {
-                         vec3 dist = ((0.5*sign+0.5)*16.0+sign*(16.0*floor(pos/16.0)-pos))*invabs_ray_dir;
-                         float min_dist = dist.x;
-                         int min_dir = 0;
-                         if(dist.y < min_dist) {
-                             min_dist = dist.y;
-                             min_dir = 1;
-                         }
-                         if(dist.z < min_dist) {
-                             min_dist = dist.z;
-                             min_dir = 2;
-                         }
+                         vec3 dist = ((0.5f*ray_sign+0.5f)*16.0f+ray_sign*(16.0f*floor(pos/16.0f)-pos))*invabs_ray_dir;
+                         vec3 min_dir = step(dist.xyz, dist.zxy)*step(dist.xyz, dist.yzx);
+                         float min_dist = dot(dist, min_dir);
+                         hit_dir = min_dir;
 
                          float step_dist = min_dist+epsilon;
                          pos += step_dist*ray_dir;
                          total_dist += step_dist;
-                         hit_dir = min_dir;
+                         // hit_dir = min_dir;
 
                          ipos = ivec3(floor(pos));
 
                          if(ipos.x < -1 || ipos.y < -1 || ipos.z < -1
                             || ipos.x > size.x || ipos.y > size.y || ipos.z > size.z)
                          {
-                             discard;
                              return;
                          }
 
                          if(++i >= max_iterations)
                          {
-                             discard;
                              return;
                          }
                      }
 
                      ivec4 voxel = texelFetch(materials, ipos+origin, 0);
-                     if(voxel.r != 0) break;
-
-                     if(voxel.g >= 3)
+                     if(voxel.r != 0)
                      {
-                         float skip_dist = (voxel.g-1)*0.5;
-                         // skip_dist -= mod(0.1*(gl_FragCoord.x+gl_FragCoord.y), 0.5);
-                         pos += ray_dir*skip_dist;
-                         total_dist += skip_dist;
+                         float roughness = 0.0f;
+                         vec3 emission = vec3(0.5f);
+                         if(voxel.r == 3)
+                         {
+                             emission = vec3(0.05,0.05,0.1);
+                         }
+                         if(voxel.r == 4)
+                         {
+                             emission = vec3(1.0,1.0,1.0);
+                         }
+
+                         // emission *= 1.0f-total_dist/(512.0f*sqrt(3));
+
+                         if(voxel.r > 1)
+                         {
+                             // color_multiplier *= 0.25;
+                             color_multiplier *= vec3(0.1,0.1,0.2);
+                             roughness = 0.1;
+                         }
+                         else
+                         {
+                             // color_multiplier *= 0.1;
+                             color_multiplier *= vec3(0.54,0.44,0.21);
+                             roughness = 0.9;
+                         }
+
+                         ivec3 ioutside = ipos - ivec3(hit_dir*ray_sign);
+                         vec3 gradient = vec3(
+                             voxelFetch(materials, ioutside+ivec3(1,0,0)).g-voxelFetch(materials, ioutside+ivec3(-1,0,0)).g,
+                             voxelFetch(materials, ioutside+ivec3(0,1,0)).g-voxelFetch(materials, ioutside+ivec3(0,-1,0)).g,
+                             voxelFetch(materials, ioutside+ivec3(0,0,1)).g-voxelFetch(materials, ioutside+ivec3(0,0,-1)).g+0.001f
+                             );
+                         vec3 normal = gradient;
+                         normal += roughness*vec3(float_noise(gl_FragCoord.xy+i*pos.yx+vec2(108,93))-0.5f,
+                                                    float_noise(gl_FragCoord.xy+i*pos.yx+vec2(48,139))-0.5f,
+                                                    float_noise(gl_FragCoord.xy+i*pos.yx+vec2(389,12))-0.5f);
+                         normal = normalize(normal);
+                         gradient = normalize(gradient);
+
+                         frag_color.rgb += color_multiplier*emission*(0.9f+0.1f*normal)*dot(normal, gradient);
+
+                         if(first_hit)
+                         {
+                             gl_FragDepth = 1.0f-total_dist/(512.0f*sqrt(3));
+                             first_hit = false;
+                         }
+                         if(bounces_remaining-- <= 0)
+                         {
+                             break;
+                         }
+                         else
+                         {
+                             ray_dir -= 2*dot(ray_dir, normal)*normal;
+
+                             ray_sign = sign(ray_dir);
+
+                             invabs_ray_dir = ray_sign/ray_dir;
+                         }
+                     }
+
+                     if(first_hit)
+                     {
+                         if(voxel.g >= 3)
+                         {
+                             float skip_dist = (voxel.g-2)/dot(ray_dir,ray_sign);
+                             // skip_dist -= mod(0.1*(gl_FragCoord.x+gl_FragCoord.y), 0.5);
+                             pos += ray_dir*skip_dist;
+                             total_dist += skip_dist;
+                             ipos = ivec3(floor(pos));
+                         }
+
+                         vec3 dist = (0.5f*ray_sign+0.5f+ray_sign*(vec3(ipos)-pos))*invabs_ray_dir;
+
+                         vec3 min_dir = step(dist.xyz, dist.zxy)*step(dist.xyz, dist.yzx);
+                         float min_dist = dot(dist, min_dir);
+                         pos += min_dist*ray_dir;
+                         ipos += ivec3(min_dir*ray_sign);
+                         total_dist += min_dist;
+                         hit_dir = min_dir;
+                     }
+                     else
+                     {
+                         pos += ray_dir*coarse_step;
+                         total_dist += coarse_step;
                          ipos = ivec3(floor(pos));
+                         coarse_step += 1.0f*coarse_step*(float_noise(pos.xy+pos.zz));
                      }
-
-                     vec3 dist = (0.5*sign+0.5+sign*(vec3(ipos)-pos))*invabs_ray_dir;
-                     float min_dist = dist.x;
-                     int min_dir = 0;
-                     if(dist.y < min_dist) {
-                         min_dist = dist.y;
-                         min_dir = 1;
-                     }
-                     if(dist.z < min_dist) {
-                         min_dist = dist.z;
-                         min_dir = 2;
-                     }
-
-                     pos += min_dist*ray_dir;
-                     if(min_dir == 0) ipos.x += isign.x;
-                     if(min_dir == 1) ipos.y += isign.y;
-                     if(min_dir == 2) ipos.z += isign.z;
-                     total_dist += min_dist;
-                     hit_dir = min_dir;
 
                      // if(voxel.g >= 3)
                      // {
@@ -434,65 +522,12 @@ define_program(
 
                      if(++i >= max_iterations)
                      {
-                         // frag_color = vec4(0.4, 0.2, 0.2, 1.0)*(min_dir+1.0);
-                         // frag_color.a = 1.0;
-                         discard;
                          return;
                      }
                  }
 
-                 frag_color = vec4(0.0, 0.0, 0.0, 1.0);
-                 // float brightness = clamp(1.0-2.0*total_dist/chunk_size, 0, 1);
-                 float brightness = 1.0;
-                 // vec3 dist_from_center = 2.0*abs(mod(pos, 1.0)-0.5);
-                 // brightness *= 0.1
-                 //     +pow((1.0-dist_from_center.x)*(1.0-dist_from_center.y), 0.5)
-                 //     +pow((1.0-dist_from_center.y)*(1.0-dist_from_center.z), 0.5)
-                 //     +pow((1.0-dist_from_center.z)*(1.0-dist_from_center.x), 0.5);
-                 // brightness *= 1.5;
-                 // if(hit_dir == 0) frag_color.r = 1;
-                 // if(hit_dir == 1) frag_color.g = 1;
-                 // if(hit_dir == 2) frag_color.b = 1;
-
-                 vec3 gradient = vec3(
-                     voxelFetch(materials, ipos+ivec3(1,0,0)).g-voxelFetch(materials, ipos+ivec3(-1,0,0)).g,
-                     voxelFetch(materials, ipos+ivec3(0,1,0)).g-voxelFetch(materials, ipos+ivec3(0,-1,0)).g,
-                     voxelFetch(materials, ipos+ivec3(0,0,1)).g-voxelFetch(materials, ipos+ivec3(0,0,-1)).g+0.001
-                     );
-                 gradient = normalize(gradient);
-                 frag_color.rgb = 0.5*gradient+vec3(0.5,0.5,0.5);
-
-                 if(voxelFetch(materials, ipos).r > 1)
-                 {
-                     frag_color.rgb *= 0.25;
-                     frag_color.rgb += vec3(0.1,0.1,0.2);
-                 }
-                 else
-                 {
-                     frag_color.rgb *= 0.1;
-                     frag_color.rgb += vec3(0.54,0.44,0.21);
-                 }
-                 frag_color.rgb *= brightness;
-
-                 // float x = texture(materials, (pos - 2*epsilon*ray_dir)*scale).g;
-                 // float y = texture(materials, (pos - 2*epsilon*ray_dir)*scale).a/sqrt(71.0);
-                 // float light_brightness = (x*x);
-                 // light_brightness *= 0.00000001;
-
-                 ivec3 hit_displacement = ivec3(0,0,0);
-                 if(hit_dir == 0) hit_displacement.x = isign.x;
-                 if(hit_dir == 1) hit_displacement.y = isign.y;
-                 if(hit_dir == 2) hit_displacement.z = isign.z;
-
-                 float light_brightness = voxelFetch(materials, ipos-hit_displacement).b;
-                 // float light_brightness = voxelFetch(materials, ipos).b;
-                 light_brightness *= 0.0025;
-
-                 frag_color.rgb *= light_brightness;
                  // frag_color.rgb = mix(vec3(1,0,0), vec3(0,0,1), i*1.0/200);
                  // frag_color.rgb *= clamp(1.0-1.0*total_dist/chunk_size, 0, 1);
-                 frag_color.a = 1.0;
-                 gl_FragDepth = 1.0-total_dist/(512.0*sqrt(3));
              }
              /*/////////////////////////////////////////////////////////////*/)}
         ));
@@ -503,46 +538,32 @@ define_program(
         {GL_VERTEX_SHADER, "<simulate chunk vertex shader>",
          DEFAULT_HEADER SHADER_SOURCE(
              /////////////////////////////////////////////////////////////////
-             layout(location = 0) in vec3 x;
-
-             void main()
-             {
-                 gl_Position.xyz = x;
-                 gl_Position.w = 1.0;
-             }
-             /*/////////////////////////////////////////////////////////////*/)},
-        {GL_GEOMETRY_SHADER, "<simulate chunk geometry shader>",
-         DEFAULT_HEADER SHADER_SOURCE(
-             /////////////////////////////////////////////////////////////////
-             layout(points) in;
+             layout(location = 0) in vec2 r;
+             layout(location = 1) in vec2 X;
 
              layout(location = 0) uniform int layer;
              layout(location = 3) uniform usampler3D active_regions_in;
              layout(location = 5) uniform writeonly uimage3D occupied_regions_out;
 
-             layout(triangle_strip, max_vertices = 128) out;
-
              out vec3 p;
-
-             const int chunk_size = 256;
 
              void main()
              {
-                 float scale = 1.0/(16.0);
                  int z = layer/16;
-                 int y = int(gl_in[0].gl_Position.y);
-                 int x = int(gl_in[0].gl_Position.x);
+                 int y = int(X.y);
+                 int x = int(X.x);
 
-                 uint region_bits = texelFetch(active_regions_in, ivec3(x, y, z), 0).r;
-                 if(region_bits != 0)
+                 p=vec3(16*x,16*y,layer);
+
+                 gl_Position = vec4(-2,-2,0,1);
+
+                 float scale = 2.0f/32.0f;
+
+                 uint region_active = texelFetch(active_regions_in, ivec3(x, y, z), 0).r;
+                 if(region_active != 0)
                  {
-                     // imageStore(occupied_regions_out, ivec3(x,y,z), uvec4(0,0,0,0));
-                     p=vec3(16*x,16*y,layer);
-                     gl_Position=vec4(scale*(x+0)-1,scale*(y+0)-1,0,1);EmitVertex();
-                     gl_Position=vec4(scale*(x+0)-1,scale*(y+1)-1,0,1);EmitVertex();
-                     gl_Position=vec4(scale*(x+1)-1,scale*(y+0)-1,0,1);EmitVertex();
-                     gl_Position=vec4(scale*(x+1)-1,scale*(y+1)-1,0,1);EmitVertex();
-                     EndPrimitive();
+                     if(gl_VertexID == 0 && layer%16 == 0) imageStore(occupied_regions_out, ivec3(x,y,z), uvec4(0,0,0,0));
+                     gl_Position.xy = -1.0f+scale*(r+X);
                  }
              }
              /*/////////////////////////////////////////////////////////////*/)},
@@ -570,25 +591,10 @@ define_program(
 
              float float_noise(uint seed)
              {
-                 return float(int(seed))/1.0e10;
-             }
-
-             float brightness_curve(float x)
-             {
-                 return pow(x, 2.0);
-             }
-
-             float inverse_brightness_curve(float x)
-             {
-                 return pow(x, 0.5);
+                 return fract(float(int(seed))/1.0e10);
              }
 
              const int chunk_size = 256;
-
-             ivec4 voxelFetch(isampler3D tex, ivec3 coord)
-             {
-                 return texelFetch(materials, coord, 0);
-             }
 
              void main()
              {
@@ -608,35 +614,20 @@ define_program(
                  int i = 0;
                  ivec2 dir = ivec2(((rot&1)*(2-rot)), (1-(rot&1))*(1-rot));
 
-                 ivec4 c  = voxelFetch(materials, ivec3(pos.x, pos.y, pos.z));
-                 ivec4 u  = voxelFetch(materials, ivec3(pos.x, pos.y, pos.z+1));
-                 ivec4 d  = voxelFetch(materials, ivec3(pos.x, pos.y, pos.z-1));
-                 ivec4 r  = voxelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z));
-                 ivec4 l  = voxelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z));
-                 ivec4 dr = voxelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z-1));
-                 ivec4 ur = voxelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z+1));
+                 ivec4 c  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z),0);
+                 ivec4 u  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z+1),0);
+                 ivec4 d  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z-1),0);
+                 ivec4 r  = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z),0);
+                 ivec4 l  = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z),0);
+                 ivec4 dr = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z-1),0);
+                 ivec4 ur = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z+1),0);
 
-                 ivec4 f  = voxelFetch(materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z));
-                 ivec4 b  = voxelFetch(materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z));
+                 ivec4 f  = texelFetch(materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z),0);
+                 ivec4 b  = texelFetch(materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z),0);
 
-                 ivec4 ul = voxelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z+1));
-                 ivec4 ll = voxelFetch(materials, ivec3(pos.x-2*dir.x, pos.y-2*dir.y, pos.z));
-                 ivec4 dl = voxelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z-1));
-
-                 // ivec4 m  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z),0);
-                 // ivec4 u  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z+1),0);
-                 // ivec4 d  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z-1),0);
-                 // ivec4 r  = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z),0);
-                 // ivec4 l  = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z),0);
-                 // ivec4 dr = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z-1),0);
-                 // ivec4 ur = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z+1),0);
-
-                 // ivec4 f  = texelFetch(materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z),0);
-                 // ivec4 b  = texelFetch(materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z),0);
-
-                 // ivec4 ul = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z+1),0);
-                 // ivec4 ll = texelFetch(materials, ivec3(pos.x-2*dir.x, pos.y-2*dir.y, pos.z),0);
-                 // ivec4 dl = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z-1),0);
+                 ivec4 ul = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z+1),0);
+                 ivec4 ll = texelFetch(materials, ivec3(pos.x-2*dir.x, pos.y-2*dir.y, pos.z),0);
+                 ivec4 dl = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z-1),0);
 
                  frag_color = c;
                  if(update_cells == 1)
@@ -681,7 +672,7 @@ define_program(
 
                      frag_color.b = c.b/2;
                      if(frag_color.r == 3) frag_color.b = 1000;
-                     if(frag_color.r == 1) frag_color.b = 100;
+                     // if(frag_color.r == 1) frag_color.b = 100;
                      // frag_color.b = 0;
                  }
                  else
@@ -694,16 +685,16 @@ define_program(
                      frag_color.g = min(frag_color.g, f.g+1);
                      frag_color.g = min(frag_color.g, b.g+1);
 
-                     // frag_color.b = 1+texelFetch(materials, ivec3(pos.x, pos.y, layer), 0).b;
-                     float brightness = 100.0;
-                     brightness += brightness_curve(l.b);
-                     brightness += brightness_curve(r.b);
-                     brightness += brightness_curve(u.b);
-                     brightness += brightness_curve(d.b);
-                     brightness += brightness_curve(f.b);
-                     brightness += brightness_curve(b.b);
-                     brightness *= 1.0/6.0;
-                     frag_color.b = int(inverse_brightness_curve(brightness));
+                     // // frag_color.b = 1+texelFetch(materials, ivec3(pos.x, pos.y, layer), 0).b;
+                     // float brightness = 100.0;
+                     // brightness += brightness_curve(l.b);
+                     // brightness += brightness_curve(r.b);
+                     // brightness += brightness_curve(u.b);
+                     // brightness += brightness_curve(d.b);
+                     // brightness += brightness_curve(f.b);
+                     // brightness += brightness_curve(b.b);
+                     // brightness *= 1.0/6.0;
+                     // frag_color.b = int(inverse_brightness_curve(brightness));
                  }
                  frag_color.g = clamp(frag_color.g,-max_depth,max_depth);
 
@@ -796,7 +787,7 @@ define_program(
                          x_dot.z = 0;
                          // x_dot *= 0.99;
                      }
-                     int max_iterations = 100;
+                     int max_iterations = 50;
                      int i = 0;
                      // while(voxelFetch(materials, ivec3(x)).r == 1 || voxelFetch(materials, ivec3(x)).r == 3)
                      while(voxelFetch(materials, ivec3(x)).r != 0)
@@ -804,7 +795,7 @@ define_program(
                          vec3 gradient = vec3(
                              voxelFetch(materials, ivec3(x+vec3(1,0,0))).g-voxelFetch(materials, ivec3(x+vec3(-1,0,0))).g,
                              voxelFetch(materials, ivec3(x+vec3(0,1,0))).g-voxelFetch(materials, ivec3(x+vec3(0,-1,0))).g,
-                             voxelFetch(materials, ivec3(x+vec3(0,0,1))).g-voxelFetch(materials, ivec3(x+vec3(0,0,-1))).g+0.001
+                             voxelFetch(materials, ivec3(x+vec3(0,0,1))).g-voxelFetch(materials, ivec3(x+vec3(0,0,-1))).g+0.001f
                              );
                          gradient = normalize(gradient);
                          x += 0.05*gradient;
@@ -972,7 +963,7 @@ define_program(
 
                  float scale = 2.0/128.0;
 
-                 gl_Position = vec4(0,0,0,1);
+                 gl_Position = vec4(-2,-2,0,1);
 
                  if(body_materials_origin.z <= layer && layer < body_materials_origin.z+body_size.z)
                  {
@@ -984,8 +975,6 @@ define_program(
          DEFAULT_HEADER SHADER_SOURCE(
              /////////////////////////////////////////////////////////////////
              layout(location = 0) out ivec4 frag_color;
-             layout(location = 1) out vec3 force;
-             layout(location = 2) out vec3 shift;
 
              layout(location = 0) uniform int layer;
              layout(location = 1) uniform int frame_number;
@@ -1057,43 +1046,11 @@ define_program(
                  return float(int(seed))/1.0e10;
              }
 
-             const int chunk_size = 256;
-
-             ivec4 voxelFetch(isampler3D tex, ivec3 coord)
-             {
-                 return texelFetch(materials, coord, 0);
-             }
-
-             ivec4 bodyVoxelFetch(int body_index, ivec3 coord)
-             {
-                 return texelFetch(body_materials, body_materials_origin+coord, 0);
-             }
-
              void main()
              {
                  ivec3 pos;
                  pos.xy = ivec2(gl_FragCoord.xy);
                  pos.z = layer;
-                 body_materials_origin = ivec3(bodies[b].materials_origin_x,
-                                               bodies[b].materials_origin_y,
-                                               bodies[b].materials_origin_z);
-                 body_size = ivec3(bodies[b].size_x,
-                                   bodies[b].size_y,
-                                   bodies[b].size_z);
-
-                 body_x_cm = vec3(bodies[b].x_cm_x, bodies[b].x_cm_y, bodies[b].x_cm_z);
-                 body_x = vec3(bodies[b].x_x, bodies[b].x_y, bodies[b].x_z);
-                 body_x_dot = vec3(bodies[b].x_dot_x, bodies[b].x_dot_y, bodies[b].x_dot_z);
-                 body_orientation = vec4(bodies[b].orientation_r, bodies[b].orientation_x, bodies[b].orientation_y, bodies[b].orientation_z);
-                 body_omega = vec3(bodies[b].omega_x, bodies[b].omega_y, bodies[b].omega_z);
-
-                 float m = bodies[b].m;
-                 mat3 I = mat3(bodies[b].I_xx, bodies[b].I_yx, bodies[b].I_zx,
-                               bodies[b].I_xy, bodies[b].I_yy, bodies[b].I_zy,
-                               bodies[b].I_xz, bodies[b].I_yz, bodies[b].I_zz);
-                 mat3 invI = mat3(bodies[b].invI_xx, bodies[b].invI_yx, bodies[b].invI_zx,
-                                  bodies[b].invI_xy, bodies[b].invI_yy, bodies[b].invI_zy,
-                                  bodies[b].invI_xz, bodies[b].invI_yz, bodies[b].invI_zz);
 
                  //+,0,-,0
                  //0,+,0,-
@@ -1110,6 +1067,7 @@ define_program(
                  ivec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
                  ivec4 ba  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
 
+                 // c.r = 1;
                  frag_color = c;
 
                  const int max_depth = 16;
@@ -1148,78 +1106,7 @@ define_program(
                  }
                  frag_color.g = clamp(frag_color.g,-max_depth,max_depth);
 
-                 vec3 body_coord = pos-body_materials_origin;
-                 //TODO: collision detect at predicted position?
-                 vec3 world_coord = apply_rotation(body_orientation, body_coord+0.5-body_x_cm)+body_x;
-                 // ivec4 world_voxel = voxelFetch(materials, ivec3(world_coord));
-                 float depth = 0;
-                 {
-                     depth = texture(materials, (world_coord)/512.0).g;
-                 }
-                 // depth = float(world_voxel.g);
-
                  frag_color.b = 1000;
-
-                 force = vec3(0,0,0);
-                 shift = vec3(0,0,0);
-                 // if(world_voxel.r > 0 && c.r > 0 && ((u.r == 0 || d.r == 0) && (l.r == 0 || r.r == 0) && (f.r == 0 || ba.r == 0)))
-
-                 const float depth_threshold = 1.0;
-                 if(depth < depth_threshold && c.r > 0)
-                 {
-                     vec3 world_gradient = vec3(
-                         voxelFetch(materials, ivec3(world_coord+vec3(1,0,0))).g-voxelFetch(materials, ivec3(world_coord+vec3(-1,0,0))).g,
-                         voxelFetch(materials, ivec3(world_coord+vec3(0,1,0))).g-voxelFetch(materials, ivec3(world_coord+vec3(0,-1,0))).g,
-                         voxelFetch(materials, ivec3(world_coord+vec3(0,0,1))).g-voxelFetch(materials, ivec3(world_coord+vec3(0,0,-1))).g+0.001
-                         );
-                     vec3 normal = normalize(world_gradient);
-
-                     // shift = 0.01*normal*max(depth_threshold-depth, 0);
-                 }
-
-                 if(c.r > 0)
-                 {
-                     for(int wz = 0; wz <= 1; wz++)
-                         for(int wy = 0; wy <= 1; wy++)
-                             for(int wx = 0; wx <= 1; wx++)
-                             {
-                                 ivec3 wvc = ivec3(world_coord-0.5)+ivec3(wx,wy,wz); //world_voxel_coord
-                                 ivec4 world_voxel = voxelFetch(materials, wvc);
-                                 vec3 rel_pos = vec3(wvc)+0.5-world_coord;
-                                 if(world_voxel.r > 0 && dot(rel_pos, rel_pos) <= 1.0)
-                                 {
-                                     const float COR = 0.1;
-
-                                     vec3 world_gradient = vec3(
-                                         voxelFetch(materials, wvc+ivec3(1,0,0)).g-voxelFetch(materials, wvc+ivec3(-1,0,0)).g,
-                                         voxelFetch(materials, wvc+ivec3(0,1,0)).g-voxelFetch(materials, wvc+ivec3(0,-1,0)).g,
-                                         voxelFetch(materials, wvc+ivec3(0,0,1)).g-voxelFetch(materials, wvc+ivec3(0,0,-1)).g+0.001
-                                         );
-
-                                     vec3 normal = normalize(world_gradient);
-                                     vec3 a = world_coord-body_x;
-                                     // vec3 v = body_x_dot+cross(body_omega, a);
-                                     // force = 0.1*normal*max(1-depth, 0)-0.1*v;
-                                     // force *= 0.1;
-
-                                     float u = dot(body_x_dot+cross(body_omega, a), normal);
-                                     float K = 1.0+m*dot(cross(invI*cross(a, normal), a), normal);
-                                     // if(u < 0) force = (-(1.0+COR)*u/K)*normal;
-                                     if(u < 0)
-                                     {
-                                         force = (-(1.0+COR)*u/K)*normal;
-                                         force += -0.1*(-(1.0+COR)*u/K)*(body_x_dot+cross(body_omega, a)-u*normal);
-                                         frag_color.b = 0;
-                                     }
-                                     vec3 v = body_x_dot+cross(body_omega, a);
-                                     // shift = 0.01*normal*max(1.0-depth, 0);
-                                     // shift = 0.005*normal;
-                                     frag_color.b = int(100*-depth);
-
-                                     return;
-                                 }
-                             }
-                 }
              }
              /*/////////////////////////////////////////////////////////////*/)}
         ));
@@ -1245,7 +1132,7 @@ define_program(
          DEFAULT_HEADER SHADER_SOURCE(
              /////////////////////////////////////////////////////////////////
              layout(location = 0) out vec3 deltax_dot;
-             layout(location = 1) out vec3 r;
+             layout(location = 1) out vec3 deltaomega;
              layout(location = 2) out vec3 pseudo_x_dot;
              layout(location = 3) out vec3 pseudo_omega;
 
@@ -1375,57 +1262,108 @@ define_program(
                                   bodies[b].invI_xy, bodies[b].invI_yy, bodies[b].invI_zy,
                                   bodies[b].invI_xz, bodies[b].invI_yz, bodies[b].invI_zz);
 
-                 vec3 x = body_x+body_x_dot;
-                 vec4 orientation = qmult(axis_to_quaternion(body_omega), body_orientation);
-                 orientation = normalize(orientation);
+                 deltax_dot = vec3(0,0,0);
+                 deltaomega = vec3(0,0,0);
 
                  pseudo_x_dot = vec3(0,0,0);
                  pseudo_omega = vec3(0,0,0);
 
-                 const int n_test_points = 5;
-                 const int max_steps = 20;
-
-                 int deepest_x;
-                 int deepest_y;
-                 int deepest_z;
-                 int deepest_depth = 0;
-                 bool point_found = false;
-
-                 // float old_E = m*dot(x_dot, x_dot)+I*dot(omega, omega);
-
-                 vec3 best_deltax_dot = vec3(0,0,0);
-                 vec3 best_deltax = vec3(0,0,0);
-                 vec3 best_r = vec3(0,0,0);
-                 int n_collisions = 0;
-                 vec3 net_deltax_dot = vec3(0,0,0);
-                 vec3 net_deltaomega = vec3(0,0,0);
-                 float best_E = 2*(m*dot(body_x_dot, body_x_dot)+dot(I*body_omega, body_omega));
-                 for(int test_z = 0; test_z < body_size.z; test_z+=1)
-                 for(int test_y = 0; test_y < body_size.y; test_y+=1)
-                 for(int test_x = 0; test_x < body_size.x; test_x+=1)
+                 for(int i = 0; i < 1; i++)
                  {
-                     vec3 body_coord = vec3(test_x, test_y, test_z);
-                     vec3 world_coord = apply_rotation(orientation, body_coord+0.5-body_x_cm)+x;
-                     vec3 r = world_coord-x;
-                     vec3 test_deltax_dot = texelFetch(body_forces, body_materials_origin+ivec3(body_coord), 0).xyz;
-                     vec3 deltax = texelFetch(body_shifts, body_materials_origin+ivec3(body_coord), 0).xyz;
-                     vec3 deltaomega = m*invI*cross(r, test_deltax_dot);
-                     float E = m*dot(body_x_dot+test_deltax_dot, body_x_dot+test_deltax_dot)+dot(I*(body_omega+deltaomega), body_omega+deltaomega);
-                     if(E < best_E)
-                     {
-                         best_deltax_dot = test_deltax_dot;
-                         best_deltax = deltax;
-                         best_r = r;
-                         best_E = E;
-                     }
-                     pseudo_x_dot += deltax;
-                     pseudo_omega += m*invI*cross(best_r, deltax);
-                 }
+                     vec3 x_dot = body_x_dot+deltax_dot;
+                     vec3 omega = body_omega+deltaomega;
+                     vec3 x = body_x;
+                     vec4 orientation = body_orientation;
+                     // vec3 x = body_x+deltax_dot;
+                     // vec4 orientation = qmult(axis_to_quaternion(deltaomega), body_orientation);
+                     // orientation = normalize(orientation);
 
-                 deltax_dot = best_deltax_dot;
-                 r = best_r;
-                 // pseudo_x_dot = best_deltax;
-                 // pseudo_omega = (m/I)*cross(best_r, best_deltax);
+                     const int n_test_points = 5;
+                     const int max_steps = 20;
+
+                     int deepest_x;
+                     int deepest_y;
+                     int deepest_z;
+                     int deepest_depth = 0;
+                     bool point_found = false;
+
+                     // float old_E = m*dot(x_dot, x_dot)+I*dot(omega, omega);
+
+                     vec3 best_deltax_dot = vec3(0,0,0);
+                     vec3 best_deltax = vec3(0,0,0);
+                     vec3 best_r = vec3(0,0,0);
+                     int n_collisions = 0;
+                     float best_E = 2*(m*dot(x_dot, x_dot)+dot(I*omega, omega));
+                     //TODO: build list of points to test that are non-empty and on the surface instead of checking all of them
+                     //      maybe make it a linked list to minimize texture lookups
+                     for(int test_z = 0; test_z < body_size.z; test_z+=1)
+                         for(int test_y = 0; test_y < body_size.y; test_y+=1)
+                             for(int test_x = 0; test_x < body_size.x; test_x+=1)
+                             {
+
+                                 ivec3 body_coord = ivec3(test_x, test_y, test_z);
+                                 vec3 world_coord = apply_rotation(orientation, vec3(body_coord)+0.5-body_x_cm)+x;
+
+                                 vec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
+
+                                 if(body_voxel.g == 0 && body_voxel.r > 0)
+                                 {
+                                     for(int wz = 0; wz <= 1; wz++)
+                                         for(int wy = 0; wy <= 1; wy++)
+                                             for(int wx = 0; wx <= 1; wx++)
+                                             {
+                                                 ivec3 wvc = ivec3(world_coord-0.5)+ivec3(wx,wy,wz); //world_voxel_coord
+                                                 ivec4 world_voxel = voxelFetch(materials, wvc);
+                                                 vec3 rel_pos = vec3(wvc)+0.5-world_coord;
+                                                 if(world_voxel.r > 0 && dot(rel_pos, rel_pos) <= 1.0)
+                                                 {
+                                                     const float COR = 0.1;
+
+                                                     vec3 world_gradient = vec3(
+                                                         voxelFetch(materials, wvc+ivec3(1,0,0)).g-voxelFetch(materials, wvc+ivec3(-1,0,0)).g,
+                                                         voxelFetch(materials, wvc+ivec3(0,1,0)).g-voxelFetch(materials, wvc+ivec3(0,-1,0)).g,
+                                                         voxelFetch(materials, wvc+ivec3(0,0,1)).g-voxelFetch(materials, wvc+ivec3(0,0,-1)).g+0.001
+                                                         );
+
+                                                     vec3 normal = normalize(world_gradient);
+                                                     vec3 a = wvc-x;
+
+                                                     float u = dot(x_dot+cross(omega, a), normal);
+                                                     float K = 1.0+m*dot(cross(invI*cross(a, normal), a), normal);
+                                                     vec3 test_deltax_dot = vec3(0,0,0);
+                                                     if(u < 0)
+                                                     {
+                                                         //normal force
+                                                         test_deltax_dot = (-(1.0+COR)*u/K)*normal;
+                                                         //friction
+                                                         test_deltax_dot += -0.1*(-(1.0+COR)*u/K)*(x_dot+cross(omega, a)-u*normal);
+                                                     }
+                                                     vec3 v = x_dot+cross(omega, a);
+
+                                                     vec3 test_deltaomega = m*invI*cross(a, test_deltax_dot);
+                                                     float E = (m*dot(x_dot+test_deltax_dot, x_dot+test_deltax_dot)
+                                                                +dot(I*(omega+test_deltaomega), omega+test_deltaomega)); //TODO: need to adjust I as rotation changes
+                                                     if(E < best_E)
+                                                     {
+                                                         best_deltax_dot = test_deltax_dot;
+                                                         // best_deltax = deltax;
+                                                         best_r = a;
+                                                         best_E = E;
+                                                     }
+
+                                                     vec3 deltax = -0.005*world_voxel.g*normal;
+                                                     pseudo_x_dot += deltax;
+                                                     pseudo_omega += m*invI*cross(best_r, deltax);
+                                                 }
+                                             }
+                                 }
+                             }
+
+                     deltax_dot += best_deltax_dot;
+                     deltaomega += m*invI*cross(best_r, best_deltax_dot);
+                     // pseudo_x_dot = best_deltax;
+                     // pseudo_omega = (m/I)*cross(best_r, best_deltax);
+                 }
              }
              /*/////////////////////////////////////////////////////////////*/)}
         ));

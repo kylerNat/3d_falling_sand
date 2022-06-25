@@ -562,7 +562,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     manager->current = manager->first;
 
     window_t wnd = create_window(manager, "3D Sand", "3dsand", 1280, 720, 10, 10, hinstance);
-    // fullscreen(wnd);
+    fullscreen(wnd);
     show_window(wnd);
 
     int next_id = 1;
@@ -571,7 +571,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .seed = 128924,
         // .player = {.x = {211.1,200.1,32.1}, .x_dot = {0,0,0}},
         // .player = {.x = {289.1,175.1, 302.1}, .x_dot = {0,0,0}},
-        .player = {.x = {chunk_size/2+5.1, chunk_size/2+5.1, 42.1}, .x_dot = {0,0,0}},
+        .player = {.x = {chunk_size/2+45.1, chunk_size/2+25.1, 42.1}, .x_dot = {0,0,0}},
         .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, 1024*sizeof(cpu_body_data)),
         .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, 1024*sizeof(gpu_body_data)),
         .n_bodies = 0,
@@ -624,6 +624,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     if(chunk_size-y <= 10) material = 3;
                     if(chunk_size-x <= 10) material = 3;
                     // if(chunk_size-z <= 10) material = 3;
+                }
+
+                if((abs(x-chunk_size/2) < door_width/2 || abs(y-chunk_size/2) < door_width/2) &&
+                   !(abs(x-chunk_size*1/4) < door_width/2 || abs(y-chunk_size*1/4) < door_width/2
+                     || abs(x-chunk_size*3/4) < door_width/2 || abs(y-chunk_size*3/4) < door_width/2))
+                {
+                     material = 3;
                 }
 
                 if(abs(z-chunk_size/2) < 5 && abs(x-chunk_size/2)+abs(y-chunk_size/2) > 30) material = 3;
@@ -918,6 +925,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     {
         w.bodies_cpu[b].invI = inverse(w.bodies_cpu[b].I);
         update_inertia(&w.bodies_cpu[b], &w.bodies_gpu[b]);
+
+        load_body_to_gpu(&w.bodies_cpu[b], &w.bodies_gpu[b]);
     }
 
     // CreateDirectory(w.tim.savedir, 0);
@@ -1101,26 +1110,29 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             update_and_render(manager, &w, &rd, &ui, &ad, wnd.input);
 
             if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
-            simulate_chunk(w.c, 1);
+            // simulate_chunk(w.c, 1);
             // for(int i = 0 ; i < 8; i++)
             //     simulate_chunk(w.c, 0);
-            // if(is_pressed('Z', wnd.input)) simulate_chunk(w.c);
+            if(!is_down('Z', wnd.input)) simulate_chunk(w.c, 1);
 
             //TODO: seperate update and render to improve performance and allow for a partial step for visual updating
             memcpy(wnd.input.prev_buttons, wnd.input.buttons, sizeof(wnd.input.buttons));
         }
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, window_width, window_height);
+        glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_buffer);
+        glViewport(0, 0, resolution_x, resolution_y);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         //Render world
 
         glEnable(GL_DEPTH_TEST);
-        render_chunk(w.c, rd.camera_axes, rd.camera_pos);
+        if(!is_down('B', wnd.input)) render_chunk(w.c, rd.camera_axes, rd.camera_pos);
 
-        for(int b = 0; b < w.n_bodies; b++)
-        {
-            render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
-        }
+        // for(int b = 0; b < w.n_bodies; b++)
+        // {
+        //     render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
+        // }
 
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);
@@ -1143,6 +1155,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         //     draw_round_line(manager, ui.line_points+line_points_offset, ui.n_line_points[l], ui.camera);
         //     line_points_offset += ui.n_line_points[l];
         // }
+
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, window_width, window_height);
+        glDisable(GL_DEPTH_TEST);
+        draw_to_screen(color_texture);
     }
     return 0;
 }
