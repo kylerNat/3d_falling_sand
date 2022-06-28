@@ -42,6 +42,11 @@
 #include "gl/glext.h"
 #include "gl/wglext.h"
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb/stb_image.h>
+
+#undef assert
+
 #include <maths/maths.h>
 #include <utils/misc.h>
 #include <utils/logging.h>
@@ -384,7 +389,7 @@ window_t create_window(memory_manager* manager, char* window_title, char* class_
     glDebugMessageCallbackARB(gl_error_callback, 0);
     glEnable(GL_DEBUG_OUTPUT);
 
-    gl_load_programs(manager);
+    gl_init_programs(manager);
 
     gl_init_general_buffers(manager);
 
@@ -562,7 +567,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     manager->current = manager->first;
 
     window_t wnd = create_window(manager, "3D Sand", "3dsand", 1280, 720, 10, 10, hinstance);
-    fullscreen(wnd);
+    // fullscreen(wnd);
     show_window(wnd);
 
     int next_id = 1;
@@ -1129,10 +1134,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         glEnable(GL_DEPTH_TEST);
         if(!is_down('B', wnd.input)) render_chunk(w.c, rd.camera_axes, rd.camera_pos);
 
-        // for(int b = 0; b < w.n_bodies; b++)
-        // {
-        //     render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
-        // }
+        for(int b = 0; b < w.n_bodies; b++)
+        {
+            render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
+        }
 
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);

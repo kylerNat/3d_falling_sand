@@ -263,9 +263,9 @@ define_program(
         ));
 
 define_program(
-    render_chunk,
+    render_depth_prepass,
     ( //shaders
-        {GL_VERTEX_SHADER, "<render chunk vertex shader>",
+        {GL_VERTEX_SHADER, "<render depth prepass vertex shader>",
          DEFAULT_HEADER SHADER_SOURCE(
              /////////////////////////////////////////////////////////////////
              layout(location = 0) in vec3 x;
@@ -279,17 +279,19 @@ define_program(
                  screen_pos = x.xy;
              }
              /*/////////////////////////////////////////////////////////////*/)},
-        {GL_FRAGMENT_SHADER, "<render chunk fragment shader>",
+        {GL_FRAGMENT_SHADER, "<render depth prepass fragment shader>",
          DEFAULT_HEADER SHADER_SOURCE(
              /////////////////////////////////////////////////////////////////
-             layout(location = 0) out vec4 frag_color;
+             layout(location = 0) out vec4 depth;
 
-             layout(location = 0) uniform mat3 camera_axes;
-             layout(location = 1) uniform vec3 camera_pos;
-             layout(location = 2) uniform isampler3D materials;
-             layout(location = 3) uniform usampler3D occupied_regions;
-             layout(location = 4) uniform ivec3 size;
-             layout(location = 5) uniform ivec3 origin;
+             layout(location = 0) uniform int frame_number;
+             layout(location = 1) uniform mat3 camera_axes;
+             layout(location = 2) uniform vec3 camera_pos;
+             layout(location = 3) uniform isampler3D materials;
+             layout(location = 4) uniform usampler3D occupied_regions;
+             layout(location = 5) uniform ivec3 size;
+             layout(location = 6) uniform ivec3 origin;
+             layout(location = 7) uniform sampler2D blue_noise_texture;
 
              smooth in vec2 screen_pos;
 
@@ -310,39 +312,21 @@ define_program(
                  return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
              }
 
-             ivec4 voxelFetch(isampler3D tex, ivec3 coord)
+             vec4 blue_noise(vec2 co)
              {
-                 if(coord.x < 0
-                    || coord.y < 0
-                    || coord.z < 0
-                    || coord.x >= size.x
-                    || coord.y >= size.y
-                    || coord.z >= size.z) return ivec4(0,1,1000,0);
-                 return texelFetch(materials, coord+origin, 0);
-                 // uint data = texelFetch(materials, chunk_origin+offset, 0).r;
-                 // int material = data >> 6;
-                 // int distance = (data>>2)&0xF - 7;
-                 // int edgetype = (data)&0x3;
-                 // return vec3(material, distance, edgetype);
+                 return fract(texture(blue_noise_texture, co)+PHI*frame_number);
              }
 
              void main()
              {
                  float fov = pi*120.0/180.0;
                  float screen_dist = 1.0/tan(fov/2);
-                 vec3 ray_dir = (16.0/9.0*screen_pos.x*camera_axes[0]
-                                 +        screen_pos.y*camera_axes[1]
+                 vec2 sample_pos = screen_pos.xy;
+                 sample_pos += (blue_noise(gl_FragCoord.xy/256.0f+vec2(0.319f, 0.712f)).xy-0.5f)/vec2(360, 180);
+                 vec3 ray_dir = (16.0/9.0*sample_pos.x*camera_axes[0]
+                                 +        sample_pos.y*camera_axes[1]
                                  -        screen_dist *camera_axes[2]);
-                 // vec3 ray_dir = (16.0/9.0*sin(screen_pos.x)*camera_axes[0]
-                 //                 +        sin(screen_pos.y)*camera_axes[1]
-                 //                 -        cos(screen_pos.x)*cos(screen_pos.y)*screen_dist *camera_axes[2]);
                  ray_dir = normalize(ray_dir);
-
-                 int bounces_remaining = 1;
-                 frag_color = vec4(0,0,0,1);
-                 vec3 color_multiplier = vec3(1,1,1);
-                 bool first_hit = true;
-                 float coarse_step = 1.0;
 
                  vec3 pos = camera_pos;
                  vec3 ray_sign = sign(ray_dir);
@@ -352,7 +336,7 @@ define_program(
                  vec3 hit_dir = vec3(0);
 
                  float epsilon = 0.02;
-                 int max_iterations = 150;
+                 int max_iterations = 200;
                  int i = 0;
                  float total_dist = 0;
 
@@ -366,6 +350,12 @@ define_program(
                  pos += total_dist*ray_dir;
 
                  ivec3 ipos = ivec3(floor(pos));
+
+                 int bounces_remaining = 5;
+                 bool first_hit = true;
+                 vec3 color_multiplier = vec3(1,1,1);
+
+                 depth = vec4(0.0);
 
                  // {
                  //     vec3 dist = ((0.5*ray_sign+0.5)*size-ray_sign*pos)*invabs_ray_dir;
@@ -422,8 +412,271 @@ define_program(
                      if(voxel.r != 0)
                      {
                          float roughness = 0.0f;
-                         vec3 emission = vec3(0.5f);
-                         if(voxel.r == 3)
+                         vec3 emission = vec3(0.0f);
+                         if(voxel.r == 2)
+                         {
+                             emission = vec3(0.05,0.05,0.1);
+                         }
+                         if(voxel.r == 4)
+                         {
+                             emission = vec3(1.0,1.0,1.0);
+                         }
+
+                         if(voxel.r > 1)
+                         {
+                             roughness = 0.8;
+                         }
+                         else
+                         {
+                             roughness = 0.9;
+                         }
+
+                         ivec3 ioutside = ipos - ivec3(hit_dir*ray_sign);
+                         vec3 gradient = vec3(
+                             texelFetch(materials, ioutside+ivec3(1,0,0),0).g-texelFetch(materials, ioutside+ivec3(-1,0,0),0).g,
+                             texelFetch(materials, ioutside+ivec3(0,1,0),0).g-texelFetch(materials, ioutside+ivec3(0,-1,0),0).g,
+                             texelFetch(materials, ioutside+ivec3(0,0,1),0).g-texelFetch(materials, ioutside+ivec3(0,0,-1),0).g+0.001f
+                             );
+                         vec3 normal = gradient;
+                         normal += roughness*(blue_noise(gl_FragCoord.xy/256.0).rgb-0.5f);
+                         normal = normalize(normal);
+                         gradient = normalize(gradient);
+
+                         depth.rgb += color_multiplier*emission;
+
+                         if(voxel.r == 1)
+                         {
+                             color_multiplier *= vec3(0.54,0.44,0.21);
+                             roughness = 0.9;
+                         }
+                         else if(voxel.r == 3)
+                         {
+                             color_multiplier *= vec3(0.5,0.5,1.0);
+                             roughness = 0.1;
+                         }
+                         else
+                         {
+                             color_multiplier *= vec3(0.1,0.1,0.2);
+                             roughness = 0.1;
+                         }
+
+                         color_multiplier *= -dot(ray_dir, normal);
+
+                         if(first_hit)
+                         {
+                             color_multiplier = vec3(1,1,1);
+                             depth.rgb = vec3(0,0,0);
+                             depth.a = total_dist;
+                             first_hit = false;
+                         }
+                         if(bounces_remaining-- <= 0)
+                         {
+                             return;
+                         }
+                         else
+                         {
+                             ray_dir -= 2*dot(ray_dir, normal)*normal;
+                             ray_sign = sign(ray_dir);
+
+                             invabs_ray_dir = ray_sign/ray_dir;
+                         }
+                     }
+
+                     if(voxel.g >= 3)
+                     {
+                         float skip_dist = (voxel.g-2)/dot(ray_dir,ray_sign);
+                         pos += ray_dir*skip_dist;
+                         total_dist += skip_dist;
+                         ipos = ivec3(floor(pos));
+                     }
+
+                     vec3 dist = (0.5f*ray_sign+0.5f+ray_sign*(vec3(ipos)-pos))*invabs_ray_dir;
+
+                     vec3 min_dir = step(dist.xyz, dist.zxy)*step(dist.xyz, dist.yzx);
+                     float min_dist = dot(dist, min_dir);
+                     pos += min_dist*ray_dir;
+                     ipos += ivec3(min_dir*ray_sign);
+                     total_dist += min_dist;
+                     hit_dir = min_dir;
+
+                     // if(first_hit)
+                     // {^all that stuff}
+                     // else
+                     // {
+                     //     pos += ray_dir*coarse_step;
+                     //     total_dist += coarse_step;
+                     //     ipos = ivec3(floor(pos));
+                     //     coarse_step += 1.0f*coarse_step*(float_noise(pos.xy+pos.zz));
+                     // }
+
+                     if(++i >= max_iterations)
+                     {
+                         return;
+                     }
+                 }
+             }
+             /*/////////////////////////////////////////////////////////////*/)}
+        ));
+
+define_program(
+    render_chunk,
+    ( //shaders
+        {GL_VERTEX_SHADER, "<render chunk vertex shader>",
+         DEFAULT_HEADER SHADER_SOURCE(
+             /////////////////////////////////////////////////////////////////
+             layout(location = 0) in vec3 x;
+
+             smooth out vec2 screen_pos;
+
+             void main()
+             {
+                 gl_Position.xyz = x;
+                 gl_Position.w = 1.0;
+                 screen_pos = x.xy;
+             }
+             /*/////////////////////////////////////////////////////////////*/)},
+        {GL_FRAGMENT_SHADER, "<render chunk fragment shader>",
+         DEFAULT_HEADER SHADER_SOURCE(
+             /////////////////////////////////////////////////////////////////
+             layout(location = 0) out vec4 frag_color;
+
+             layout(location = 0) uniform mat3 camera_axes;
+             layout(location = 1) uniform vec3 camera_pos;
+             layout(location = 2) uniform isampler3D materials;
+             layout(location = 3) uniform usampler3D occupied_regions;
+             layout(location = 4) uniform ivec3 size;
+             layout(location = 5) uniform ivec3 origin;
+             layout(location = 6) uniform sampler2D prepass_depth;
+
+             smooth in vec2 screen_pos;
+
+             uint rand(uint seed)
+             {
+                 seed ^= seed<<13;
+                 seed ^= seed>>17;
+                 seed ^= seed<<5;
+                 return seed;
+             }
+
+             // float float_noise(uint seed)
+             // {
+             //     return fract(float(int(seed))/1.0e9);
+             // }
+
+             float float_noise(vec2 co){
+                 return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+             }
+
+             ivec4 voxelFetch(isampler3D tex, ivec3 coord)
+             {
+                 if(coord.x < 0
+                    || coord.y < 0
+                    || coord.z < 0
+                    || coord.x >= size.x
+                    || coord.y >= size.y
+                    || coord.z >= size.z) return ivec4(0,1,1000,0);
+                 return texelFetch(materials, coord+origin, 0);
+                 // uint data = texelFetch(materials, chunk_origin+offset, 0).r;
+                 // int material = data >> 6;
+                 // int distance = (data>>2)&0xF - 7;
+                 // int edgetype = (data)&0x3;
+                 // return vec3(material, distance, edgetype);
+             }
+
+             void main()
+             {
+                 float fov = pi*120.0/180.0;
+                 float screen_dist = 1.0/tan(fov/2);
+                 vec3 ray_dir = (16.0/9.0*screen_pos.x*camera_axes[0]
+                                 +        screen_pos.y*camera_axes[1]
+                                 -        screen_dist *camera_axes[2]);
+                 // vec3 ray_dir = (16.0/9.0*sin(screen_pos.x)*camera_axes[0]
+                 //                 +        sin(screen_pos.y)*camera_axes[1]
+                 //                 -        cos(screen_pos.x)*cos(screen_pos.y)*screen_dist *camera_axes[2]);
+                 ray_dir = normalize(ray_dir);
+
+                 frag_color = vec4(0,0,0,1);
+                 vec3 color_multiplier = vec3(1,1,1);
+
+                 vec3 pos = camera_pos;
+                 vec3 ray_sign = sign(ray_dir);
+
+                 vec3 invabs_ray_dir = ray_sign/ray_dir;
+
+                 vec3 hit_dir = vec3(0);
+
+                 float epsilon = 0.02;
+                 int max_iterations = 200;
+                 int i = 0;
+                 float total_dist = 0;
+
+                 // // float prepass_jump_dist = max(texture(prepass_depth, 0.5f*screen_pos.xy+0.5f, 0).a-2.0f, 0.0f);
+                 // float prepass_jump_dist = 10*max_iterations;
+                 // for(int x = -1; x < 1; x++)
+                 // for(int y = -1; y < 1; y++)
+                 // {
+                 //     prepass_jump_dist = clamp(
+                 //         texture(prepass_depth, 0.5f*screen_pos.xy+0.5f+0.5f*vec2((x)/360.0f,(y)/180.0f), 0).a-4.0f,
+                 //         0.0f, prepass_jump_dist);
+                 // }
+                 // // {
+                 // //     frag_color.rgb = vec3(1.0f-prepass_jump_dist/200.0f);
+                 // //     return;
+                 // // }
+                 // pos += prepass_jump_dist*ray_dir;
+                 // total_dist += prepass_jump_dist;
+
+                 float bounding_jump_dist = 0.0;
+                 if(pos.x > size.x && ray_dir.x < 0) bounding_jump_dist = max(bounding_jump_dist, -epsilon+(size.x-pos.x)/(ray_dir.x));
+                 if(pos.y < 0 && ray_dir.y > 0)      bounding_jump_dist = max(bounding_jump_dist, -epsilon+(-pos.y)/(ray_dir.y));
+                 if(pos.y > size.y && ray_dir.y < 0) bounding_jump_dist = max(bounding_jump_dist, -epsilon+(size.y-pos.y)/(ray_dir.y));
+                 if(pos.z < 0 && ray_dir.z > 0)      bounding_jump_dist = max(bounding_jump_dist, -epsilon+(-pos.z)/(ray_dir.z));
+                 if(pos.z > size.z && ray_dir.z < 0) bounding_jump_dist = max(bounding_jump_dist, -epsilon+(size.z-pos.z)/(ray_dir.z));
+
+                 pos += bounding_jump_dist*ray_dir;
+                 total_dist += bounding_jump_dist;
+
+                 ivec3 ipos = ivec3(floor(pos));
+
+                 for(;;)
+                 {
+                     if(ipos.x < -1 || ipos.y < -1 || ipos.z < -1
+                        || ipos.x > size.x || ipos.y > size.y || ipos.z > size.z)
+                     {
+                         return;
+                     }
+                     while(texelFetch(occupied_regions, ipos/16, 0).r == 0)
+                     {
+                         vec3 dist = ((0.5f*ray_sign+0.5f)*16.0f+ray_sign*(16.0f*floor(pos/16.0f)-pos))*invabs_ray_dir;
+                         vec3 min_dir = step(dist.xyz, dist.zxy)*step(dist.xyz, dist.yzx);
+                         float min_dist = dot(dist, min_dir);
+                         hit_dir = min_dir;
+
+                         float step_dist = min_dist+epsilon;
+                         pos += step_dist*ray_dir;
+                         total_dist += step_dist;
+                         // hit_dir = min_dir;
+
+                         ipos = ivec3(floor(pos));
+
+                         if(ipos.x < -1 || ipos.y < -1 || ipos.z < -1
+                            || ipos.x > size.x || ipos.y > size.y || ipos.z > size.z)
+                         {
+                             return;
+                         }
+
+                         if(++i >= max_iterations)
+                         {
+                             return;
+                         }
+                     }
+
+                     ivec4 voxel = texelFetch(materials, ipos+origin, 0);
+                     if(voxel.r != 0)
+                     {
+                         float roughness = 0.0f;
+                         vec3 emission = vec3(0.0f);
+                         if(voxel.r == 2)
                          {
                              emission = vec3(0.05,0.05,0.1);
                          }
@@ -434,17 +687,20 @@ define_program(
 
                          // emission *= 1.0f-total_dist/(512.0f*sqrt(3));
 
-                         if(voxel.r > 1)
+                         if(voxel.r == 1)
                          {
-                             // color_multiplier *= 0.25;
-                             color_multiplier *= vec3(0.1,0.1,0.2);
+                             color_multiplier *= vec3(0.54,0.44,0.21);
+                             roughness = 0.9;
+                         }
+                         else if(voxel.r == 3)
+                         {
+                             color_multiplier *= vec3(0.5,0.5,1.0);
                              roughness = 0.1;
                          }
                          else
                          {
-                             // color_multiplier *= 0.1;
-                             color_multiplier *= vec3(0.54,0.44,0.21);
-                             roughness = 0.9;
+                             color_multiplier *= vec3(0.1,0.1,0.2);
+                             roughness = 0.1;
                          }
 
                          ivec3 ioutside = ipos - ivec3(hit_dir*ray_sign);
@@ -460,65 +716,52 @@ define_program(
                          normal = normalize(normal);
                          gradient = normalize(gradient);
 
-                         frag_color.rgb += color_multiplier*emission*(0.9f+0.1f*normal)*dot(normal, gradient);
+                         // frag_color.rgb += color_multiplier*emission*(0.9f+0.1f*normal)*dot(normal, gradient);
+                         frag_color.rgb += color_multiplier*emission*(0.9f+0.1f*normal);
 
-                         if(first_hit)
-                         {
-                             gl_FragDepth = 1.0f-total_dist/(512.0f*sqrt(3));
-                             first_hit = false;
-                         }
-                         if(bounces_remaining-- <= 0)
-                         {
-                             break;
-                         }
-                         else
-                         {
-                             ray_dir -= 2*dot(ray_dir, normal)*normal;
+                         gl_FragDepth = 1.0f-total_dist/(512.0f*sqrt(3));
 
-                             ray_sign = sign(ray_dir);
+                         color_multiplier *= -dot(ray_dir, normal);
 
-                             invabs_ray_dir = ray_sign/ray_dir;
-                         }
+                         float center_depth = texture(prepass_depth, 0.5f*screen_pos.xy+0.5f, 0).a;
+
+                         vec3 prepass_color = vec3(0);
+                         float prepass_total = 0.0f;
+                         for(int x = -5; x <= 5; x++)
+                             for(int y = -5; y <= 5; y++)
+                             {
+                                 vec4 prepass_value = texture(prepass_depth, 0.5f*screen_pos.xy+0.5f+vec2(x/360.0f,y/180.0f), 0);
+                                 vec2 sample_pos = -fract(gl_FragCoord.xy*vec2(1.0f/360.0f,1.0f/180.0f))+vec2(x,y);
+                                 float weight = step(-2.0f, -abs(center_depth-prepass_value.a))
+                                     *exp(-0.3f*dot(sample_pos, sample_pos));
+                                 prepass_color += prepass_value.rgb*weight;
+                                 prepass_total += weight;
+                             }
+                         prepass_color /= prepass_total;
+                         frag_color.rgb += color_multiplier*prepass_color;
+
+                         // frag_color.rgb += color_multiplier*texture(prepass_depth, 0.5f*screen_pos.xy+0.5f, 0).rgb;
+
+                         break;
                      }
 
-                     if(first_hit)
+                     if(voxel.g >= 3)
                      {
-                         if(voxel.g >= 3)
-                         {
-                             float skip_dist = (voxel.g-2)/dot(ray_dir,ray_sign);
-                             // skip_dist -= mod(0.1*(gl_FragCoord.x+gl_FragCoord.y), 0.5);
-                             pos += ray_dir*skip_dist;
-                             total_dist += skip_dist;
-                             ipos = ivec3(floor(pos));
-                         }
-
-                         vec3 dist = (0.5f*ray_sign+0.5f+ray_sign*(vec3(ipos)-pos))*invabs_ray_dir;
-
-                         vec3 min_dir = step(dist.xyz, dist.zxy)*step(dist.xyz, dist.yzx);
-                         float min_dist = dot(dist, min_dir);
-                         pos += min_dist*ray_dir;
-                         ipos += ivec3(min_dir*ray_sign);
-                         total_dist += min_dist;
-                         hit_dir = min_dir;
-                     }
-                     else
-                     {
-                         pos += ray_dir*coarse_step;
-                         total_dist += coarse_step;
+                         float skip_dist = (voxel.g-2)/dot(ray_dir,ray_sign);
+                         // skip_dist -= mod(0.1*(gl_FragCoord.x+gl_FragCoord.y), 0.5);
+                         pos += ray_dir*skip_dist;
+                         total_dist += skip_dist;
                          ipos = ivec3(floor(pos));
-                         coarse_step += 1.0f*coarse_step*(float_noise(pos.xy+pos.zz));
                      }
 
-                     // if(voxel.g >= 3)
-                     // {
-                     //     ivec3 original_ipos = ipos;
-                     //     while(dot(abs(ipos-original_ipos), vec3(1,1,1)) < voxel.g-2)
-                     //     {
-                     //         pos += 0.3*ray_dir;
-                     //         total_dist += 0.5;
-                     //         ipos = ivec3(pos);
-                     //     }
-                     // }
+                     vec3 dist = (0.5f*ray_sign+0.5f+ray_sign*(vec3(ipos)-pos))*invabs_ray_dir;
+
+                     vec3 min_dir = step(dist.xyz, dist.zxy)*step(dist.xyz, dist.yzx);
+                     float min_dist = dot(dist, min_dir);
+                     pos += min_dist*ray_dir;
+                     ipos += ivec3(min_dir*ray_sign);
+                     total_dist += min_dist;
+                     hit_dir = min_dir;
 
                      if(++i >= max_iterations)
                      {
@@ -526,7 +769,7 @@ define_program(
                      }
                  }
 
-                 // frag_color.rgb = mix(vec3(1,0,0), vec3(0,0,1), i*1.0/200);
+                 // frag_color.rgb = mix(vec3(1,0,0), vec3(0,0,1), i*1.0/20);
                  // frag_color.rgb *= clamp(1.0-1.0*total_dist/chunk_size, 0, 1);
              }
              /*/////////////////////////////////////////////////////////////*/)}

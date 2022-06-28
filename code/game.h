@@ -271,7 +271,7 @@ void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, i
     glTexSubImage3D(GL_TEXTURE_3D, 0,
                     pos.x/16, pos.y/16, pos.z/16,
                     active_data_size.x, active_data_size.y, active_data_size.z,
-                    GL_RGB_INTEGER, GL_UNSIGNED_INT,
+                    GL_RED_INTEGER, GL_UNSIGNED_INT,
                     active_data);
     unreserve_block(manager);
 }
@@ -390,11 +390,11 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     real_3 old_xl = w->bodies_gpu[5].x_dot;
     real_3 old_xr = w->bodies_gpu[7].x_dot;
 
-    // simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
-    // for(int i = 0; i < 1; i++)
-    // {
-    //     simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
-    // }
+    simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
+    for(int i = 0; i < 1; i++)
+    {
+        simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
+    }
 
     real_3 new_xl = w->bodies_gpu[5].x_dot;
     real_3 new_xr = w->bodies_gpu[7].x_dot;
