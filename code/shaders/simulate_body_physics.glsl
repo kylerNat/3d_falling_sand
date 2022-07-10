@@ -126,6 +126,59 @@ float float_noise(uint seed)
     return float(int(seed))/1.0e10;
 }
 
+#define N_MAX_COLLISION_POINTS 256
+void find_collision_points(out vec3 world_collision_points[N_MAX_COLLISION_POINTS], out ivec3 world_collision_coord[N_MAX_COLLISION_POINTS], out int n_collision_points)
+{
+    n_collision_points = 0;
+
+    //TODO: maybe use space filling curves
+    for(int test_z = 0; test_z < body_size.z; test_z+=1)
+        for(int test_y = 0; test_y < body_size.y; test_y+=1)
+            for(int test_x = 0; test_x < body_size.x; test_x+=1)
+            {
+
+                ivec3 body_coord = ivec3(test_x, test_y, test_z);
+                vec3 world_coord = apply_rotation(body_orientation, vec3(body_coord)+0.5-body_x_cm)+body_x;
+
+                vec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
+
+                // if(body_voxel.g == 0 && body_voxel.r > 0)
+                if(body_voxel.g == 0)
+                {
+                    ivec3 wvc = ivec3(world_coord); //world_voxel_coord
+                    ivec4 world_voxel = voxelFetch(materials, wvc);
+                    vec3 rel_pos = vec3(wvc)+0.5-world_coord;
+                    // if(world_voxel.r > 0 && dot(rel_pos, rel_pos) <= 1.0)
+                    if(world_voxel.g <= 1)
+                    {
+                        world_collision_points[n_collision_points] = world_coord;
+                        world_collision_coord[n_collision_points] = wvc;
+                        n_collision_points++;
+                        if(n_collision_points >= N_MAX_COLLISION_POINTS) return;
+                    }
+
+                    // for(int wz = 0; wz <= 1; wz++)
+                    //     for(int wy = 0; wy <= 1; wy++)
+                    //         for(int wx = 0; wx <= 1; wx++)
+                    //         {
+                    //             ivec3 wvc = ivec3(world_coord-0.5)+ivec3(wx,wy,wz); //world_voxel_coord
+                    //             ivec4 world_voxel = voxelFetch(materials, wvc);
+                    //             vec3 rel_pos = vec3(wvc)+0.5-world_coord;
+                    //             // if(world_voxel.r > 0 && dot(rel_pos, rel_pos) <= 1.0)
+                    //             if(world_voxel.g <= 2)
+                    //             {
+                    //                 world_collision_points[n_collision_points] = world_coord;
+                    //                 world_collision_coord[n_collision_points] = wvc;
+                    //                 n_collision_points++;
+                    //                 if(n_collision_points >= N_MAX_COLLISION_POINTS) return;
+                    //             }
+                    //         }
+                }
+
+                test_x += int(max(abs(body_voxel.g)-1, 0));
+            }
+}
+
 void main()
 {
     int b = int(gl_FragCoord.y);
@@ -158,15 +211,28 @@ void main()
     pseudo_x_dot = vec3(0,0,0);
     pseudo_omega = vec3(0,0,0);
 
-    for(int i = 0; i < 1; i++)
+    //gravity
+    deltax_dot.z += -0.1;
+
+    vec3 world_collision_points[N_MAX_COLLISION_POINTS];
+    ivec3 world_collision_coord[N_MAX_COLLISION_POINTS];
+    int n_collision_points = 0;
+
+    find_collision_points(world_collision_points, world_collision_coord, n_collision_points);
+
+    // if(n_collision_points > 0 && length(body_omega) < 0.01 && n_collision_points > 0 && length(body_x_dot) < 0.01)
+    // {
+    //     deltaomega = -0.05f*body_omega;
+    //     deltax_dot = -0.05f*body_x_dot;
+    //     // return;
+    // }
+
+    vec3 impulses[N_MAX_COLLISION_POINTS] = vec3[N_MAX_COLLISION_POINTS](0);
+
+    for(int i = 0; i < 6; i++)
     {
         vec3 x_dot = body_x_dot+deltax_dot;
         vec3 omega = body_omega+deltaomega;
-        vec3 x = body_x;
-        vec4 orientation = body_orientation;
-        // vec3 x = body_x+deltax_dot;
-        // vec4 orientation = qmult(axis_to_quaternion(deltaomega), body_orientation);
-        // orientation = normalize(orientation);
 
         const int n_test_points = 5;
         const int max_steps = 20;
@@ -182,76 +248,85 @@ void main()
         vec3 best_deltax_dot = vec3(0,0,0);
         vec3 best_deltax = vec3(0,0,0);
         vec3 best_r = vec3(0,0,0);
+        int best_cp = -1;
         int n_collisions = 0;
         float best_E = 2*(m*dot(x_dot, x_dot)+dot(I*omega, omega));
+
         //TODO: build list of points to test that are non-empty and on the surface instead of checking all of them
         //      maybe make it a linked list to minimize texture lookups
-        for(int test_z = 0; test_z < body_size.z; test_z+=1)
-            for(int test_y = 0; test_y < body_size.y; test_y+=1)
-                for(int test_x = 0; test_x < body_size.x; test_x+=1)
-                {
+        for(int cp = 0; cp < n_collision_points; cp++)
+        {
+            vec3 world_coord = world_collision_points[cp];
+            ivec3 wvc = world_collision_coord[cp]; //world_voxel_coord
+            ivec4 world_voxel = voxelFetch(materials, wvc);
+            vec3 rel_pos = vec3(wvc)+0.5-world_coord;
 
-                    ivec3 body_coord = ivec3(test_x, test_y, test_z);
-                    vec3 world_coord = apply_rotation(orientation, vec3(body_coord)+0.5-body_x_cm)+x;
+            const float COR = 0.2;
+            const float COF = 0.1;
 
-                    vec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
+            vec3 world_gradient = vec3(
+                voxelFetch(materials, wvc+ivec3(1,0,0)).g-voxelFetch(materials, wvc+ivec3(-1,0,0)).g,
+                voxelFetch(materials, wvc+ivec3(0,1,0)).g-voxelFetch(materials, wvc+ivec3(0,-1,0)).g,
+                voxelFetch(materials, wvc+ivec3(0,0,1)).g-voxelFetch(materials, wvc+ivec3(0,0,-1)).g+0.001
+                );
 
-                    if(body_voxel.g == 0 && body_voxel.r > 0)
-                    {
-                        for(int wz = 0; wz <= 1; wz++)
-                            for(int wy = 0; wy <= 1; wy++)
-                                for(int wx = 0; wx <= 1; wx++)
-                                {
-                                    ivec3 wvc = ivec3(world_coord-0.5)+ivec3(wx,wy,wz); //world_voxel_coord
-                                    ivec4 world_voxel = voxelFetch(materials, wvc);
-                                    vec3 rel_pos = vec3(wvc)+0.5-world_coord;
-                                    if(world_voxel.r > 0 && dot(rel_pos, rel_pos) <= 1.0)
-                                    {
-                                        const float COR = 0.1;
+            //TODO: can probably reduce jitter by using more accurate collision_points, maybe add noise
+            vec3 normal = normalize(world_gradient);
+            // vec3 a = wvc-body_x;
+            vec3 a = world_coord-body_x;
 
-                                        vec3 world_gradient = vec3(
-                                            voxelFetch(materials, wvc+ivec3(1,0,0)).g-voxelFetch(materials, wvc+ivec3(-1,0,0)).g,
-                                            voxelFetch(materials, wvc+ivec3(0,1,0)).g-voxelFetch(materials, wvc+ivec3(0,-1,0)).g,
-                                            voxelFetch(materials, wvc+ivec3(0,0,1)).g-voxelFetch(materials, wvc+ivec3(0,0,-1)).g+0.001
-                                            );
+            float u = dot(x_dot+cross(omega, a), normal);
+            float K = 1.0+m*dot(cross(invI*cross(a, normal), a), normal);
+            vec3 test_deltax_dot = vec3(0,0,0);
+            // if(u < 0)
+            {
+                //normal force
+                test_deltax_dot = (-(1.0+COR)*u/K)*normal;
+                //friction
+                test_deltax_dot += -COF*(-(1.0+COR)*u/K)*(x_dot+cross(omega, a)-u*normal);
+            }
+            if(dot(test_deltax_dot+impulses[cp], normal) < 0) test_deltax_dot = vec3(0);
 
-                                        vec3 normal = normalize(world_gradient);
-                                        vec3 a = wvc-x;
+            vec3 v = x_dot+cross(omega, a);
 
-                                        float u = dot(x_dot+cross(omega, a), normal);
-                                        float K = 1.0+m*dot(cross(invI*cross(a, normal), a), normal);
-                                        vec3 test_deltax_dot = vec3(0,0,0);
-                                        if(u < 0)
-                                        {
-                                            //normal force
-                                            test_deltax_dot = (-(1.0+COR)*u/K)*normal;
-                                            //friction
-                                            test_deltax_dot += -0.1*(-(1.0+COR)*u/K)*(x_dot+cross(omega, a)-u*normal);
-                                        }
-                                        vec3 v = x_dot+cross(omega, a);
+            vec3 test_deltaomega = m*invI*cross(a, test_deltax_dot);
+            float E = (m*dot(x_dot+test_deltax_dot, x_dot+test_deltax_dot)
+                       +dot(I*(omega+test_deltaomega), omega+test_deltaomega)); //TODO: need to adjust I as rotation changes
+            if(E < best_E)
+            {
+                best_deltax_dot = test_deltax_dot;
+                // best_deltax = deltax;
+                best_r = a;
+                best_E = E;
+                best_cp = cp;
+            }
 
-                                        vec3 test_deltaomega = m*invI*cross(a, test_deltax_dot);
-                                        float E = (m*dot(x_dot+test_deltax_dot, x_dot+test_deltax_dot)
-                                                   +dot(I*(omega+test_deltaomega), omega+test_deltaomega)); //TODO: need to adjust I as rotation changes
-                                        if(E < best_E)
-                                        {
-                                            best_deltax_dot = test_deltax_dot;
-                                            // best_deltax = deltax;
-                                            best_r = a;
-                                            best_E = E;
-                                        }
+            if(i == 0)
+            {
+                vec3 deltax = 0.01*max(-world_voxel.g-1, 0)*normal;
+                pseudo_x_dot += deltax;
+                pseudo_omega += m*invI*cross(best_r, deltax);
+            }
+        }
 
-                                        vec3 deltax = -0.005*world_voxel.g*normal;
-                                        pseudo_x_dot += deltax;
-                                        pseudo_omega += m*invI*cross(best_r, deltax);
-                                    }
-                                }
-                    }
-                }
+        best_deltax_dot *= 0.9;
 
         deltax_dot += best_deltax_dot;
         deltaomega += m*invI*cross(best_r, best_deltax_dot);
+
+        impulses[best_cp] += deltax_dot;
+
         // pseudo_x_dot = best_deltax;
         // pseudo_omega = (m/I)*cross(best_r, best_deltax);
     }
+
+    // if(dot(body_x_dot, body_x_dot+deltax_dot) < 0)
+    // {
+    //     deltax_dot *= -length(body_x_dot)/dot(body_x_dot, normalize(deltax_dot));
+    // }
+
+    // if(dot(body_omega, body_omega+deltaomega) < 0)
+    // {
+    //     deltaomega *= -length(body_omega)/dot(body_omega, normalize(deltaomega));
+    // }
 }

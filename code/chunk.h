@@ -67,7 +67,7 @@ void load_body_to_gpu(cpu_body_data* bc, gpu_body_data* bg)
     if(bc->storage_level < sm_gpu)
     {
         bc->materials_texture = body_materials_textures[1];
-        bg->materials_origin = {1+16*(n_bodies%8),1+16*((n_bodies/8)%8),1+16*(n_bodies/16)};
+        bg->materials_origin = {1+16*(n_bodies%8),1+16*((n_bodies/8)%8),1+16*(n_bodies/64)};
         n_bodies++;
 
         glBindTexture(GL_TEXTURE_3D, bc->materials_texture);

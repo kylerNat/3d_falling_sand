@@ -366,35 +366,32 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     {
         w->bodies_gpu[b].x_dot *= 0.995;
         // w->bodies_gpu[b].omega -= w->bodies_gpu[b].invI*0.005*w->bodies_gpu[b].omega;
-        if(is_down('Y', input))
-        w->bodies_gpu[b].x_dot.z += -0.01;
-        else
-        w->bodies_gpu[b].x_dot.z += -0.1;
+        // if(is_down('Y', input))
+        // w->bodies_gpu[b].x_dot.z += -0.01;
+        // else
+        // w->bodies_gpu[b].x_dot.z += -0.1;
     }
 
     static float touching_grass = 0.0;
     static float supported_weight = 0.0;
     // if(touching_grass > 0.0)
     {
-        // real multiplier = 10;
-        // real target_height = 14;
-        // multiplier *= -(1.0*(w->bodies_gpu[13].x.z-0.5*w->bodies_gpu[5].x.z-0.5*w->bodies_gpu[7].x.z-target_height));
-        // if(is_down('T', input)) multiplier = 100;
-        // w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
-        // w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[5].m;
-        // w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[7].m;
-        // // w->bodies_gpu[13].x_dot.z *= 0.8;
-        // touching_grass -= 1.0;
+        real multiplier = 10;
+        real target_height = 14;
+        multiplier *= -(1.0*(w->bodies_gpu[13].x.z-0.5*w->bodies_gpu[5].x.z-0.5*w->bodies_gpu[7].x.z-target_height));
+        if(is_down('T', input)) multiplier = 100;
+        w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
+        w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[5].m;
+        w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[7].m;
+        // w->bodies_gpu[13].x_dot.z *= 0.8;
+        touching_grass -= 1.0;
     }
 
     real_3 old_xl = w->bodies_gpu[5].x_dot;
     real_3 old_xr = w->bodies_gpu[7].x_dot;
 
     simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
-    for(int i = 0; i < 1; i++)
-    {
-        simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
-    }
+    simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
 
     real_3 new_xl = w->bodies_gpu[5].x_dot;
     real_3 new_xr = w->bodies_gpu[7].x_dot;

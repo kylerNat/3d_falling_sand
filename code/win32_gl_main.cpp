@@ -617,7 +617,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 if(z <= 5) material = 3;
                 if(z > chunk_size-10) material = 3;
 
-                int door_width = 20;
+                int door_width = 40;
                 if(abs(x-chunk_size/2) > door_width/2 && abs(y-chunk_size/2) > door_width/2 ||
                    x <            5 ||
                    x > chunk_size-5 ||
@@ -631,14 +631,15 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     // if(chunk_size-z <= 10) material = 3;
                 }
 
-                if((abs(x-chunk_size/2) < door_width/2 || abs(y-chunk_size/2) < door_width/2) &&
+                int wall_thickness = 20;
+                if((abs(x-chunk_size/2) < wall_thickness/2 || abs(y-chunk_size/2) < wall_thickness/2) &&
                    !(abs(x-chunk_size*1/4) < door_width/2 || abs(y-chunk_size*1/4) < door_width/2
                      || abs(x-chunk_size*3/4) < door_width/2 || abs(y-chunk_size*3/4) < door_width/2))
                 {
                      material = 3;
                 }
 
-                if(abs(z-chunk_size/2) < 5 && abs(x-chunk_size/2)+abs(y-chunk_size/2) > 30) material = 3;
+                if(abs(z-chunk_size/2) < 5 && abs(x-chunk_size/2)+abs(y-chunk_size/2) > 60) material = 3;
 
                 // if(y == chunk_size/2 && abs(x-chunk_size/2) <= 2*(i) && x%2 == 0) material = 3;
                 if(y == chunk_size*3/4 && x == chunk_size*3/4 && z < 50) material = 3;
@@ -1132,11 +1133,22 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         //Render world
 
         glEnable(GL_DEPTH_TEST);
-        if(!is_down('B', wnd.input)) render_chunk(w.c, rd.camera_axes, rd.camera_pos);
 
-        for(int b = 0; b < w.n_bodies; b++)
+        // render_depth_prepass(materials_textures[current_materials_texture], rd.camera_axes, rd.camera_pos, {512,512,512},{0,0,0});
+
+        if(!is_down('N', wnd.input))
         {
-            render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
+            update_lightprobes();
+        }
+
+        if(!is_down('B', wnd.input))
+        {
+            render_chunk(w.c, rd.camera_axes, rd.camera_pos);
+
+            for(int b = 0; b < w.n_bodies; b++)
+            {
+                render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
+            }
         }
 
         glDisable(GL_DEPTH_TEST);
