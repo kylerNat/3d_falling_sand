@@ -582,8 +582,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .n_bodies = 0,
         .joints = (joint*) permalloc_clear(manager, 1024*sizeof(joint)),
         .n_joints = 0,
-        .parts = (body_part*) permalloc_clear(manager, 1024*sizeof(body_part)),
-        .n_parts = 0,
+        .components = (body_component*) permalloc_clear(manager, 1024*sizeof(body_component)),
+        .n_components = 0,
+        .brains = (brain*) permalloc_clear(manager, 1024*sizeof(brain)),
+        .n_brains = 0,
         .c = (chunk*) permalloc(manager, 8*sizeof(chunk)),
         .chunk_lookup = {},
     };
@@ -606,6 +608,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 // height += 0.03*rsq*(exp(-0.0005*rsq));
                 int ramp_height = 20;
                 // height += clamp(ramp_height-abs(y-128), 0, ramp_height);
+                if(sqrt(rsq) < 80 && z < height+ramp_height-5) material = 2;
                 height += clamp((float) ramp_height-abs(sqrt(rsq)-80), 0.0, (float) ramp_height);
                 if(z < height) material = 1;
                 // else if(z < chunk_size-1) material = (randui(&w.seed)%prob)==0;
@@ -613,6 +616,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 // if(x == chunk_size/2+0 && y == chunk_size/2-1) material = 2;
                 // if(x == chunk_size/2-1 && y == chunk_size/2-1) material = 2;
                 // if(x == chunk_size/2-1 && y == chunk_size/2+0) material = 2;
+
 
                 if(z <= 5) material = 3;
                 if(z > chunk_size-10) material = 3;
@@ -686,12 +690,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     // if(z_middle && x_middle) material = 0;
 
                     int material = 0;
-                    if(x_middle && y_middle) material = 2;
-                    if(y_middle && z_middle) material = 2;
-                    if(z_middle && x_middle) material = 2;
-                    if(material == 2 && (x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu[b].size.z-1)) material = 1;
-                    if(material == 2 && (x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu[b].size.x-1)) material = 1;
-                    if(material == 2 && (x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu[b].size.y-1)) material = 1;
+                    if(x_middle && y_middle) material = 3;
+                    if(y_middle && z_middle) material = 3;
+                    if(z_middle && x_middle) material = 3;
+                    if(material == 3 && (x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu[b].size.z-1)) material = 1;
+                    if(material == 3 && (x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu[b].size.x-1)) material = 1;
+                    if(material == 3 && (x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu[b].size.y-1)) material = 1;
 
                     // if(abs(y - 12) > 2 || abs(x - 12) > 2) material = 0;
 
@@ -730,7 +734,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
                 for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
                 {
-                    int material = 2;
+                    int material = 3;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
 
                     real m = 0.001;
@@ -771,7 +775,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
                 {
                     int material = 0;
-                    if(x < limb_length || (z == 0 && y == body_width/2)) material = 2;
+                    if(x < limb_length || (z == 0 && y == body_width/2)) material = 3;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
 
                     real m = 0.001;
@@ -788,12 +792,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.n_bodies++;
     }
 
+    real head_size = 5;
     {
         int b = w.n_bodies;
         head_id = b;
         w.bodies_gpu[b].size = {6,6,6};
         w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
-        w.bodies_gpu[b].x_cm = {2.5,2.5,2.5};
+        w.bodies_gpu[b].x_cm = {head_size/2,head_size/2,head_size/2};
         w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
@@ -811,8 +816,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
                 for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
                 {
-                    if(x >= 5 || y >= 5 || z >= 5) continue;
-                    int material = 2;
+                    if(x >= head_size || y >= head_size || z >= head_size) continue;
+                    int material = 3;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
                     real m = 0.001;
                     if(material == 0) m = 0;
@@ -850,7 +855,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
                 for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
                 {
-                    int material = 2;
+                    int material = 3;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
                     real m = 0.001;
                     w.bodies_gpu[b].m += m;
@@ -886,45 +891,91 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     {
         w.joints[w.n_joints++] = {
             .type = joint_hinge,
+            .brain_id = 0,
+            .max_torque = 1.0,
             .body_id = {limb_start_id+2*i, limb_start_id+2*i+1},
             .pos = {{limb_length-1,0,0}, {0,0,0}},
             .axis = {1,1},
         };
     }
+    w.joints[1].brain_id = 1;
 
     w.joints[w.n_joints++] = {
-        .type = joint_ball,
+        .type = joint_hinge,
+            .brain_id = 1,
+            .max_torque = 1.0,
         .body_id = {limb_start_id+0, body_id},
         .pos = {{0,0,0},{0,0,0}},
         .axis = {1,1},
     };
     w.joints[w.n_joints++] = {
-        .type = joint_ball,
+        .type = joint_hinge,
+            .brain_id = 0,
+            .max_torque = 1.0,
         .body_id = {limb_start_id+2, body_id},
         .pos = {{0,0,0},{0,body_width-1,0}},
         .axis = {1,1},
     };
     w.joints[w.n_joints++] = {
-        .type = joint_ball,
+        .type = joint_hinge,
+            .brain_id = 0,
+            .max_torque = 1.0,
         .body_id = {limb_start_id+4, body_id},
         .pos = {{0,0,0},{limb_length-1,0,0}},
         .axis = {1,1},
     };
     w.joints[w.n_joints++] = {
-        .type = joint_ball,
+        .type = joint_hinge,
+            .brain_id = 0,
+            .max_torque = 1.0,
         .body_id = {limb_start_id+6, body_id},
         .pos = {{0,0,0},{limb_length-1,body_width-1,0}},
         .axis = {1,1},
     };
     w.joints[w.n_joints++] = {
         .type = joint_ball,
+            .brain_id = 0,
+            .max_torque = 1.0,
         .body_id = {head_id, body_id},
-        .pos = {{2,2,0}, {body_length-1,body_width/2,0}},
+        .pos = {{(head_size-1)/2,(head_size-1)/2,0}, {body_length-1,body_width/2,0}},
     };
+
+    w.joints[w.n_joints++] = {
+        .type = joint_hinge,
+            .brain_id = 0,
+            .max_torque = 1.0,
+        .body_id = {limb_start_id+1, 2},
+        .pos = {{limb_length-1,0,0},{4,4,0}},
+        .axis = {1,1},
+    };
+
+    brain* br = &w.brains[w.n_brains++];
+    *br = {
+        .endpoints = (endpoint*) permalloc(manager, sizeof(endpoint)*1024),
+        .n_endpoints = 0,
+    };
+    br->endpoints[br->n_endpoints++] = {
+        .type = endpoint_foot,
+        .body_id = 5,
+        .pos = {limb_length-1,0,0},
+        .state = foot_lift,
+        .foot_phase_offset = 0.0,
+        .target_type = tv_velocity,
+        .target_value = {0,0,0},
+    };
+    // br->endpoints[br->n_endpoints++] = {
+    //     .type = endpoint_foot,
+    //     .body_id = 7,
+    //     .pos = {limb_length-1,0,0},
+    //     .state = foot_lift,
+    //     .foot_phase_offset = 0.5,
+    //     .target_type = tv_velocity,
+    //     .target_value = {0,0,0},
+    // };
 
     for(int j = 0; j < w.n_joints; j++)
     {
-        w.parts[w.n_parts++] = {part_joint, (void*) &w.joints[j]};
+        w.components[w.n_components++] = {comp_joint, (void*) &w.joints[j]};
     }
 
     for(int b = 0; b < w.n_bodies; b++)
@@ -1120,7 +1171,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             // for(int i = 0 ; i < 8; i++)
             //     simulate_chunk(w.c, 0);
             if(!is_down('Z', wnd.input)) simulate_chunk(w.c, 1);
-
+            //
             //TODO: seperate update and render to improve performance and allow for a partial step for visual updating
             memcpy(wnd.input.prev_buttons, wnd.input.buttons, sizeof(wnd.input.buttons));
         }
@@ -1143,12 +1194,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         if(!is_down('B', wnd.input))
         {
-            render_chunk(w.c, rd.camera_axes, rd.camera_pos);
+            render_chunk(w.c, rd.camera_axes, rd.camera_pos, w.bodies_gpu, w.n_bodies);
 
-            for(int b = 0; b < w.n_bodies; b++)
-            {
-                render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
-            }
+            // for(int b = 0; b < w.n_bodies; b++)
+            // {
+            //     render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
+            // }
         }
 
         glDisable(GL_DEPTH_TEST);

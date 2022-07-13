@@ -32,47 +32,9 @@ layout(location = 2) uniform isampler3D body_materials;
 layout(location = 3) uniform sampler3D body_forces;
 layout(location = 4) uniform sampler3D body_shifts;
 
-struct body
-{
-    int materials_origin_x; int materials_origin_y; int materials_origin_z;
-    int size_x; int size_y; int size_z;
-    float x_cm_x; float x_cm_y; float x_cm_z;
-    float x_x; float x_y; float x_z;
-    float x_dot_x; float x_dot_y; float x_dot_z;
-    float orientation_r; float orientation_x; float orientation_y; float orientation_z;
-    float omega_x; float omega_y; float omega_z;
+#include "include/body_data.glsl"
 
-    float m;
-
-    float I_xx; float I_yx; float I_zx;
-    float I_xy; float I_yy; float I_zy;
-    float I_xz; float I_yz; float I_zz;
-
-    float invI_xx; float invI_yx; float invI_zx;
-    float invI_xy; float invI_yy; float invI_zy;
-    float invI_xz; float invI_yz; float invI_zz;
-
-    // ivec3 materials_origin;
-    // ivec3 size;
-    // vec3 x_cm;
-    // vec3 x;
-    // vec3 x_dot;
-    // vec4 orientation;
-    // vec3 omega;
-};
-
-ivec3 body_materials_origin;
-ivec3 body_size;
-vec3  body_x_cm;
-vec3  body_x;
-vec3  body_x_dot;
-vec4  body_orientation;
-vec3  body_omega;
-
-layout(std430, binding = 0) buffer body_data
-{
-    body bodies[];
-};
+#include "include/maths.glsl"
 
 smooth in vec2 uv;
 
@@ -86,31 +48,6 @@ ivec4 voxelFetch(isampler3D tex, ivec3 coord)
 ivec4 bodyVoxelFetch(int body_index, ivec3 coord)
 {
     return texelFetch(body_materials, body_materials_origin+coord, 0);
-}
-
-vec4 axis_to_quaternion(vec3 axis)
-{
-    float half_angle = length(axis)/2;
-    if(half_angle <= 0.0001) return vec4(1,0,0,0);
-    vec3 axis_hat = normalize(axis);
-    float s = sin(half_angle);
-    float c = cos(half_angle);
-    return vec4(c, s*axis_hat.x, s*axis_hat.y, s*axis_hat.z);
-}
-
-vec4 qmult(vec4 a, vec4 b)
-{
-    return vec4(a.x*b.x-a.y*b.y-a.z*b.z-a.w*b.w,
-                a.x*b.y+a.y*b.x+a.z*b.w-a.w*b.z,
-                a.x*b.z+a.z*b.x+a.w*b.y-a.y*b.w,
-                a.x*b.w+a.w*b.x+a.y*b.z-a.z*b.y);
-}
-
-vec3 apply_rotation(vec4 q, vec3 p)
-{
-    vec4 p_quat = vec4(0, p.x, p.y, p.z);
-    vec4 q_out = qmult(qmult(q, p_quat), vec4(q.x, -q.y, -q.z, -q.w));
-    return q_out.yzw;
 }
 
 uint rand(uint seed)
@@ -184,26 +121,7 @@ void main()
     int b = int(gl_FragCoord.y);
     // int b = 0;
 
-    body_materials_origin = ivec3(bodies[b].materials_origin_x,
-                                  bodies[b].materials_origin_y,
-                                  bodies[b].materials_origin_z);
-    body_size = ivec3(bodies[b].size_x,
-                      bodies[b].size_y,
-                      bodies[b].size_z);
-
-    body_x_cm = vec3(bodies[b].x_cm_x, bodies[b].x_cm_y, bodies[b].x_cm_z);
-    body_x = vec3(bodies[b].x_x, bodies[b].x_y, bodies[b].x_z);
-    body_x_dot = vec3(bodies[b].x_dot_x, bodies[b].x_dot_y, bodies[b].x_dot_z);
-    body_orientation = vec4(bodies[b].orientation_r, bodies[b].orientation_x, bodies[b].orientation_y, bodies[b].orientation_z);
-    body_omega = vec3(bodies[b].omega_x, bodies[b].omega_y, bodies[b].omega_z);
-
-    float m = bodies[b].m;
-    mat3 I = mat3(bodies[b].I_xx, bodies[b].I_yx, bodies[b].I_zx,
-                  bodies[b].I_xy, bodies[b].I_yy, bodies[b].I_zy,
-                  bodies[b].I_xz, bodies[b].I_yz, bodies[b].I_zz);
-    mat3 invI = mat3(bodies[b].invI_xx, bodies[b].invI_yx, bodies[b].invI_zx,
-                     bodies[b].invI_xy, bodies[b].invI_yy, bodies[b].invI_zy,
-                     bodies[b].invI_xz, bodies[b].invI_yz, bodies[b].invI_zz);
+    get_body_data(b);
 
     deltax_dot = vec3(0,0,0);
     deltaomega = vec3(0,0,0);
@@ -243,17 +161,17 @@ void main()
         int deepest_depth = 0;
         bool point_found = false;
 
-        // float old_E = m*dot(x_dot, x_dot)+I*dot(omega, omega);
+        // float old_E = m*dot(x_dot, x_dot)+body_I*dot(omega, omega);
 
         vec3 best_deltax_dot = vec3(0,0,0);
         vec3 best_deltax = vec3(0,0,0);
         vec3 best_r = vec3(0,0,0);
         int best_cp = -1;
         int n_collisions = 0;
-        float best_E = 2*(m*dot(x_dot, x_dot)+dot(I*omega, omega));
+        float best_E = 2*(body_m*dot(x_dot, x_dot)+dot(body_I*omega, omega));
 
-        //TODO: build list of points to test that are non-empty and on the surface instead of checking all of them
-        //      maybe make it a linked list to minimize texture lookups
+        float COR = 0.2;
+        float COF = 0.1;
         for(int cp = 0; cp < n_collision_points; cp++)
         {
             vec3 world_coord = world_collision_points[cp];
@@ -261,22 +179,22 @@ void main()
             ivec4 world_voxel = voxelFetch(materials, wvc);
             vec3 rel_pos = vec3(wvc)+0.5-world_coord;
 
-            const float COR = 0.2;
-            const float COF = 0.1;
-
             vec3 world_gradient = vec3(
                 voxelFetch(materials, wvc+ivec3(1,0,0)).g-voxelFetch(materials, wvc+ivec3(-1,0,0)).g,
                 voxelFetch(materials, wvc+ivec3(0,1,0)).g-voxelFetch(materials, wvc+ivec3(0,-1,0)).g,
                 voxelFetch(materials, wvc+ivec3(0,0,1)).g-voxelFetch(materials, wvc+ivec3(0,0,-1)).g+0.001
                 );
 
-            //TODO: can probably reduce jitter by using more accurate collision_points, maybe add noise
             vec3 normal = normalize(world_gradient);
             // vec3 a = wvc-body_x;
+
+            // if(length(omega) - sq(dot(omega, normal)) < 0.01
+            //    && dot(x_dot, normal) < 0.01) COR = 0;
+
             vec3 a = world_coord-body_x;
 
             float u = dot(x_dot+cross(omega, a), normal);
-            float K = 1.0+m*dot(cross(invI*cross(a, normal), a), normal);
+            float K = 1.0+body_m*dot(cross(body_invI*cross(a, normal), a), normal);
             vec3 test_deltax_dot = vec3(0,0,0);
             // if(u < 0)
             {
@@ -289,9 +207,9 @@ void main()
 
             vec3 v = x_dot+cross(omega, a);
 
-            vec3 test_deltaomega = m*invI*cross(a, test_deltax_dot);
-            float E = (m*dot(x_dot+test_deltax_dot, x_dot+test_deltax_dot)
-                       +dot(I*(omega+test_deltaomega), omega+test_deltaomega)); //TODO: need to adjust I as rotation changes
+            vec3 test_deltaomega = body_m*body_invI*cross(a, test_deltax_dot);
+            float E = (body_m*dot(x_dot+test_deltax_dot, x_dot+test_deltax_dot)
+                       +dot(body_I*(omega+test_deltaomega), omega+test_deltaomega)); //TODO: need to adjust I as rotation changes
             if(E < best_E)
             {
                 best_deltax_dot = test_deltax_dot;
@@ -305,19 +223,19 @@ void main()
             {
                 vec3 deltax = 0.01*max(-world_voxel.g-1, 0)*normal;
                 pseudo_x_dot += deltax;
-                pseudo_omega += m*invI*cross(best_r, deltax);
+                pseudo_omega += body_m*body_invI*cross(best_r, deltax);
             }
         }
 
         best_deltax_dot *= 0.9;
 
         deltax_dot += best_deltax_dot;
-        deltaomega += m*invI*cross(best_r, best_deltax_dot);
+        deltaomega += body_m*body_invI*cross(best_r, best_deltax_dot);
 
         impulses[best_cp] += deltax_dot;
 
         // pseudo_x_dot = best_deltax;
-        // pseudo_omega = (m/I)*cross(best_r, best_deltax);
+        // pseudo_omega = (body_m/body_I)*cross(best_r, best_deltax);
     }
 
     // if(dot(body_x_dot, body_x_dot+deltax_dot) < 0)

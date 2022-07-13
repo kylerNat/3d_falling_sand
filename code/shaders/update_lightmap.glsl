@@ -55,8 +55,9 @@ layout(location = 6) uniform sampler2D blue_noise_texture;
 ivec3 size = ivec3(512);
 ivec3 origin = ivec3(0);
 
-#include "include/raycast.glsl"
 #include "include/blue_noise.glsl"
+#include "include/body_data.glsl"
+#include "include/raycast.glsl"
 #include "include/lightprobe.glsl"
 
 smooth in vec2 sample_oct;
@@ -98,10 +99,10 @@ void main()
             // emission = vec3(0.4,0.4,0.8);
             emission = vec3(0.8,0.2,0.2)*100;
         }
-        if(voxel.r == 1)
-        {
-            emission = vec3(0.54,0.44,0.21);
-        }
+        // if(voxel.r == 1)
+        // {
+        //     emission = vec3(0.54,0.44,0.21);
+        // }
         // if(voxel.r == 3)
         // {
         //     emission = vec3(0.5,0.125,0.5);

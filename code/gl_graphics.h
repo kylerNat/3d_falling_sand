@@ -137,7 +137,7 @@ void gl_init_general_buffers(memory_manager* manager)
         glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB16F, lightprobe_resolution_x, lightprobe_resolution_y);
         //TODO: can add mip maps to allow for rougher surfaces
 
-        real_3 clear = {0,0,0};
+        real_3 clear = {0.2,0.2,0.2};
         glClearTexImage(lightprobe_color_textures[i], 0, GL_RGB, GL_FLOAT, &clear);
     }
 
@@ -209,14 +209,14 @@ void gl_init_general_buffers(memory_manager* manager)
     for(int i = 0; i < len(materials_textures); i++)
     {
         glBindTexture(GL_TEXTURE_3D, materials_textures[i]);
-        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RG8I, chunk_size, chunk_size, chunk_size);
+        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RG16I, chunk_size, chunk_size, chunk_size);
     }
 
     glGenTextures(len(body_materials_textures), body_materials_textures);
     for(int i = 0; i < len(body_materials_textures); i++)
     {
         glBindTexture(GL_TEXTURE_3D, body_materials_textures[i]);
-        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RG8I, body_texture_size, body_texture_size, body_texture_size);
+        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RG16I, body_texture_size, body_texture_size, body_texture_size);
     }
 
     glGenTextures(1, &body_forces_texture);
@@ -249,6 +249,7 @@ void gl_init_general_buffers(memory_manager* manager)
     glGenBuffers(1, &body_buffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, N_MAX_BODIES*sizeof(gpu_body_data), 0, GL_DYNAMIC_STORAGE_BIT);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, body_buffer);
 
     // glGenTextures(1, &capsules_texture);
     // glBindTexture(GL_TEXTURE_2D, capsules_texture);
@@ -780,7 +781,7 @@ void update_lightprobes()
     glViewport(0, 0, resolution_x, resolution_y);
 }
 
-void render_voxels(GLuint materials_texture, real_3x3 camera_axes, real_3 camera_pos, int_3 size, int_3 origin)
+void render_voxels(GLuint materials_texture, real_3x3 camera_axes, real_3 camera_pos, int_3 size, int_3 origin, gpu_body_data* bodies_gpu, int n_bodies)
 {
     glUseProgram(render_chunk_program);
 
@@ -803,6 +804,15 @@ void render_voxels(GLuint materials_texture, real_3x3 camera_axes, real_3 camera
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
     glBindTexture(GL_TEXTURE_3D, occupied_regions_texture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_3D, body_materials_textures[current_body_materials_texture]);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
@@ -846,6 +856,11 @@ void render_voxels(GLuint materials_texture, real_3x3 camera_axes, real_3 camera
 
     static int frame_number = 0;
     glUniform1i(uniform_i++, frame_number++);
+    glUniform1i(uniform_i++, n_bodies++);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(bodies_gpu[0])*n_bodies, bodies_gpu);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, body_buffer);
 
     size_t offset = 0;
     int layout_location = 0;
@@ -862,17 +877,17 @@ void render_voxels(GLuint materials_texture, real_3x3 camera_axes, real_3 camera
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 }
 
-void render_chunk(chunk* c, real_3x3 camera_axes, real_3 camera_pos)
+void render_chunk(chunk* c, real_3x3 camera_axes, real_3 camera_pos, gpu_body_data* bodies_gpu, int n_bodies)
 {
     load_chunk_to_gpu(c);
-    render_voxels(materials_textures[current_materials_texture], camera_axes, camera_pos, {chunk_size, chunk_size, chunk_size}, {0,0,0});
+    render_voxels(materials_textures[current_materials_texture], camera_axes, camera_pos, {chunk_size, chunk_size, chunk_size}, {0,0,0}, bodies_gpu, n_bodies);
 }
 
-void render_body(cpu_body_data* bc, gpu_body_data* bg, real_3x3 camera_axes, real_3 camera_pos)
+void render_body(cpu_body_data* bc, gpu_body_data* bg, real_3x3 camera_axes, real_3 camera_pos, gpu_body_data* bodies_gpu, int n_bodies)
 {
     load_body_to_gpu(bc, bg);
     // glDisable(GL_DEPTH_TEST);
-    render_voxels(body_materials_textures[current_body_materials_texture], apply_rotation(conjugate(bg->orientation), camera_axes), apply_rotation(conjugate(bg->orientation), camera_pos - bg->x)+bg->x_cm, bg->size, bg->materials_origin); //TODO: proper bounds and shit
+    render_voxels(body_materials_textures[current_body_materials_texture], apply_rotation(conjugate(bg->orientation), camera_axes), apply_rotation(conjugate(bg->orientation), camera_pos - bg->x)+bg->x_cm, bg->size, bg->materials_origin, bodies_gpu, n_bodies); //TODO: proper bounds and shit
     // glEnable(GL_DEPTH_TEST);
 }
 
@@ -1098,6 +1113,10 @@ void simulate_bodies(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n
 
     glUniform1i(uniform_i++, n_bodies);
 
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(bodies_gpu[0])*n_bodies, bodies_gpu);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, body_buffer);
+
     size_t offset = 0;
     int layout_location = 0;
 
@@ -1308,16 +1327,139 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
 //     bbu += b->x;
 // }
 
-void get_chunk_data(chunk* c, int_3 x, int_3 dim, uint16* data)
+// voxel_data get_voxel_data(int_3 x)
+// {
+//     int_2 data[27];
+//     int_3 dim = {3,3,3};
+//     glGetTextureSubImage(materials_textures[current_materials_texture],
+//                          0,
+//                          x.x-1, x.y-1, x.z-1,
+//                          dim.x, dim.y, dim.z,
+//                          GL_RG_INTEGER,
+//                          GL_INT,
+//                          sizeof(data),
+//                          data);
+
+//     real_3 gradient = {
+//         data[2+1*3+1*9].y-data[0+1*3+1*9].y,
+//         data[1+2*3+1*9].y-data[1+0*3+1*9].y,
+//         data[1+1*3+2*9].y-data[1+1*3+0*9].y,
+//     };
+
+//     voxel_data out = {
+//         .material = data[13].x,
+//         .distance = data[13].y,
+//         .normal = normalize(gradient),
+//     };
+//     return out;
+// }
+
+voxel_data get_voxel_data(int_3 x)
 {
-    glGetTextureSubImage(materials_textures[current_materials_texture],
-                         0,
-                         x.x, x.y, x.z,
-                         dim.x, dim.y, dim.z,
-                         GL_RED,
-                         GL_UNSIGNED_SHORT,
-                         dim.x*dim.y*dim.z*sizeof(uint16)*2,
-                         data);
+    int_2 data[27];
+    int_3 dim = {3,3,3};
+    x = clamp_per_axis(x, 1, chunk_size-2);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+    // glViewport(0, 0, chunk_size, chunk_size);
+
+    for(int z = 0; z < dim.z; z++)
+    {
+        glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_3D,
+                               materials_textures[current_materials_texture], 0, x.z+z);
+        // glReadPixels(x.x, x.y, dim.x, dim.y, GL_RG_INTEGER, GL_INT, data+9*z);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    real_3 gradient = {
+        data[2+1*3+1*9].y-data[0+1*3+1*9].y,
+        data[1+2*3+1*9].y-data[1+0*3+1*9].y,
+        data[1+1*3+2*9].y-data[1+1*3+0*9].y+0.01,
+    };
+
+    voxel_data out = {
+        .material = data[13].x,
+        .distance = data[13].y,
+        .normal = normalize(gradient),
+    };
+    return out;
 }
+
+// voxel_data get_voxel_data(int_3 x)
+// {
+//     glUseProgram(get_voxel_data_program);
+
+//     int texture_i = 0;
+//     int uniform_i = 0;
+
+//     glUniform1i(uniform_i++, texture_i);
+//     glActiveTexture(GL_TEXTURE0+texture_i++);
+//     glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+
+//     size_t offset = 0;
+//     int layout_location = 0;
+
+//     GLuint vertex_buffer = gl_general_buffers[0];
+//     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+//     real vb[] = {-1,-1,0,
+//         -1,+1,0,
+//         +1,+1,0,
+//         +1,-1,0};
+//     glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
+//     add_contiguous_attribute(3, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+
+//     glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+//     glViewport(0, 0, 1, n_particles);
+
+//     glBindTexture(GL_TEXTURE_2D, particles_x_texture);
+//     glTexSubImage2D(GL_TEXTURE_2D,
+//                     0,
+//                     0, 0,
+//                     1, n_particles,
+//                     GL_RGB, GL_FLOAT, xs);
+
+//     glBindTexture(GL_TEXTURE_2D, particles_x_dot_texture);
+//     glTexSubImage2D(GL_TEXTURE_2D,
+//                     0,
+//                     0, 0,
+//                     1, n_particles,
+//                     GL_RGB, GL_FLOAT, x_dots);
+
+//     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, particles_x_texture, 0);
+//     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, particles_x_dot_texture, 0);
+
+//     GLenum buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+//     glDrawBuffers(len(buffers), buffers);
+
+//     glDisable(GL_BLEND);
+//     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+//     glEnable(GL_BLEND);
+
+//     glGetTextureSubImage(particles_x_texture,
+//                          0,
+//                          0, 0, 0,
+//                          1, n_particles, 1,
+//                          GL_RGB,
+//                          GL_FLOAT,
+//                          sizeof(xs[0])*n_particles,
+//                          xs);
+
+//     glGetTextureSubImage(particles_x_dot_texture,
+//                          0,
+//                          0, 0, 0,
+//                          1, n_particles, 1,
+//                          GL_RGB,
+//                          GL_FLOAT,
+//                          sizeof(x_dots[0])*n_particles,
+//                          x_dots);
+
+//     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+//     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
+// }
 
 #endif

@@ -33,7 +33,7 @@ struct user_input
 #define set_key_down(key_code, input) input.buttons[(key_code)/8] |= 1<<((key_code)%8)
 #define set_key_up(key_code, input) input.buttons[(key_code)/8] &= ~(1<<((key_code)%8))
 
-struct element_particle
+struct element_componenticle
 {
     real_3 x;
     real_3 x_dot;
@@ -49,11 +49,11 @@ struct support_t
     real d;
 };
 
-support_t point_hull_support(real_3 dir, element_particle* p, element_particle* hull, real_3 hull_x_dot, int hull_len)
+support_t point_hull_support(real_3 dir, element_componenticle* p, element_componenticle* hull, real_3 hull_x_dot, int hull_len)
 {
-    element_particle* best_h = hull;
+    element_componenticle* best_h = hull;
     real best_d = dot(dir, hull->x);
-    for(element_particle* h = hull+1; h < hull+hull_len; h++)
+    for(element_componenticle* h = hull+1; h < hull+hull_len; h++)
     {
         real test_d = dot(dir, h->x);
         if(test_d > best_d) {
@@ -74,7 +74,7 @@ support_t point_hull_support(real_3 dir, element_particle* p, element_particle* 
     return {x, d};
 }
 
-bool is_colliding(element_particle* p, element_particle* hull, real_3 hull_x_dot, int hull_len)
+bool is_colliding(element_componenticle* p, element_componenticle* hull, real_3 hull_x_dot, int hull_len)
 {
     real_3 simplex[4];
     support_t support;
@@ -208,11 +208,15 @@ struct world
     gpu_body_data * bodies_gpu;
     int n_bodies;
 
+    //TODO: turn everything into hashtables
     joint* joints;
     int n_joints;
 
-    body_part* parts;
-    int n_parts;
+    body_component* components;
+    int n_components;
+
+    brain* brains;
+    int n_brains;
 
     chunk * c;
     int8_2 chunk_lookup[2*2*2];
@@ -352,6 +356,27 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         player->x_dot.y = 3*look_forward.y;
     }
 
+    real fov = pi*120.0/180.0;
+    real screen_dist = 1.0/tan(fov/2);
+
+    real n = 0.1;
+    real f = 1000.0;
+
+    static real camera_dist_target = 240;
+    static real camera_dist = camera_dist_target;
+    camera_dist_target *= pow(1.0+0.001, -input.mouse_wheel);
+    const real min_camera_dist = 1;
+    if(camera_dist_target < min_camera_dist) camera_dist_target = min_camera_dist;
+    camera_dist += 0.2*(camera_dist_target-camera_dist);
+
+    real_3 camera_z = {sin(theta)*sin(phi), -sin(theta)*cos(phi), cos(theta)};
+    // real_3 camera_x = normalize(cross({0,0,1}, camera_z));
+    real_3 camera_x = {cos(phi),sin(phi),0};
+    real_3 camera_y = cross(camera_z, camera_x);
+    real_3 camera_pos;
+
+    camera_pos = player->x;
+
     real_3 foot_dist = (real_3){0,0,-15};
 
     real_3 xs[1] = {player->x+foot_dist};
@@ -361,6 +386,9 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     player->x_dot = x_dots[0];
 
     // player->x += player->x_dot;
+
+    static real placement_dist = 20.0;
+    placement_dist += 0.02*input.mouse_wheel;
 
     for(int b = 0; b < w->n_bodies; b++)
     {
@@ -375,16 +403,41 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     static float touching_grass = 0.0;
     static float supported_weight = 0.0;
     // if(touching_grass > 0.0)
+    // {
+    //     real multiplier = 10;
+    //     real target_height = 14;
+    //     multiplier *= -(1.0*(w->bodies_gpu[13].x.z-0.5*w->bodies_gpu[5].x.z-0.5*w->bodies_gpu[7].x.z-target_height));
+    //     if(is_down(M2, input)) multiplier = 100;
+    //     w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
+    //     w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[5].m;
+    //     w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[7].m;
+
+    //     // if(is_down('R', input))
+    //     if(walk_dir.x != 0 || walk_dir.y != 0)
+    //     {
+    //         real_3 pos = player->x-placement_dist*camera_z;
+    //         // real_3 target_dir = normalize(pos-w->bodies_gpu[13].x);
+    //         real_3 target_dir = walk_dir;
+
+    //         w->bodies_gpu[13].x_dot += (0.05/w->bodies_gpu[13].m)*target_dir;
+    //         w->bodies_gpu[5].x_dot  -= (0.05*0.5/w->bodies_gpu[5].m)*target_dir;
+    //         w->bodies_gpu[7].x_dot  -= (0.05*0.5/w->bodies_gpu[7].m)*target_dir;
+    //     }
+
+    //     // w->bodies_gpu[13].x_dot.z *= 0.8;
+    //     touching_grass -= 1.0;
+    // }
+
     {
-        real multiplier = 10;
-        real target_height = 14;
-        multiplier *= -(1.0*(w->bodies_gpu[13].x.z-0.5*w->bodies_gpu[5].x.z-0.5*w->bodies_gpu[7].x.z-target_height));
-        if(is_down('T', input)) multiplier = 100;
-        w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
-        w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[5].m;
-        w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[7].m;
-        // w->bodies_gpu[13].x_dot.z *= 0.8;
-        touching_grass -= 1.0;
+        w->brains[0].target_accel = (real_3){0,0,0.1}; //by default try to counteract gravity
+        if(is_down('R', input))
+        // if(walk_dir.x != 0 || walk_dir.y != 0)
+        {
+            real_3 pos = player->x-placement_dist*camera_z;
+            real_3 target_dir = normalize(pos-w->bodies_gpu[13].x);
+
+            w->brains[0].target_accel += target_dir;
+        }
     }
 
     real_3 old_xl = w->bodies_gpu[5].x_dot;
@@ -402,8 +455,22 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         touching_grass = 10.0;
     }
 
-    for(int i = 0; i < 20; i++)
-        simulate_body_parts(w->bodies_cpu, w->bodies_gpu, w->parts, w->n_parts);
+    simulate_brains(w->bodies_cpu, w->bodies_gpu, w->brains, w->n_brains);
+
+    for(int j = 0; j < w->n_joints; j++)
+    {
+        w->joints[j].torques = {0,0,0};
+    }
+
+    for(int i = 0; i < 200; i++)
+    {
+        // w->bodies_gpu[12].x_dot = {0,0,0};
+        // w->bodies_gpu[12].x = {256+128,256+128,50};
+        // w->bodies_gpu[12].orientation = {1,0,0,0};
+        // w->bodies_gpu[12].omega = {0,0,0};
+        // simulate_body_components(w->bodies_cpu, w->bodies_gpu, w->components, w->n_components, w->brains, 10 < i && i < 30);
+        simulate_body_components(w->bodies_cpu, w->bodies_gpu, w->components, w->n_components, w->brains, false);
+    }
 
     for(int b = 0; b < w->n_bodies; b++)
     {
@@ -523,37 +590,12 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     w->b->x.z -= 0.5;
     // }
 
-    const real I = 100;
-    const real m = 1;
-
-    real fov = pi*120.0/180.0;
-    real screen_dist = 1.0/tan(fov/2);
-
-    real n = 0.1;
-    real f = 1000.0;
-
-    static real camera_dist_target = 240;
-    static real camera_dist = camera_dist_target;
-    camera_dist_target *= pow(1.0+0.001, -input.mouse_wheel);
-    const real min_camera_dist = 1;
-    if(camera_dist_target < min_camera_dist) camera_dist_target = min_camera_dist;
-    camera_dist += 0.2*(camera_dist_target-camera_dist);
-
-    real_3 camera_z = {sin(theta)*sin(phi), -sin(theta)*cos(phi), cos(theta)};
-    // real_3 camera_x = normalize(cross({0,0,1}, camera_z));
-    real_3 camera_x = {cos(phi),sin(phi),0};
-    real_3 camera_y = cross(camera_z, camera_x);
-    real_3 camera_pos;
-
-    camera_pos = player->x;
+    // player->x = w->bodies_gpu[13].x-2.0*camera_z;
 
     if(is_pressed('V', input))
     {
         play_sound(ad, &waterfall, 0.1);
     }
-
-    static real placement_dist = 20.0;
-    placement_dist += 0.02*input.mouse_wheel;
 
     static int selected_body = 0;
     if(is_pressed('Q', input)) selected_body--;

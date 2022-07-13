@@ -10,45 +10,15 @@ layout(location = 0) in vec3 x;
 layout(location = 0) uniform int layer;
 layout(location = 4) uniform int n_bodies;
 
-struct body
-{
-    int materials_origin_x; int materials_origin_y; int materials_origin_z;
-    int size_x; int size_y; int size_z;
-    float x_cm_x; float x_cm_y; float x_cm_z;
-    float x_x; float x_y; float x_z;
-    float x_dot_x; float x_dot_y; float x_dot_z;
-    float orientation_r; float orientation_x; float orientation_y; float orientation_z;
-    float omega_x; float omega_y; float omega_z;
-
-    float m;
-
-    float I_xx; float I_yx; float I_zx;
-    float I_xy; float I_yy; float I_zy;
-    float I_xz; float I_yz; float I_zz;
-
-    float invI_xx; float invI_yx; float invI_zx;
-    float invI_xy; float invI_yy; float invI_zy;
-    float invI_xz; float invI_yz; float invI_zz;
-};
-
-ivec3 body_materials_origin;
-ivec3 body_size;
-vec3  body_x_cm;
-vec3  body_x;
-vec3  body_x_dot;
-vec4  body_orientation;
-vec3  body_omega;
-
-layout(std430, binding = 0) buffer body_data
-{
-    body bodies[];
-};
+#include "include/body_data.glsl"
 
 flat out int b;
 
 void main()
 {
     b = gl_InstanceID;
+
+    // get_body_data(b);
     body_materials_origin = ivec3(bodies[b].materials_origin_x,
                                   bodies[b].materials_origin_y,
                                   bodies[b].materials_origin_z);
@@ -58,11 +28,13 @@ void main()
 
     float scale = 2.0/128.0;
 
-    gl_Position = vec4(0/0,0/0,0,1);
+    gl_Position = vec4(0.0/0.0, 0.0/0.0, 0, 1);
 
-    if(body_materials_origin.z <= layer && layer < body_materials_origin.z+body_size.z)
+    const int padding = 2;
+
+    if(body_materials_origin.z-padding <= layer && layer < body_materials_origin.z+body_size.z+padding)
     {
-        gl_Position.xy = scale*(body_materials_origin.xy+body_size.xy*x.xy)-1.0;
+        gl_Position.xy = scale*(body_materials_origin.xy-padding+(body_size.xy+2*padding)*x.xy)-1.0;
     }
 }
 
@@ -77,41 +49,6 @@ layout(location = 0) uniform int layer;
 layout(location = 1) uniform int frame_number;
 layout(location = 2) uniform isampler3D materials;
 layout(location = 3) uniform isampler3D body_materials;
-
-struct body
-{
-    int materials_origin_x; int materials_origin_y; int materials_origin_z;
-    int size_x; int size_y; int size_z;
-    float x_cm_x; float x_cm_y; float x_cm_z;
-    float x_x; float x_y; float x_z;
-    float x_dot_x; float x_dot_y; float x_dot_z;
-    float orientation_r; float orientation_x; float orientation_y; float orientation_z;
-    float omega_x; float omega_y; float omega_z;
-
-    float m;
-
-    float I_xx; float I_yx; float I_zx;
-    float I_xy; float I_yy; float I_zy;
-    float I_xz; float I_yz; float I_zz;
-
-    float invI_xx; float invI_yx; float invI_zx;
-    float invI_xy; float invI_yy; float invI_zy;
-    float invI_xz; float invI_yz; float invI_zz;
-
-};
-
-ivec3 body_materials_origin;
-ivec3 body_size;
-vec3  body_x_cm;
-vec3  body_x;
-vec3  body_x_dot;
-vec4  body_orientation;
-vec3  body_omega;
-
-layout(std430, binding = 0) buffer body_data
-{
-    body bodies[];
-};
 
 flat in int b;
 
