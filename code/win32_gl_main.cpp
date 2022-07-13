@@ -880,74 +880,142 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.n_bodies++;
     }
 
-    w.joints[w.n_joints++] = {
+    w.bodies_cpu[0].is_root = true;
+    w.bodies_cpu[0].joints[w.bodies_cpu[0].n_children++] = {
         .type = joint_hinge,
-        .body_id = {0, 1},
+        .brain_id = 0,
+        .child_body_id = 1,
         .pos = {{4,4,0}, {4,4,0}},
         .axis = {0,0},
+        .max_torque = 1.0,
+    };
+
+    w.bodies_cpu[head_id].is_root = true;
+    w.bodies_cpu[head_id].joints[w.bodies_cpu[head_id].n_children++] = {
+        .type = joint_hinge,
+        .brain_id = 0,
+        .child_body_id = body_id,
+        .pos = {{(head_size-1)/2,(head_size-1)/2,0}, {body_length-1,body_width/2,0}},
+        .axis = {0,0},
+        .max_torque = 1.0,
     };
 
     for(int i = 0; i < 4; i++)
     {
-        w.joints[w.n_joints++] = {
+        w.bodies_cpu[limb_start_id+2*i].joints[w.bodies_cpu[limb_start_id+2*i].n_children++] = {
             .type = joint_hinge,
             .brain_id = 0,
-            .max_torque = 1.0,
-            .body_id = {limb_start_id+2*i, limb_start_id+2*i+1},
+            .child_body_id = limb_start_id+2*i+1,
             .pos = {{limb_length-1,0,0}, {0,0,0}},
             .axis = {1,1},
+            .max_torque = 1.0,
         };
     }
-    w.joints[1].brain_id = 1;
 
-    w.joints[w.n_joints++] = {
+    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
         .type = joint_hinge,
-            .brain_id = 1,
-            .max_torque = 1.0,
-        .body_id = {limb_start_id+0, body_id},
-        .pos = {{0,0,0},{0,0,0}},
+        .brain_id = 0,
+        .child_body_id = limb_start_id+0,
+        .pos = {{0,0,0}, {0,0,0}},
         .axis = {1,1},
-    };
-    w.joints[w.n_joints++] = {
-        .type = joint_hinge,
-            .brain_id = 0,
-            .max_torque = 1.0,
-        .body_id = {limb_start_id+2, body_id},
-        .pos = {{0,0,0},{0,body_width-1,0}},
-        .axis = {1,1},
-    };
-    w.joints[w.n_joints++] = {
-        .type = joint_hinge,
-            .brain_id = 0,
-            .max_torque = 1.0,
-        .body_id = {limb_start_id+4, body_id},
-        .pos = {{0,0,0},{limb_length-1,0,0}},
-        .axis = {1,1},
-    };
-    w.joints[w.n_joints++] = {
-        .type = joint_hinge,
-            .brain_id = 0,
-            .max_torque = 1.0,
-        .body_id = {limb_start_id+6, body_id},
-        .pos = {{0,0,0},{limb_length-1,body_width-1,0}},
-        .axis = {1,1},
-    };
-    w.joints[w.n_joints++] = {
-        .type = joint_ball,
-            .brain_id = 0,
-            .max_torque = 1.0,
-        .body_id = {head_id, body_id},
-        .pos = {{(head_size-1)/2,(head_size-1)/2,0}, {body_length-1,body_width/2,0}},
+        .max_torque = 1.0,
     };
 
-    w.joints[w.n_joints++] = {
-        .type = joint_hinge,
-            .brain_id = 0,
-            .max_torque = 1.0,
-        .body_id = {limb_start_id+1, 2},
-        .pos = {{limb_length-1,0,0},{4,4,0}},
-        .axis = {1,1},
-    };
+    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    //     .type = joint_hinge,
+    //     .brain_id = 0,
+    //     .child_body_id = limb_start_id+2,
+    //     .pos = {{0,0,0}, {0,body_width-1,0}},
+    //     .axis = {1,1},
+    //     .max_torque = 1.0,
+    // };
+
+    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    //     .type = joint_hinge,
+    //     .brain_id = 0,
+    //     .child_body_id = limb_start_id+4,
+    //     .pos = {{0,0,0}, {limb_length-1,0,0}},
+    //     .axis = {1,1},
+    //     .max_torque = 1.0,
+    // };
+
+    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    //     .type = joint_hinge,
+    //     .brain_id = 0,
+    //     .child_body_id = limb_start_id+6,
+    //     .pos = {{0,0,0}, {limb_length-1,body_width-1,0}},
+    //     .axis = {1,1},
+    //     .max_torque = 1.0,
+    // };
+
+    // w.joints[w.n_joints++] = {
+    //     .type = joint_hinge,
+    //     .body_id = {0, 1},
+    //     .pos = {{4,4,0}, {4,4,0}},
+    //     .axis = {0,0},
+    // };
+
+    // for(int i = 0; i < 4; i++)
+    // {
+    //     w.joints[w.n_joints++] = {
+    //         .type = joint_hinge,
+    //         .brain_id = 0,
+    //         .max_torque = 1.0,
+    //         .body_id = {limb_start_id+2*i, limb_start_id+2*i+1},
+    //         .pos = {{limb_length-1,0,0}, {0,0,0}},
+    //         .axis = {1,1},
+    //     };
+    // }
+    // w.joints[1].brain_id = 1;
+
+    // w.joints[w.n_joints++] = {
+    //     .type = joint_hinge,
+    //         .brain_id = 1,
+    //         .max_torque = 1.0,
+    //     .body_id = {limb_start_id+0, body_id},
+    //     .pos = {{0,0,0},{0,0,0}},
+    //     .axis = {1,1},
+    // };
+    // w.joints[w.n_joints++] = {
+    //     .type = joint_hinge,
+    //         .brain_id = 0,
+    //         .max_torque = 1.0,
+    //     .body_id = {limb_start_id+2, body_id},
+    //     .pos = {{0,0,0},{0,body_width-1,0}},
+    //     .axis = {1,1},
+    // };
+    // w.joints[w.n_joints++] = {
+    //     .type = joint_hinge,
+    //         .brain_id = 0,
+    //         .max_torque = 1.0,
+    //     .body_id = {limb_start_id+4, body_id},
+    //     .pos = {{0,0,0},{limb_length-1,0,0}},
+    //     .axis = {1,1},
+    // };
+    // w.joints[w.n_joints++] = {
+    //     .type = joint_hinge,
+    //         .brain_id = 0,
+    //         .max_torque = 1.0,
+    //     .body_id = {limb_start_id+6, body_id},
+    //     .pos = {{0,0,0},{limb_length-1,body_width-1,0}},
+    //     .axis = {1,1},
+    // };
+    // w.joints[w.n_joints++] = {
+    //     .type = joint_ball,
+    //         .brain_id = 0,
+    //         .max_torque = 1.0,
+    //     .body_id = {head_id, body_id},
+    //     .pos = {{(head_size-1)/2,(head_size-1)/2,0}, {body_length-1,body_width/2,0}},
+    // };
+
+    // w.joints[w.n_joints++] = {
+    //     .type = joint_hinge,
+    //         .brain_id = 0,
+    //         .max_torque = 1.0,
+    //     .body_id = {limb_start_id+1, 2},
+    //     .pos = {{limb_length-1,0,0},{4,4,0}},
+    //     .axis = {1,1},
+    // };
 
     brain* br = &w.brains[w.n_brains++];
     *br = {

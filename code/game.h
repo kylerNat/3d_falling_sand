@@ -455,22 +455,24 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         touching_grass = 10.0;
     }
 
-    simulate_brains(w->bodies_cpu, w->bodies_gpu, w->brains, w->n_brains);
+    // simulate_brains(w->bodies_cpu, w->bodies_gpu, w->brains, w->n_brains);
 
     for(int j = 0; j < w->n_joints; j++)
     {
         w->joints[j].torques = {0,0,0};
     }
 
-    for(int i = 0; i < 200; i++)
-    {
-        // w->bodies_gpu[12].x_dot = {0,0,0};
-        // w->bodies_gpu[12].x = {256+128,256+128,50};
-        // w->bodies_gpu[12].orientation = {1,0,0,0};
-        // w->bodies_gpu[12].omega = {0,0,0};
-        // simulate_body_components(w->bodies_cpu, w->bodies_gpu, w->components, w->n_components, w->brains, 10 < i && i < 30);
-        simulate_body_components(w->bodies_cpu, w->bodies_gpu, w->components, w->n_components, w->brains, false);
-    }
+    // for(int i = 0; i < 20; i++)
+    // {
+    //     // w->bodies_gpu[12].x_dot = {0,0,0};
+    //     // w->bodies_gpu[12].x = {256+128,256+128,50};
+    //     // w->bodies_gpu[12].orientation = {1,0,0,0};
+    //     // w->bodies_gpu[12].omega = {0,0,0};
+    //     // simulate_body_components(w->bodies_cpu, w->bodies_gpu, w->components, w->n_components, w->brains, 10 < i && i < 30);
+    //     simulate_body_components(w->bodies_cpu, w->bodies_gpu, w->components, w->n_components, w->brains, false);
+    // }
+
+    simulate_joints(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
 
     for(int b = 0; b < w->n_bodies; b++)
     {
@@ -508,7 +510,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
             quaternion total_rotation = w->bodies_gpu[b].orientation;
 
-            real subdivisions = max(1.0f, norm(omega)/0.01);
+            real subdivisions = clamp(ceil(norm(omega)/0.01), 1.0f, 100.0f);
 
             // if(b==14)
             // {

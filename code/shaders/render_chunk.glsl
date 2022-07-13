@@ -212,8 +212,10 @@ void main()
 
         reflectivity *= -dot(ray_dir, normal);
 
-        float n_samples = 1;
-        for(int samp = 0; samp < n_samples; samp++)
+        float n_probe_samples = 1;
+        float n_ray_samples = 0;
+        float n_samples = n_probe_samples+n_ray_samples;
+        for(int samp = 0; samp < n_probe_samples; samp++)
         {
             vec3 reflection_dir = ray_dir - 2*dot(ray_dir, normal)*normal;
             reflection_dir += roughness*(blue_noise(gl_FragCoord.xy/256.0+samp*vec2(0.82,0.34)).xyz-0.5f);
@@ -221,6 +223,61 @@ void main()
             // vec3 reflection_dir = normal;
             vec2 sample_depth;
             frag_color.rgb += (1.0f/n_samples)*reflectivity*sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
+        }
+        for(int samp = 0; samp < n_ray_samples; samp++)
+        {
+            vec3 reflection_dir = ray_dir - 2*dot(ray_dir, normal)*normal;
+            reflection_dir += roughness*(blue_noise(gl_FragCoord.xy/256.0+(n_probe_samples*samp)*vec2(0.82,0.34)).xyz-0.5f);
+            reflection_dir = normalize(reflection_dir);
+            vec3 reflect_pos = hit_pos+0.5*reflection_dir;
+            bool hit = coarse_cast_ray(reflection_dir, reflect_pos, hit_pos, hit_dist, hit_cell, hit_dir, normal);
+            if(hit)
+            {
+                voxel = texelFetch(materials, hit_cell, 0);
+                float roughness = 0.0f;
+                vec3 emission = vec3(0.001f);
+                if(voxel.r == 2)
+                {
+                    // emission = vec3(0.4,0.4,0.8);
+                    emission = vec3(0.8,0.2,0.2)*100;
+                }
+                // if(voxel.r == 1)
+                // {
+                //     emission = vec3(0.54,0.44,0.21);
+                // }
+                // if(voxel.r == 3)
+                // {
+                //     emission = vec3(0.5,0.125,0.5);
+                // }
+
+                // emission *= 1.0f-total_dist/(512.0f*sqrt(3));
+
+                vec3 reflection_reflectivity = vec3(1.0);
+                if(voxel.r == 1)
+                {
+                    reflection_reflectivity *= vec3(0.54,0.44,0.21);
+                    roughness = 0.9;
+                }
+                else if(voxel.r == 3)
+                {
+                    reflection_reflectivity *= vec3(0.5,0.5,1.0);
+                    roughness = 0.5;
+                }
+                else
+                {
+                    reflection_reflectivity *= vec3(0.1,0.1,0.2);
+                    roughness = 0.1;
+                }
+
+                frag_color.rgb += (1.0f/n_samples)*reflectivity*emission;
+
+                vec2 sample_depth;
+
+                vec3 reflection_dir = ray_dir - 2*dot(ray_dir, normal)*normal;
+                reflection_dir += roughness*(blue_noise(gl_FragCoord.xy/256.0+samp*vec2(0.82,0.34)).xyz-0.5f);
+                reflection_dir = normalize(reflection_dir);
+                frag_color.rgb += (1.0f/n_samples)*reflectivity*reflection_reflectivity*sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
+            }
         }
     }
     // else
