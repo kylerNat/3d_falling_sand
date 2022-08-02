@@ -392,7 +392,17 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     for(int b = 0; b < w->n_bodies; b++)
     {
-        w->bodies_gpu[b].x_dot *= 0.995;
+        gpu_body_data* body_gpu = &w->bodies_gpu[b];
+        if(isnan(body_gpu->x.x) || isnan(body_gpu->x.y) || isnan(body_gpu->x.z) ) body_gpu->x = {0,0,0};
+        if(isnan(body_gpu->x_dot.x) || isnan(body_gpu->x_dot.y) || isnan(body_gpu->x_dot.z) ) body_gpu->x_dot = {0,0,0};
+        if(isnan(body_gpu->omega.x) || isnan(body_gpu->omega.y) || isnan(body_gpu->omega.z) ) body_gpu->omega = {0,0,0};
+        if(isnan(body_gpu->orientation.r) || isnan(body_gpu->orientation.i) || isnan(body_gpu->orientation.j) || isnan(body_gpu->orientation.k))
+        {
+            body_gpu->orientation = {1,0,0,0};
+            update_inertia(w->bodies_cpu+b, body_gpu);
+        }
+
+        // w->bodies_gpu[b].x_dot *= 0.995;
         // w->bodies_gpu[b].omega -= w->bodies_gpu[b].invI*0.005*w->bodies_gpu[b].omega;
         // if(is_down('Y', input))
         // w->bodies_gpu[b].x_dot.z += -0.01;
@@ -400,33 +410,72 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         // w->bodies_gpu[b].x_dot.z += -0.1;
     }
 
-    static float touching_grass = 0.0;
-    static float supported_weight = 0.0;
-    // if(touching_grass > 0.0)
-    // {
-    //     real multiplier = 10;
-    //     real target_height = 14;
-    //     multiplier *= -(1.0*(w->bodies_gpu[13].x.z-0.5*w->bodies_gpu[5].x.z-0.5*w->bodies_gpu[7].x.z-target_height));
-    //     if(is_down(M2, input)) multiplier = 100;
-    //     w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
-    //     w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[5].m;
-    //     w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*0.5/w->bodies_gpu[7].m;
+    bool player_in_head = false;
 
-    //     // if(is_down('R', input))
-    //     if(walk_dir.x != 0 || walk_dir.y != 0)
+    // static float supported_weight = 0.0;
+    // static float leg_phase = 0.0;
+    // {
+    //     real multiplier = 30;
+    //     real target_height = 14;
+    //     // multiplier *= -(1.0*(w->bodies_gpu[13].x.z-0.5*w->bodies_gpu[5].x.z-0.5*w->bodies_gpu[7].x.z-target_height));
+    //     if(is_down('T', input) || (player_in_head && is_down(M2, input))) multiplier = 100;
+    //     bool striding = fmod(leg_phase, 0.5) > 0.1;
+    //     if(leg_phase > 0.5)
+    //     {
+    //         w->bodies_cpu[5].contact_locked[0] = striding;
+    //         w->bodies_cpu[7].contact_locked[0] = false;
+    //         if(striding)
+    //         {
+    //             w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
+    //             w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*1.0/w->bodies_gpu[5].m;
+    //         }
+    //         w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*0.02/w->bodies_gpu[5].m;
+    //         w->bodies_gpu[7].x_dot.z  -= -0.001*multiplier*0.02/w->bodies_gpu[7].m;
+    //     }
+    //     else
+    //     {
+    //         w->bodies_cpu[7].contact_locked[0] = striding;
+    //         w->bodies_cpu[5].contact_locked[0] = false;
+    //         if(striding)
+    //         {
+    //             w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
+    //             w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*1.0/w->bodies_gpu[7].m;
+    //         }
+    //         w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*0.02/w->bodies_gpu[7].m;
+    //         w->bodies_gpu[5].x_dot.z  -= -0.001*multiplier*0.02/w->bodies_gpu[5].m;
+    //     }
+
+    //     if(is_down('R', input) || (player_in_head && (walk_dir.x != 0 || walk_dir.y != 0)))
     //     {
     //         real_3 pos = player->x-placement_dist*camera_z;
-    //         // real_3 target_dir = normalize(pos-w->bodies_gpu[13].x);
-    //         real_3 target_dir = walk_dir;
+    //         real_3 target_dir = pos-w->bodies_gpu[13].x;
+    //         target_dir.z = 0;
+    //         if(player_in_head && (walk_dir.x != 0 || walk_dir.y != 0)) target_dir = walk_dir;
+    //         target_dir = normalize(target_dir);
 
-    //         w->bodies_gpu[13].x_dot += (0.05/w->bodies_gpu[13].m)*target_dir;
-    //         w->bodies_gpu[5].x_dot  -= (0.05*0.5/w->bodies_gpu[5].m)*target_dir;
-    //         w->bodies_gpu[7].x_dot  -= (0.05*0.5/w->bodies_gpu[7].m)*target_dir;
+    //         real walk_accel = 0.01;
+    //         w->bodies_gpu[13].x_dot += (walk_accel/w->bodies_gpu[13].m)*target_dir;
+    //         if(fmod(leg_phase+0.8,1.0) > 0.5)
+    //         {
+    //             w->bodies_gpu[5].x_dot -= (walk_accel*1.1/w->bodies_gpu[5].m)*target_dir;
+    //             w->bodies_gpu[7].x_dot -= -(walk_accel*0.1/w->bodies_gpu[7].m)*target_dir;
+    //         }
+    //         else
+    //         {
+    //             w->bodies_gpu[7].x_dot -= (walk_accel*1.1/w->bodies_gpu[7].m)*target_dir;
+    //             w->bodies_gpu[5].x_dot -= -(walk_accel*0.1/w->bodies_gpu[5].m)*target_dir;
+    //         }
+
+    //         // w->bodies_gpu[7].omega  *= 0.0;
+    //         // w->bodies_gpu[5].omega  *= 0.0;
+    //         w->bodies_gpu[12].omega += 0.2*cross(apply_rotation(w->bodies_gpu[12].orientation, (real_3){0,0,1}), target_dir);
+    //         w->bodies_gpu[13].omega += 0.2*cross(apply_rotation(w->bodies_gpu[13].orientation, (real_3){1,0,0}), target_dir);
     //     }
 
     //     // w->bodies_gpu[13].x_dot.z *= 0.8;
-    //     touching_grass -= 1.0;
     // }
+    // leg_phase += 0.03;
+    // leg_phase = fmod(leg_phase, 1.0);
 
     {
         w->brains[0].target_accel = (real_3){0,0,0.1}; //by default try to counteract gravity
@@ -440,159 +489,28 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         }
     }
 
-    real_3 old_xl = w->bodies_gpu[5].x_dot;
-    real_3 old_xr = w->bodies_gpu[7].x_dot;
+    // simulate_brains(w->bodies_cpu, w->bodies_gpu, w->brains, w->n_brains);
+    // for(int j = 0; j < w->n_joints; j++)
+    // {
+    //     w->joints[j].torques = {0,0,0};
+    // }
 
     simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
     simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
 
-    real_3 new_xl = w->bodies_gpu[5].x_dot;
-    real_3 new_xr = w->bodies_gpu[7].x_dot;
-
-    supported_weight = new_xl.z-old_xl.z + new_xr.z-old_xr.z;
-    if(normsq(new_xl-old_xl) > sq(0.00001) || normsq(new_xr-old_xr) > sq(0.00001))
-    {
-        touching_grass = 10.0;
-    }
-
-    // simulate_brains(w->bodies_cpu, w->bodies_gpu, w->brains, w->n_brains);
-
-    for(int j = 0; j < w->n_joints; j++)
-    {
-        w->joints[j].torques = {0,0,0};
-    }
-
-    // for(int i = 0; i < 20; i++)
-    // {
-    //     // w->bodies_gpu[12].x_dot = {0,0,0};
-    //     // w->bodies_gpu[12].x = {256+128,256+128,50};
-    //     // w->bodies_gpu[12].orientation = {1,0,0,0};
-    //     // w->bodies_gpu[12].omega = {0,0,0};
-    //     // simulate_body_components(w->bodies_cpu, w->bodies_gpu, w->components, w->n_components, w->brains, 10 < i && i < 30);
-    //     simulate_body_components(w->bodies_cpu, w->bodies_gpu, w->components, w->n_components, w->brains, false);
-    // }
+    w->bodies_cpu[5].contact_locked[0] = true;
+    w->bodies_cpu[5].contact_points[0] = {256+128, 256+128, 50};
+    w->bodies_cpu[5].contact_pos[0] = {5,0,0};
+    w->bodies_cpu[5].contact_normals[0] = {1,0,0};
+    w->bodies_cpu[5].contact_depths[0] = 0;
+    w->bodies_cpu[5].contact_force[0] = {0,0,0};
+    w->bodies_cpu[5].deltax_dot_integral[0] = {0,0,0};
 
     simulate_joints(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
 
-    for(int b = 0; b < w->n_bodies; b++)
-    {
-        w->bodies_gpu[b].x += w->bodies_gpu[b].x_dot;
-        real half_angle = 0.5*norm(w->bodies_gpu[b].omega);
-        // if(half_angle > 0.0001)
-        // {
-        //     real_3 L = w->bodies_gpu[b].I*w->bodies_gpu[b].omega;
-        //     real E = dot(L, w->bodies_gpu[b].omega);
+    integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
 
-        //     real_3 axis = normalize(w->bodies_gpu[b].omega);
-        //     quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
-        //     w->bodies_gpu[b].orientation = rotation*w->bodies_gpu[b].orientation;
-        //     update_inertia(&w->bodies_cpu[b], &w->bodies_gpu[b]);
-
-        //     //precession
-        //     w->bodies_gpu[b].omega = w->bodies_gpu[b].invI*L;
-
-        //     w->bodies_gpu[b].omega = normalize(w->bodies_gpu[b].invI*L);
-
-        //     // real_3 new_L = w->bodies_gpu[b].I*w->bodies_gpu[b].omega;
-        //     // real new_E = dot(new_L, w->bodies_gpu[b].omega);
-        //     // // if(b == w->n_bodies-1) log_output("old_E = ", old_E, ", new_E = ", new_E, "\n");
-        // }
-
-        w->bodies_gpu[b].orientation = normalize(w->bodies_gpu[b].orientation);
-        if(half_angle > 0.0001)
-        {
-            real_3 world_L = w->bodies_gpu[b].I*w->bodies_gpu[b].omega;
-
-            real_3 omega = apply_rotation(conjugate(w->bodies_gpu[b].orientation), w->bodies_gpu[b].omega);
-            // real_3 L = w->bodies_cpu[b].I*omega;
-            real_3 L = apply_rotation(conjugate(w->bodies_gpu[b].orientation), world_L); //should be equivalent to ^
-            real E = dot(L, omega);
-
-            quaternion total_rotation = w->bodies_gpu[b].orientation;
-
-            real subdivisions = clamp(ceil(norm(omega)/0.01), 1.0f, 100.0f);
-
-            // if(b==14)
-            // {
-            //     log_output("b: ", b, "\n");
-            //     log_output("E: ", E, "\n");
-            // }
-
-            for(int i = 0; i < subdivisions; i++)
-            {
-                quaternion rotation = axis_to_quaternion(omega/subdivisions);
-                L = apply_rotation(conjugate(rotation), L);
-                total_rotation = total_rotation*rotation;
-                omega = w->bodies_cpu[b].invI*L;
-
-                //rotate along energy gradient to fix energy
-                for(int n = 0; n < 1; n++)
-                {
-                    real_3 new_omega = w->bodies_cpu[b].invI*L;
-                    real new_E = dot(new_omega, L);
-                    // log_output("new E: ", new_E, "\n");
-
-                    // real_3 new_L = L+0.001*(E-new_E)*new_omega;
-                    // new_L = norm(L)*normalize(new_L);
-                    // real_3 axis = cross(normalize(L), normalize(new_L));
-                    // real cosine = sqrt(1.0-normsq(axis));
-                    // real sine   = sqrt(0.5*(1.0-cosine));
-                    // axis = sine*normalize(axis);
-                    // quaternion adjustment = {sqrt(1.0-normsq(axis)), axis.x, axis.y, axis.z};
-                    // // L = new_L;
-
-                    real_3 axis = 0.1*((E-new_E)/(new_E+E))*cross(normalize(L), normalize(new_omega));
-                    quaternion adjustment = {sqrt(1.0-normsq(axis)), axis.x, axis.y, axis.z};
-
-                    L = apply_rotation(adjustment, L);
-                    total_rotation = total_rotation*conjugate(adjustment);
-                }
-            }
-            total_rotation = total_rotation*conjugate(w->bodies_gpu[b].orientation);
-
-            // if(b==14)
-            // {
-            //     real_3 new_omega = w->bodies_cpu[b].invI*L;
-            //     real new_E = dot(new_omega, L);
-            //     log_output("final E: ", new_E, "\n");
-            // }
-
-            w->bodies_gpu[b].orientation = total_rotation*w->bodies_gpu[b].orientation;
-            w->bodies_gpu[b].orientation = normalize(w->bodies_gpu[b].orientation);
-
-            update_inertia(&w->bodies_cpu[b], &w->bodies_gpu[b]);
-            w->bodies_gpu[b].omega = w->bodies_gpu[b].invI*world_L;
-            // w->bodies_gpu[b].omega = apply_rotation(w->bodies_gpu[b].orientation, w->bodies_cpu[b].invI*L);
-
-            {
-                real new_E = dot(w->bodies_gpu[b].omega, world_L);
-
-                // log_output("omega's: ", w->bodies_gpu[b].invI*world_L, ", ", apply_rotation(w->bodies_gpu[b].orientation, w->bodies_cpu[b].invI*L), "\n");
-                // log_output("L's: ", apply_rotation(conjugate(w->bodies_gpu[b].orientation), world_L),
-                //            ", ", L, "\n");
-                // log_output("real E: ", new_E, "\n");
-
-                // draw_circle(rd, w->bodies_gpu[b].x, 0.2, {0,1,0,1});
-                // draw_circle(rd, w->bodies_gpu[b].x+5*new_E*normalize(world_L), 0.2, {0,0,1,1});
-                // draw_circle(rd, w->bodies_gpu[b].x+5*world_L, 0.4, {1,0,0,1});
-                // draw_circle(rd, w->bodies_gpu[b].x+5*apply_rotation(w->bodies_gpu[b].orientation, L), 0.2, {0,1,1,1});
-                // draw_circle(rd, w->bodies_gpu[b].x+5*w->bodies_gpu[b].omega, 0.2, {1,0,1,1});
-                // draw_circle(rd, w->bodies_gpu[b].x+5*(w->bodies_gpu[b].invI*world_L), 0.4, {1,0,1,1});
-                // draw_circle(rd, w->bodies_gpu[b].x+5*(apply_rotation(w->bodies_gpu[b].orientation, w->bodies_cpu[b].invI*L)), 0.2, {1,1,0,1});
-            }
-        }
-    }
-
-    // if(n_collisions > 0)
-    // {
-    //     w->b->x.z += 0.5;
-    // }
-    // else
-    // {
-    //     w->b->x.z -= 0.5;
-    // }
-
-    // player->x = w->bodies_gpu[13].x-2.0*camera_z;
+    if(player_in_head) player->x = w->bodies_gpu[13].x-2.0*camera_z;
 
     if(is_pressed('V', input))
     {

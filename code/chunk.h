@@ -26,7 +26,7 @@ struct chunk
 GLuint materials_textures[2];
 int current_materials_texture = 0;
 
-#define body_texture_size 128
+#define body_texture_size 256
 GLuint body_materials_textures[2];
 int current_body_materials_texture = 0;
 

@@ -155,6 +155,7 @@ void main()
         vec3 body_normal;
         ivec4 body_voxel;
         bool body_hit = cast_ray(body_materials, body_ray_dir, body_pos, body_size, body_origin, body_hit_pos, body_hit_dist, body_hit_cell, body_hit_dir, body_normal, body_voxel);
+        // if(body_hit && (!hit || body_jump_dist+body_hit_dist < hit_dist) && b != 13 && b != 12)
         if(body_hit && (!hit || body_jump_dist+body_hit_dist < hit_dist))
         {
             hit = true;

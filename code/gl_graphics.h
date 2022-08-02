@@ -93,6 +93,10 @@ GLuint particles_x_dot_texture;
 GLuint body_x_dot_texture;
 GLuint body_omega_texture;
 
+GLuint contact_point_textures[3];
+GLuint contact_normal_textures[3];
+GLuint contact_material_texture;
+
 #define N_MAX_CAPSULES 4096
 GLuint capsules_texture;
 
@@ -245,6 +249,24 @@ void gl_init_general_buffers(memory_manager* manager)
     glGenTextures(1, &body_omega_texture);
     glBindTexture(GL_TEXTURE_2D, body_omega_texture);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, 1, N_MAX_BODIES);
+
+    glGenTextures(3, contact_point_textures);
+    for(int i = 0; i < 3; i++)
+    {
+        glBindTexture(GL_TEXTURE_2D, contact_point_textures[i]);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, 1, N_MAX_BODIES);
+    }
+
+    glGenTextures(3, contact_normal_textures);
+    for(int i = 0; i < 3; i++)
+    {
+        glBindTexture(GL_TEXTURE_2D, contact_normal_textures[i]);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, 1, N_MAX_BODIES);
+    }
+
+    glGenTextures(1, &contact_material_texture);
+    glBindTexture(GL_TEXTURE_2D, contact_material_texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB16I, 1, N_MAX_BODIES);
 
     glGenBuffers(1, &body_buffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
@@ -1221,91 +1243,94 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
     glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
     glViewport(0, 0, 1, n_bodies);
 
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, body_x_dot_texture, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, body_omega_texture, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, particles_x_texture, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, particles_x_dot_texture, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, contact_point_textures[0], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT1,GL_TEXTURE_2D, contact_point_textures[1], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT2,GL_TEXTURE_2D, contact_point_textures[2], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT3,GL_TEXTURE_2D, contact_normal_textures[0], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT4,GL_TEXTURE_2D, contact_normal_textures[1], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT5,GL_TEXTURE_2D, contact_normal_textures[2], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT6,GL_TEXTURE_2D, contact_material_texture, 0);
 
-    GLenum buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+    GLenum buffers[] = {
+        GL_COLOR_ATTACHMENT0,
+        GL_COLOR_ATTACHMENT1,
+        GL_COLOR_ATTACHMENT2,
+        GL_COLOR_ATTACHMENT3,
+        GL_COLOR_ATTACHMENT4,
+        GL_COLOR_ATTACHMENT5,
+        GL_COLOR_ATTACHMENT6,
+    };
     glDrawBuffers(len(buffers), buffers);
 
+    glClampColor(GL_CLAMP_READ_COLOR, GL_FALSE);
+    glClampColor(GL_CLAMP_VERTEX_COLOR, GL_FALSE);
+    glClampColor(GL_CLAMP_FRAGMENT_COLOR, GL_FALSE);
     glDisable(GL_BLEND);
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
     glEnable(GL_BLEND);
 
     size_t out_size = n_bodies*sizeof(float)*3;
-    byte* out_data = reserve_block(manager, 4*out_size);
-    real_3* deltax_dots = (real_3*) out_data;
-    real_3* deltaomegas     = (real_3*) (out_data+out_size);
-    real_3* pseudo_x_dots = (real_3*) (out_data+2*out_size);
-    real_3* pseudo_omegas     = (real_3*) (out_data+3*out_size);
+    size_t material_out_size = n_bodies*sizeof(int16)*3*2;
+    byte* out_data = reserve_block(manager, 6*out_size+material_out_size);
+    real_3* contact_points = (real_3*) out_data;
+    real_3* contact_normals = (real_3*) (out_data+3*out_size);
+    int16* contact_materials = (int16*) (out_data+6*out_size);
 
-    glGetTextureSubImage(body_x_dot_texture,
+    for(int i = 0; i < 3; i++)
+    {
+        glGetTextureSubImage(contact_point_textures[i],
+                             0,
+                             0, 0, 0,
+                             1, n_bodies, 1,
+                             GL_RGB,
+                             GL_FLOAT,
+                             out_size,
+                             contact_points+n_bodies*i);
+
+        glGetTextureSubImage(contact_normal_textures[i],
+                             0,
+                             0, 0, 0,
+                             1, n_bodies, 1,
+                             GL_RGB,
+                             GL_FLOAT,
+                             out_size,
+                             contact_normals+n_bodies*i);
+    }
+
+    glGetTextureSubImage(contact_material_texture,
                          0,
                          0, 0, 0,
                          1, n_bodies, 1,
-                         GL_RGB,
-                         GL_FLOAT,
-                         sizeof(deltax_dots[0])*n_bodies,
-                         deltax_dots);
-
-    glGetTextureSubImage(body_omega_texture,
-                         0,
-                         0, 0, 0,
-                         1, n_bodies, 1,
-                         GL_RGB,
-                         GL_FLOAT,
-                         sizeof(deltaomegas[0])*n_bodies,
-                         deltaomegas);
-
-    glGetTextureSubImage(particles_x_texture,
-                         0,
-                         0, 0, 0,
-                         1, n_bodies, 1,
-                         GL_RGB,
-                         GL_FLOAT,
-                         sizeof(pseudo_x_dots[0])*n_bodies,
-                         pseudo_x_dots);
-
-    glGetTextureSubImage(particles_x_dot_texture,
-                         0,
-                         0, 0, 0,
-                         1, n_bodies, 1,
-                         GL_RGB,
-                         GL_FLOAT,
-                         sizeof(pseudo_omegas[0])*n_bodies,
-                         pseudo_omegas);
+                         GL_RGB_INTEGER,
+                         GL_SHORT,
+                         material_out_size,
+                         contact_materials);
 
     for(int b = 0; b < n_bodies; b++)
     {
-        // draw_circle(rd, x_dots[b], 1.0, {1,0,0,1});
-        // draw_circle(rd, omegas[b], 1.0, {0,1,0,1});
-        draw_circle(rd, bodies_gpu[b].x, 0.2, {0,1,0,1});
-        draw_circle(rd, bodies_gpu[b].x+20*(deltax_dots[b]), 0.2, {1,0,0,1});
-        bodies_gpu[b].x_dot += deltax_dots[b];
-        // bodies_gpu[b].omega     += bodies_gpu[b].m*bodies_gpu[b].invI*cross(rs[b], deltax_dots[b]);
-        bodies_gpu[b].omega     += deltaomegas[b];
-
-        bodies_cpu[b].last_contact_point = deltaomegas[b];
-
-        bodies_gpu[b].x += pseudo_x_dots[b];
-        real half_angle = 0.5*norm(pseudo_omegas[b]);
-        if(half_angle > 0.0001)
+        for(int i = 0; i < 3; i++)
         {
-            real_3 axis = normalize(pseudo_omegas[b]);
-            quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
-            bodies_gpu[b].orientation = rotation*bodies_gpu[b].orientation;
+            draw_circle(rd, contact_points[b+n_bodies*i], 0.3, {0,1,0,1});
+            draw_circle(rd, contact_points[b+n_bodies*i]+contact_normals[b+n_bodies*i], 0.2, {1,0,0.5*contact_materials[3*b+i],1});
+            bodies_cpu[b].contact_points[i] = contact_points[b+n_bodies*i];
+            bodies_cpu[b].contact_pos[i] = apply_rotation(conjugate(bodies_gpu[b].orientation), contact_points[b+n_bodies*i]-bodies_gpu[b].x);
+            bodies_cpu[b].contact_depths[i] = norm(contact_normals[b+n_bodies*i]);
+            bodies_cpu[b].contact_normals[i] = normalize_or_zero(contact_normals[b+n_bodies*i]);
+            bodies_cpu[b].contact_materials[i] = contact_materials[3*b+i];
         }
-        update_inertia(&bodies_cpu[b], &bodies_gpu[b]);
     }
 
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, 0, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, 0, 0);
-    unreserve_block(manager);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, 0, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT5, GL_TEXTURE_2D, 0, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT6, GL_TEXTURE_2D, 0, 0);
 
     glDrawBuffers(1, buffers);
+
+    unreserve_block(manager);
 }
 
 // void compute_body_bounding_box(gpu_body_data* b)
