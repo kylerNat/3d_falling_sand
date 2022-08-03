@@ -1,6 +1,9 @@
 #ifndef GRAPHICS_COMMON
 #define GRAPHICS_COMMON
 
+struct render_data;
+void draw_circle(render_data* rd, real_3 x, real radius, real_4 color);
+
 #include "game_common.h"
 
 /*NOTE: I should probably be enforcing the packing of these structs, since they are directly copied

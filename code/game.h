@@ -478,14 +478,20 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     // leg_phase = fmod(leg_phase, 1.0);
 
     {
-        w->brains[0].target_accel = (real_3){0,0,0.1}; //by default try to counteract gravity
-        if(is_down('R', input))
-        // if(walk_dir.x != 0 || walk_dir.y != 0)
+        w->brains[0].target_accel = (real_3){0,0,-0.1*(-0.5+w->bodies_gpu[13].x_dot.z)}; //by default try to counteract gravity
+        if(is_down('R', input)
+           || (player_in_head && (walk_dir.x != 0 || walk_dir.y != 0)))
         {
             real_3 pos = player->x-placement_dist*camera_z;
-            real_3 target_dir = normalize(pos-w->bodies_gpu[13].x);
+            real_3 r = pos-w->bodies_gpu[13].x;
+            r.z = 0;
+            real_3 target_dir = normalize(r);
+            if(player_in_head)
+            {
+                target_dir = walk_dir;
+            }
 
-            w->brains[0].target_accel += target_dir;
+            w->brains[0].target_accel += 0.02*target_dir;
         }
     }
 
@@ -498,15 +504,16 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
     simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
 
-    w->bodies_cpu[5].contact_locked[0] = true;
-    w->bodies_cpu[5].contact_points[0] = {256+128, 256+128, 50};
-    w->bodies_cpu[5].contact_pos[0] = {5,0,0};
-    w->bodies_cpu[5].contact_normals[0] = {1,0,0};
-    w->bodies_cpu[5].contact_depths[0] = 0;
+    // w->bodies_cpu[5].contact_locked[0] = true;
+    // w->bodies_cpu[5].contact_points[0] = {256+128, 256+128, 50};
+    // w->bodies_cpu[5].contact_pos[0] = {5,0,0};
+    // w->bodies_cpu[5].contact_normals[0] = {1,0,0};
+    // w->bodies_cpu[5].contact_depths[0] = 0;
     w->bodies_cpu[5].contact_force[0] = {0,0,0};
-    w->bodies_cpu[5].deltax_dot_integral[0] = {0,0,0};
+    w->bodies_cpu[7].contact_force[0] = {0,0,0};
+    // w->bodies_cpu[5].deltax_dot_integral[0] = {0,0,0};
 
-    simulate_joints(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
+    simulate_joints(w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->brains, w->n_brains, rd);
 
     integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
 

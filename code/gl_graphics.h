@@ -1310,6 +1310,7 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
     {
         for(int i = 0; i < 3; i++)
         {
+            if(bodies_cpu[b].contact_locked[i]) continue;
             draw_circle(rd, contact_points[b+n_bodies*i], 0.3, {0,1,0,1});
             draw_circle(rd, contact_points[b+n_bodies*i]+contact_normals[b+n_bodies*i], 0.2, {1,0,0.5*contact_materials[3*b+i],1});
             bodies_cpu[b].contact_points[i] = contact_points[b+n_bodies*i];
