@@ -917,55 +917,19 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         };
     }
 
-    w.bodies_cpu[limb_start_id+5].joints[w.bodies_cpu[limb_start_id+5].n_children++] = {
-        .type = joint_ball,
-        .child_body_id = limb_start_id+0,
-        .pos = {{limb_length-1,0,0}, {0,0,0}},
-        .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
-    };
-
-    w.bodies_cpu[limb_start_id+7].joints[w.bodies_cpu[limb_start_id+7].n_children++] = {
-        .type = joint_ball,
-        .child_body_id = limb_start_id+2,
-        .pos = {{limb_length-1,0,0}, {0,0,0}},
-        .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
-    };
-
-    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
-        .type = joint_ball,
-        .child_body_id = limb_start_id+4,
-        .pos = {{0,0,0}, {0,0,0}},
-        .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
-    };
-
-    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
-        .type = joint_ball,
-        .child_body_id = limb_start_id+6,
-        .pos = {{0,body_width-1,0}, {0,0,0}},
-        .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
-    };
-
-    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    // w.bodies_cpu[limb_start_id+5].joints[w.bodies_cpu[limb_start_id+5].n_children++] = {
     //     .type = joint_ball,
     //     .child_body_id = limb_start_id+0,
-    //     .pos = {{0,0,0}, {0,0,0}},
+    //     .pos = {{limb_length-1,0,0}, {0,0,0}},
     //     .axis = {1,1},
     //     .max_speed = 0.5,
     //     .max_torque = 0.2,
     // };
 
-    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    // w.bodies_cpu[limb_start_id+7].joints[w.bodies_cpu[limb_start_id+7].n_children++] = {
     //     .type = joint_ball,
     //     .child_body_id = limb_start_id+2,
-    //     .pos = {{0,body_width-1,0}, {0,0,0}},
+    //     .pos = {{limb_length-1,0,0}, {0,0,0}},
     //     .axis = {1,1},
     //     .max_speed = 0.5,
     //     .max_torque = 0.2,
@@ -974,7 +938,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
     //     .type = joint_ball,
     //     .child_body_id = limb_start_id+4,
-    //     .pos = {{shoulder_length-1,0,0}, {0,0,0}},
+    //     .pos = {{0,0,0}, {0,0,0}},
     //     .axis = {1,1},
     //     .max_speed = 0.5,
     //     .max_torque = 0.2,
@@ -983,17 +947,54 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
     //     .type = joint_ball,
     //     .child_body_id = limb_start_id+6,
-    //     .pos = {{shoulder_length-1,body_width-1,0}, {0,0,0}},
+    //     .pos = {{0,body_width-1,0}, {0,0,0}},
     //     .axis = {1,1},
     //     .max_speed = 0.5,
     //     .max_torque = 0.2,
     // };
+
+    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+        .type = joint_ball,
+        .child_body_id = limb_start_id+0,
+        .pos = {{0,0,0}, {0,0,0}},
+        .axis = {1,1},
+        .max_speed = 0.5,
+        .max_torque = 0.2,
+    };
+
+    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+        .type = joint_ball,
+        .child_body_id = limb_start_id+2,
+        .pos = {{0,body_width-1,0}, {0,0,0}},
+        .axis = {1,1},
+        .max_speed = 0.5,
+        .max_torque = 0.2,
+    };
+
+    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+        .type = joint_ball,
+        .child_body_id = limb_start_id+4,
+        .pos = {{shoulder_length-1,0,0}, {0,0,0}},
+        .axis = {1,1},
+        .max_speed = 0.5,
+        .max_torque = 0.2,
+    };
+
+    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+        .type = joint_ball,
+        .child_body_id = limb_start_id+6,
+        .pos = {{shoulder_length-1,body_width-1,0}, {0,0,0}},
+        .axis = {1,1},
+        .max_speed = 0.5,
+        .max_torque = 0.2,
+    };
 
     brain* br = &w.brains[w.n_brains++];
     *br = {
         .endpoints = (endpoint*) permalloc(manager, sizeof(endpoint)*1024),
         .n_endpoints = 0,
     };
+
     br->endpoints[br->n_endpoints++] = {
         .type = endpoint_foot,
         .body_id = 5,
@@ -1002,6 +1003,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .foot_phase_offset = 0.0,
         .target_type = tv_velocity,
         .target_value = {0,0,0},
+
+        .root_anchor = {(head_size-1)/2,(head_size-1)/2,0},
+        .root_dist = 2*limb_length+body_length-3,
+
     };
 
     br->endpoints[br->n_endpoints++] = {
@@ -1012,7 +1017,39 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .foot_phase_offset = 0.5,
         .target_type = tv_velocity,
         .target_value = {0,0,0},
+
+        .root_anchor = {(head_size-1)/2,(head_size-1)/2,0},
+        .root_dist = 2*limb_length+body_length-3,
     };
+
+    // //hand feet
+    // br->endpoints[br->n_endpoints++] = {
+    //     .type = endpoint_foot,
+    //     .body_id = 9,
+    //     .pos = {limb_length-1,0,0},
+    //     .state = foot_lift,
+    //     .foot_phase_offset = 0.0,
+    //     .target_type = tv_velocity,
+    //     .target_value = {0,0,0},
+
+    //     .root_anchor = {shoulder_length-1,0,0},
+    //     .root_dist = 2*limb_length,
+
+    // };
+
+    // br->endpoints[br->n_endpoints++] = {
+    //     .type = endpoint_foot,
+    //     .body_id = 11,
+    //     .pos = {limb_length-1,0,0},
+    //     .state = foot_lift,
+    //     .foot_phase_offset = 0.5,
+    //     .target_type = tv_velocity,
+    //     .target_value = {0,0,0},
+
+    //     .root_anchor = {shoulder_length-1,body_width-1,0},
+    //     .root_dist = 2*limb_length,
+    // };
+
 
     for(int j = 0; j < w.n_joints; j++)
     {

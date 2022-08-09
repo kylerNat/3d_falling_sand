@@ -491,7 +491,16 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
                 target_dir = walk_dir;
             }
 
-            w->brains[0].target_accel += 0.02*target_dir;
+            w->brains[0].target_accel += 0.01*target_dir;
+        }
+        // else
+        // {
+        //     w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
+        // }
+        if(is_down('T', input)
+           || (player_in_head && is_down(M2, input)))
+        {
+            w->brains[0].target_accel.z += 1.0;
         }
     }
 
