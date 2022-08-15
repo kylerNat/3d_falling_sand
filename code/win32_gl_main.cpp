@@ -740,7 +740,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
                 for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
                 {
-                    int material = 3;
+                    int material = 4;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
 
                     real m = 0.001;
@@ -781,7 +781,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
                 {
                     int material = 0;
-                    if(x < shoulder_length || (z == 0 && y == body_width/2)) material = 3;
+                    if(x < shoulder_length || (z == 0 && y == body_width/2)) material = 4;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
 
                     real m = 0.001;
@@ -822,7 +822,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
                 {
                     if(x >= head_size || y >= head_size || z >= head_size) continue;
-                    int material = 3;
+                    int material = 4;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
                     real m = 0.001;
                     if(material == 0) m = 0;
@@ -971,23 +971,23 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .max_torque = 0.2,
     };
 
-    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
-        .type = joint_ball,
-        .child_body_id = limb_start_id+4,
-        .pos = {{shoulder_length-1,0,0}, {0,0,0}},
-        .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
-    };
+    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    //     .type = joint_ball,
+    //     .child_body_id = limb_start_id+4,
+    //     .pos = {{shoulder_length-1,0,0}, {0,0,0}},
+    //     .axis = {1,1},
+    //     .max_speed = 0.5,
+    //     .max_torque = 0.2,
+    // };
 
-    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
-        .type = joint_ball,
-        .child_body_id = limb_start_id+6,
-        .pos = {{shoulder_length-1,body_width-1,0}, {0,0,0}},
-        .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
-    };
+    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    //     .type = joint_ball,
+    //     .child_body_id = limb_start_id+6,
+    //     .pos = {{shoulder_length-1,body_width-1,0}, {0,0,0}},
+    //     .axis = {1,1},
+    //     .max_speed = 0.5,
+    //     .max_torque = 0.2,
+    // };
 
     brain* br = &w.brains[w.n_brains++];
     *br = {
@@ -999,24 +999,17 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .type = endpoint_foot,
         .body_id = 5,
         .pos = {limb_length-1,0,0},
-        .state = foot_lift,
-        .foot_phase_offset = 0.0,
-        .target_type = tv_velocity,
-        .target_value = {0,0,0},
+        .foot_phase = 0.0,
 
         .root_anchor = {(head_size-1)/2,(head_size-1)/2,0},
         .root_dist = 2*limb_length+body_length-3,
-
     };
 
     br->endpoints[br->n_endpoints++] = {
         .type = endpoint_foot,
         .body_id = 7,
         .pos = {limb_length-1,0,0},
-        .state = foot_lift,
-        .foot_phase_offset = 0.5,
-        .target_type = tv_velocity,
-        .target_value = {0,0,0},
+        .foot_phase = 0.5,
 
         .root_anchor = {(head_size-1)/2,(head_size-1)/2,0},
         .root_dist = 2*limb_length+body_length-3,
@@ -1060,6 +1053,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     {
         w.bodies_cpu[b].invI = inverse(w.bodies_cpu[b].I);
         update_inertia(&w.bodies_cpu[b], &w.bodies_gpu[b]);
+
+        w.bodies_cpu[b].contact_depths[0] = 16.0f;
+        w.bodies_cpu[b].contact_depths[1] = 16.0f;
+        w.bodies_cpu[b].contact_depths[2] = 16.0f;
 
         load_body_to_gpu(&w.bodies_cpu[b], &w.bodies_gpu[b]);
     }
@@ -1256,7 +1253,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_buffer);
+        // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_buffer);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_texture, 0);
         glViewport(0, 0, resolution_x, resolution_y);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         //Render world
@@ -1280,13 +1278,24 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             // }
         }
 
+        // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, denoised_color_texture, 0);
+        // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+        // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        // glDisable(GL_DEPTH_TEST);
+        // for(int i = 0; i < 3; i++)
+        // {
+        //     denoise(denoised_color_texture, color_texture);
+        //     denoise(color_texture, denoised_color_texture);
+        // }
+        // glEnable(GL_DEPTH_TEST);
+
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);
         glEnable(GL_DEPTH_TEST);
 
         draw_circles(ui.circles, ui.n_circles, ui.camera);
 
-        draw_circles(ground_circles, n_ground_circles, rd.camera);
+        // draw_circles(ground_circles, n_ground_circles, rd.camera);
 
         // uint line_points_offset = 0;
         // for(int l = 0; l < rd.n_lines; l++)

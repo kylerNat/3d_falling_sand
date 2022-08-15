@@ -96,6 +96,37 @@ void find_collision_points(out vec3 world_collision_points[N_MAX_COLLISION_POINT
             }
 }
 
+//TODO: have better method of choosing points
+void find_surface_points(out vec3 world_collision_points[N_MAX_COLLISION_POINTS], out ivec3 world_collision_coord[N_MAX_COLLISION_POINTS], out int n_collision_points)
+{
+    n_collision_points = 0;
+
+    //TODO: maybe use space filling curves
+    for(int test_z = 0; test_z < body_size.z; test_z+=1)
+        for(int test_y = 0; test_y < body_size.y; test_y+=1)
+            for(int test_x = 0; test_x < body_size.x; test_x+=1)
+            {
+
+                ivec3 body_coord = ivec3(test_x, test_y, test_z);
+                vec3 world_coord = apply_rotation(body_orientation, vec3(body_coord)+0.5-body_x_cm)+body_x;
+
+                vec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
+
+                // if(body_voxel.g == 0 && body_voxel.r > 0)
+                if(body_voxel.g == 0)
+                {
+                    ivec3 wvc = ivec3(world_coord); //world_voxel_coord
+
+                    world_collision_points[n_collision_points] = world_coord;
+                    world_collision_coord[n_collision_points] = wvc;
+                    n_collision_points++;
+                    if(n_collision_points >= N_MAX_COLLISION_POINTS) return;
+                }
+
+                test_x += int(max(abs(body_voxel.g)-1, 0));
+            }
+}
+
 void main()
 {
     int b = int(gl_FragCoord.y);
@@ -106,9 +137,9 @@ void main()
     p1 = vec3(0);
     p2 = vec3(0);
     p3 = vec3(0);
-    n1 = vec3(0);
-    n2 = vec3(0);
-    n3 = vec3(0);
+    n1 = vec3(0,0,1);
+    n2 = vec3(0,0,1);
+    n3 = vec3(0,0,1);
     contact_materials = ivec3(0);
 
     vec3 world_collision_points[N_MAX_COLLISION_POINTS];
@@ -117,11 +148,14 @@ void main()
 
     find_collision_points(world_collision_points, world_collision_coord, n_collision_points);
 
+    if(n_collision_points == 0)
+        find_surface_points(world_collision_points, world_collision_coord, n_collision_points);
+
     vec3 impulses[N_MAX_COLLISION_POINTS] = vec3[N_MAX_COLLISION_POINTS](0);
 
-    float d1 = 0;
-    float d2 = 0;
-    float d3 = 0;
+    float d1 = 16;
+    float d2 = 16;
+    float d3 = 16;
 
     int best_dist = 16;
     float best_rsq = 16;
@@ -137,7 +171,7 @@ void main()
             best_dist = world_voxel.g;
             best_rsq = rsq;
             p1 = world_coord;
-            d1 = 1.5-world_voxel.g;
+            d1 = world_voxel.g;
             contact_materials.r = world_voxel.r;
         }
     }
@@ -153,12 +187,12 @@ void main()
         {
             best_asq = asq;
             p2 = world_coord;
-            d2 = 1.5-world_voxel.g;
+            d2 = world_voxel.g;
             contact_materials.g = world_voxel.r;
         }
     }
 
-    float best_bsq = 0;
+    float best_bsq = -1;
     for(int cp = 0; cp < n_collision_points; cp++)
     {
         vec3 world_coord = world_collision_points[cp];
@@ -171,10 +205,14 @@ void main()
         {
             best_bsq = bsq;
             p3 = world_coord;
-            d3 = 1.5-world_voxel.g;
+            d3 = world_voxel.g;
             contact_materials.b = world_voxel.r;
         }
     }
+
+    d1 += 16;
+    d2 += 16;
+    d3 += 16;
 
     ivec3 ip1 = ivec3(p1);
     n1 = vec3(

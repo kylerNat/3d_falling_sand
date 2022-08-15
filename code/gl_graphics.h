@@ -9,6 +9,8 @@
 #include "game_common.h"
 #include "chunk.h"
 
+#include "materials.h"
+
 #define DEBUG_SEVERITY_HIGH                           0x9146
 #define DEBUG_SEVERITY_MEDIUM                         0x9147
 #define DEBUG_SEVERITY_LOW                            0x9148
@@ -83,6 +85,8 @@ GLuint occupied_regions_texture;
 #define occupied_regions_width 16
 #define occupied_regions_size (chunk_size/occupied_regions_width)
 
+GLuint material_properties_texture;
+
 #define N_MAX_BODIES 4096
 GLuint body_buffer;
 
@@ -105,7 +109,9 @@ GLuint collision_normal_texture;
 
 GLuint prepass_depth_texture;
 GLuint color_texture;
-GLuint depth_buffer;
+GLuint depth_texture;
+
+GLuint denoised_color_texture;
 
 GLuint stencil_buffer;
 
@@ -141,7 +147,7 @@ void gl_init_general_buffers(memory_manager* manager)
         glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB16F, lightprobe_resolution_x, lightprobe_resolution_y);
         //TODO: can add mip maps to allow for rougher surfaces
 
-        real_3 clear = {0.2,0.2,0.2};
+        real_3 clear = {0.1,0.1,0.1};
         glClearTexImage(lightprobe_color_textures[i], 0, GL_RGB, GL_FLOAT, &clear);
     }
 
@@ -170,13 +176,21 @@ void gl_init_general_buffers(memory_manager* manager)
     }
     // unreserve_block(manager);
 
-    glGenTextures(1, &color_texture);
-    glBindTexture(GL_TEXTURE_2D, color_texture);
+    glGenTextures(1, &denoised_color_texture);
+    glBindTexture(GL_TEXTURE_2D, denoised_color_texture);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, resolution_x, resolution_y);
 
-    glGenRenderbuffers(1, &depth_buffer);
-    glBindRenderbuffer(GL_RENDERBUFFER, depth_buffer);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32, resolution_x, resolution_y);
+    glGenTextures(1, &color_texture);
+    glBindTexture(GL_TEXTURE_2D, color_texture);
+    glTexStorage2D(GL_TEXTURE_2D, 8, GL_RGB32F, resolution_x, resolution_y);
+
+    // glGenRenderbuffers(1, &depth_buffer);
+    // glBindRenderbuffer(GL_RENDERBUFFER, depth_buffer);
+    // glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32, resolution_x, resolution_y);
+
+    glGenTextures(1, &depth_texture);
+    glBindTexture(GL_TEXTURE_2D, depth_texture);
+    glTexStorage2D(GL_TEXTURE_2D, 8, GL_DEPTH_COMPONENT32, resolution_x, resolution_y);
 
     glGenRenderbuffers(1, &stencil_buffer);
     glBindRenderbuffer(GL_RENDERBUFFER, stencil_buffer);
@@ -208,6 +222,12 @@ void gl_init_general_buffers(memory_manager* manager)
     // glActiveTexture(GL_TEXTURE0);
     // glBindTexture(GL_TEXTURE_2D, round_line_texture);
     // glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, 2, N_MAX_LINE_POINTS);
+
+    glGenTextures(1, &material_properties_texture);
+    glBindTexture(GL_TEXTURE_2D, material_properties_texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, 4, N_MAX_MATERIALS);
+    // glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, 3, N_MAX_MATERIALS, 0, GL_RGB, GL_FLOAT, materials);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 3, N_MAX_MATERIALS, GL_RGB, GL_FLOAT, materials);
 
     glGenTextures(len(materials_textures), materials_textures);
     for(int i = 0; i < len(materials_textures); i++)
@@ -687,6 +707,14 @@ void update_lightprobes()
 
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_2D, material_properties_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
     glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -798,7 +826,8 @@ void update_lightprobes()
 
     glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_buffer);
+    // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_buffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_texture, 0);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
     glViewport(0, 0, resolution_x, resolution_y);
 }
@@ -813,6 +842,14 @@ void render_voxels(GLuint materials_texture, real_3x3 camera_axes, real_3 camera
     //camera
     glUniformMatrix3fv(uniform_i++, 1, false, (GLfloat*) &camera_axes);
     glUniform3fv(uniform_i++, 1, (GLfloat*) &camera_pos);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_2D, material_properties_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
@@ -913,9 +950,150 @@ void render_body(cpu_body_data* bc, gpu_body_data* bg, real_3x3 camera_axes, rea
     // glEnable(GL_DEPTH_TEST);
 }
 
+void denoise(GLuint dst_texture, GLuint src_texture)
+{
+    glUseProgram(denoise_program);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst_texture, 0);
+
+    int texture_i = 0;
+    int uniform_i = 0;
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_2D, src_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    // glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+    // glGenerateMipmap(GL_TEXTURE_2D);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_2D, depth_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    size_t offset = 0;
+    int layout_location = 0;
+
+    GLuint vertex_buffer = gl_general_buffers[0];
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+    real vb[] = {-1,-1,0,
+        -1,+1,0,
+        +1,+1,0,
+        +1,-1,0};
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
+    add_contiguous_attribute(3, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+}
+
+
 void simulate_chunk(chunk* c, int update_cells)
 {
     glUseProgram(simulate_chunk_program);
+
+    load_chunk_to_gpu(c);
+
+    int texture_i = 0;
+    int image_i = 0;
+    int uniform_i = 0;
+
+    int layer_number_uniform = uniform_i++;
+
+    static int frame_number = 0;
+    glUniform1i(uniform_i++, frame_number++);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_3D, active_regions_textures[current_active_regions_texture]);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    // glBindImageTexture(image_i++, active_regions_textures[current_active_regions_texture], 0, true, 0, GL_READ_ONLY, GL_R32UI);
+
+    glUniform1i(uniform_i++, image_i);
+    glBindImageTexture(image_i++, active_regions_textures[1-current_active_regions_texture], 0, true, 0, GL_WRITE_ONLY, GL_R8UI);
+    uint clear = 0;
+    glClearTexImage(active_regions_textures[1-current_active_regions_texture], 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, &clear);
+
+    glUniform1i(uniform_i++, image_i);
+    glBindImageTexture(image_i++, occupied_regions_texture, 0, true, 0, GL_WRITE_ONLY, GL_R8UI);
+    // glCopyImageSubData(active_regions_textures[current_active_regions_texture], GL_TEXTURE_3D,
+    //                    0,
+    //                    0, 0, 0,
+    //                    occupied_regions_texture, GL_TEXTURE_3D,
+    //                    0,
+    //                    0, 0, 0,
+    //                    occupied_regions_size, occupied_regions_size, occupied_regions_size);
+
+    //swap active regions textures
+    current_active_regions_texture = 1-current_active_regions_texture;
+
+    glUniform1i(uniform_i++, update_cells);
+
+    size_t offset = 0;
+    int layout_location = 0;
+
+    GLuint vertex_buffer = gl_general_buffers[0];
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+    real vb[] = {0,0,
+        0,1,
+        1,1,
+        1,0};
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
+    add_contiguous_attribute(2, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+
+    real region_pos[2*32*32] = {};
+    for(int i = 0; i < 32*32; i++)
+    {
+        region_pos[2*i+0] = i%32;
+        region_pos[2*i+1] = (i/32)%32;
+    }
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(region_pos), (void*) region_pos);
+    add_interleaved_attribute(2, GL_FLOAT, false, 2*sizeof(region_pos[0]), 1);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+    glViewport(0, 0, chunk_size, chunk_size);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+
+    for(int l = 0; l < chunk_size; l++)
+    {
+        glUniform1i(layer_number_uniform, l);
+
+        glFramebufferTexture3D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_3D,
+                               materials_textures[1-current_materials_texture], 0, l);
+
+        glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, 32*32);
+    }
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    current_materials_texture = 1-current_materials_texture;
+}
+
+void mipmap_chunk()
+{
+    glUseProgram(mipmap_chunk_program);
 
     load_chunk_to_gpu(c);
 
@@ -1311,13 +1489,17 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
         for(int i = 0; i < 3; i++)
         {
             if(bodies_cpu[b].contact_locked[i]) continue;
-            draw_circle(rd, contact_points[b+n_bodies*i], 0.3, {0,1,0,1});
-            draw_circle(rd, contact_points[b+n_bodies*i]+contact_normals[b+n_bodies*i], 0.2, {1,0,0.5*contact_materials[3*b+i],1});
             bodies_cpu[b].contact_points[i] = contact_points[b+n_bodies*i];
             bodies_cpu[b].contact_pos[i] = apply_rotation(conjugate(bodies_gpu[b].orientation), contact_points[b+n_bodies*i]-bodies_gpu[b].x);
-            bodies_cpu[b].contact_depths[i] = norm(contact_normals[b+n_bodies*i]);
+            // if(contact_normals[b+n_bodies*i] != contact_normals[b+n_bodies*i])
+            // {
+            //     assert(false, "bad contact normal");
+            // }
+            bodies_cpu[b].contact_depths[i] = norm(contact_normals[b+n_bodies*i])-16;
             bodies_cpu[b].contact_normals[i] = normalize_or_zero(contact_normals[b+n_bodies*i]);
             bodies_cpu[b].contact_materials[i] = contact_materials[3*b+i];
+            draw_circle(rd, contact_points[b+n_bodies*i], 0.3, {bodies_cpu[b].contact_depths[i] > 1,bodies_cpu[b].contact_depths[i] <= 1,0,1});
+            // draw_circle(rd, contact_points[b+n_bodies*i]+0.1*contact_normals[b+n_bodies*i], 0.2, {1,0,0.5*contact_materials[3*b+i],1});
         }
     }
 

@@ -96,7 +96,7 @@ bool coarse_cast_ray(vec3 ray_dir, vec3 ray_origin, out vec3 pos, out float hit_
 
 int n_texture_reads = 0;
 
-bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, ivec3 origin, out vec3 pos, out float hit_dist, out ivec3 hit_cell, out vec3 hit_dir, out vec3 normal, out ivec4 hit_voxel)
+bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, ivec3 origin, out vec3 pos, out float hit_dist, out ivec3 hit_cell, out vec3 hit_dir, out vec3 normal, out ivec4 hit_voxel, int max_iterations)
 {
 
     pos = ray_origin;
@@ -107,7 +107,6 @@ bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, i
     hit_dir = vec3(0);
 
     float epsilon = 0.02;
-    int max_iterations = 200;
     int i = 0;
     hit_dist = 0;
 

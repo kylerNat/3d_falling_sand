@@ -410,8 +410,6 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         // w->bodies_gpu[b].x_dot.z += -0.1;
     }
 
-    bool player_in_head = false;
-
     // static float supported_weight = 0.0;
     // static float leg_phase = 0.0;
     // {
@@ -477,30 +475,46 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     // leg_phase += 0.03;
     // leg_phase = fmod(leg_phase, 1.0);
 
+    bool player_in_head = false;
+
     {
-        w->brains[0].target_accel = (real_3){0,0,-0.1*(-0.5+w->bodies_gpu[13].x_dot.z)}; //by default try to counteract gravity
+        // w->brains[0].target_accel = (real_3){0,0,-0.1*(-0.5+w->bodies_gpu[13].x_dot.z)}; //by default try to counteract gravity
+        w->brains[0].target_accel = (real_3){0,0,0.03}; //by default try to counteract gravity
+        // w->brains[0].target_accel = (real_3){0,0,0}; //by default try to counteract gravity
         if(is_down('R', input)
            || (player_in_head && (walk_dir.x != 0 || walk_dir.y != 0)))
         {
             real_3 pos = player->x-placement_dist*camera_z;
             real_3 r = pos-w->bodies_gpu[13].x;
-            r.z = 0;
+            // r.z = 0;
+            // r = rej(r, w->bodies_cpu[13].contact_normals[0]);
             real_3 target_dir = normalize(r);
             if(player_in_head)
             {
                 target_dir = walk_dir;
             }
 
-            w->brains[0].target_accel += 0.01*target_dir;
+            w->brains[0].target_accel += 0.05*target_dir;
+            w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
         }
-        // else
-        // {
-        //     w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
-        // }
+        else
+        {
+            // w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
+            // w->brains[0].target_accel.z += 0.03;
+            w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
+        }
         if(is_down('T', input)
            || (player_in_head && is_down(M2, input)))
         {
-            w->brains[0].target_accel.z += 1.0;
+            w->brains[0].target_accel.z += 0.1;
+            //TODO: should be foot normals
+            // w->brains[0].target_accel += 0.05*w->bodies_cpu[13].contact_normals[0];
+        }
+
+        if(is_down('Y', input)
+           || (player_in_head && is_down(' ', input)))
+        {
+            w->brains[0].target_accel.z -= 0.1;
         }
     }
 
@@ -518,8 +532,8 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     // w->bodies_cpu[5].contact_pos[0] = {5,0,0};
     // w->bodies_cpu[5].contact_normals[0] = {1,0,0};
     // w->bodies_cpu[5].contact_depths[0] = 0;
-    w->bodies_cpu[5].contact_force[0] = {0,0,0};
-    w->bodies_cpu[7].contact_force[0] = {0,0,0};
+    // w->bodies_cpu[5].contact_forces[0] = {0,0,0};
+    // w->bodies_cpu[7].contact_forces[0] = {0,0,0};
     // w->bodies_cpu[5].deltax_dot_integral[0] = {0,0,0};
 
     simulate_joints(w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->brains, w->n_brains, rd);

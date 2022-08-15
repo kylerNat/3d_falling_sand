@@ -9,10 +9,10 @@ layout(location = 0) in vec2 x;
 layout(location = 1) in vec2 X;
 
 layout(location = 0) uniform int frame_number;
-layout(location = 3) uniform sampler2D lightprobe_color;
-layout(location = 4) uniform sampler2D lightprobe_depth;
-layout(location = 5) uniform sampler2D lightprobe_x;
-layout(location = 6) uniform sampler2D blue_noise_texture;
+layout(location = 4) uniform sampler2D lightprobe_color;
+layout(location = 5) uniform sampler2D lightprobe_depth;
+layout(location = 6) uniform sampler2D lightprobe_x;
+layout(location = 7) uniform sampler2D blue_noise_texture;
 
 #include "include/blue_noise.glsl"
 #include "include/lightprobe.glsl"
@@ -45,12 +45,13 @@ layout(location = 0) out vec4 color;
 layout(location = 1) out vec4 depth;
 
 layout(location = 0) uniform int frame_number;
-layout(location = 1) uniform isampler3D materials;
-layout(location = 2) uniform usampler3D occupied_regions;
-layout(location = 3) uniform sampler2D lightprobe_color;
-layout(location = 4) uniform sampler2D lightprobe_depth;
-layout(location = 5) uniform sampler2D lightprobe_x;
-layout(location = 6) uniform sampler2D blue_noise_texture;
+layout(location = 1) uniform sampler2D material_properties;
+layout(location = 2) uniform isampler3D materials;
+layout(location = 3) uniform usampler3D occupied_regions;
+layout(location = 4) uniform sampler2D lightprobe_color;
+layout(location = 5) uniform sampler2D lightprobe_depth;
+layout(location = 6) uniform sampler2D lightprobe_x;
+layout(location = 7) uniform sampler2D blue_noise_texture;
 
 ivec3 size = ivec3(512);
 ivec3 origin = ivec3(0);
@@ -59,6 +60,7 @@ ivec3 origin = ivec3(0);
 #include "include/body_data.glsl"
 #include "include/raycast.glsl"
 #include "include/lightprobe.glsl"
+#include "include/materials.glsl"
 
 smooth in vec2 sample_oct;
 
@@ -93,43 +95,13 @@ void main()
     {
         ivec4 voxel = texelFetch(materials, hit_cell, 0);
 
-        vec3 emission = vec3(0.001f);
-        if(voxel.r == 2)
-        {
-            // emission = vec3(0.4,0.4,0.8);
-            emission = vec3(0.8,0.2,0.2)*100;
-        }
-        // if(voxel.r == 1)
-        // {
-        //     emission = vec3(0.54,0.44,0.21);
-        // }
-        // if(voxel.r == 3)
-        // {
-        //     emission = vec3(0.5,0.125,0.5);
-        // }
+        int material_id = voxel.r;
 
-
-        vec3 reflectivity = vec3(0.5, 0.5, 0.5);
-        float roughness = 0.0;
-        if(voxel.r == 1)
-        {
-            reflectivity = vec3(0.54,0.44,0.21);
-            roughness = 0.9;
-        }
-        else if(voxel.r == 3)
-        {
-            reflectivity = vec3(0.5,0.5,1.0);
-            roughness = 0.5;
-        }
-        else
-        {
-            reflectivity = vec3(0.1,0.1,0.2);
-            roughness = 0.1;
-        }
+        float roughness = get_roughness(material_id);
+        vec3 emission = get_emission(material_id);
 
         color.rgb = vec3(0);
-        // color.rgb = pos/512.0;
-        color.rgb += emission;
+        color.rgb += -(emission)*dot(normal, ray_dir);
 
         // float total_weight = 0.0;
 
@@ -138,7 +110,7 @@ void main()
         reflection_dir = normalize(reflection_dir);
 
         vec2 sample_depth;
-        color.rgb += reflectivity*sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
+        color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)*sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
     }
     else
     {
