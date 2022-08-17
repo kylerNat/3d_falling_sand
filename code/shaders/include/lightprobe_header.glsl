@@ -2,10 +2,7 @@
 #define lightprobe_spacing 32
 #define lightprobes_w 64
 #define lightprobes_h 64
-#define lightprobe_raw_resolution 8
-#define lightprobe_resolution 64
+#define lightprobe_resolution 6
 #define lightprobe_padded_resolution (lightprobe_resolution+2)
 #define lightprobe_resolution_x (lightprobes_w*lightprobe_padded_resolution)
 #define lightprobe_resolution_y (lightprobes_h*lightprobe_padded_resolution)
-#define lightprobe_raw_resolution_x (lightprobes_w*lightprobe_raw_resolution)
-#define lightprobe_raw_resolution_y (lightprobes_h*lightprobe_raw_resolution)

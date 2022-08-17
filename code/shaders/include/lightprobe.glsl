@@ -1,5 +1,29 @@
 #include "include/lightprobe_header.glsl"
 
+vec3 sign_not_zero(vec3 p) {
+    return 2*step(0, p)-1;
+}
+
+vec2 vec_to_oct(vec3 p)
+{
+    vec3 sign_p = sign_not_zero(p);
+    vec2 oct = p.xy * (1.0f/dot(p, sign_p));
+    return (p.z > 0) ? oct : (1.0f-abs(oct.yx))*sign_p.xy;
+}
+
+vec3 oct_to_vec(vec2 oct)
+{
+    vec2 sign_oct = sign(oct);
+    vec3 p = vec3(oct.xy, 1.0-dot(oct, sign_oct));
+    if(p.z < 0) p.xy = (1.0f-abs(p.yx))*sign_oct.xy;
+    return normalize(p);
+}
+
+float cdf(float x)
+{
+    return 0.5f*tanh(0.797884560803f*(x+0.044715f*x*x*x))+0.5f;
+}
+
 vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 depth)
 {
     pos = pos+8*normal; //bias away from surfaces
