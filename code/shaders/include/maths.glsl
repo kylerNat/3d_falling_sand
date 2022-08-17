@@ -27,3 +27,27 @@ vec3 apply_rotation(vec4 q, vec3 p)
     vec4 q_out = qmult(qmult(q, p_quat), vec4(q.x, -q.y, -q.z, -q.w));
     return q_out.yzw;
 }
+
+vec3 sign_not_zero(vec3 p) {
+    return 2*step(0, p)-1;
+}
+
+vec2 vec_to_oct(vec3 p)
+{
+    vec3 sign_p = sign_not_zero(p);
+    vec2 oct = p.xy * (1.0f/dot(p, sign_p));
+    return (p.z > 0) ? oct : (1.0f-abs(oct.yx))*sign_p.xy;
+}
+
+vec3 oct_to_vec(vec2 oct)
+{
+    vec2 sign_oct = sign(oct);
+    vec3 p = vec3(oct.xy, 1.0-dot(oct, sign_oct));
+    if(p.z < 0) p.xy = (1.0f-abs(p.yx))*sign_oct.xy;
+    return normalize(p);
+}
+
+float cdf(float x)
+{
+    return 0.5f*tanh(0.797884560803f*(x+0.044715f*x*x*x))+0.5f;
+}

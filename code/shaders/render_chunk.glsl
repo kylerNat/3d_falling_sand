@@ -42,8 +42,8 @@ layout(location = 13) uniform int n_bodies;
 #include "include/blue_noise.glsl"
 #include "include/body_data.glsl"
 #include "include/raycast.glsl"
-#include "include/lightprobe.glsl"
 #include "include/maths.glsl"
+#include "include/lightprobe.glsl"
 #include "include/materials.glsl"
 
 smooth in vec2 screen_pos;

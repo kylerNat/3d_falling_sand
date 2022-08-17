@@ -15,6 +15,7 @@ layout(location = 6) uniform sampler2D lightprobe_x;
 layout(location = 7) uniform sampler2D blue_noise_texture;
 
 #include "include/blue_noise.glsl"
+#include "include/maths.glsl"
 #include "include/lightprobe.glsl"
 
 smooth out vec2 sample_oct;
@@ -28,7 +29,8 @@ void main()
     // sample_oct = 2.0f*fract(gl_Position.xy*vec2(256, 128))-1.0f;
 
     vec2 scale = 2.0f/vec2(lightprobes_w, lightprobes_h);
-    vec2 scale2 = (0.5f*scale*lightprobe_resolution)/lightprobe_padded_resolution;
+    // vec2 scale2 = (0.5f*scale*lightprobe_resolution)/lightprobe_padded_resolution;
+    vec2 scale2 = (0.5f*scale);
 
     gl_Position.xy = scale*(X+0.5)-1+scale2*x;
     gl_Position.z = 0.0f;
@@ -59,6 +61,7 @@ ivec3 origin = ivec3(0);
 #include "include/blue_noise.glsl"
 #include "include/body_data.glsl"
 #include "include/raycast.glsl"
+#include "include/maths.glsl"
 #include "include/lightprobe.glsl"
 #include "include/materials.glsl"
 
@@ -73,11 +76,11 @@ void main()
     // vec2 sample_oct = 2*fract((gl_FragCoord.xy+0.5f)*(1.0f/lightprobe_resolution))-1;
 
     //really all this ray casting could happen in the vertex shader, not sure if there's an advantage either way
-    ivec2 probe_coord = ivec2(gl_FragCoord.xy/lightprobe_padded_resolution);
+    ivec2 probe_coord = ivec2(gl_FragCoord.xy/lightprobe_raw_resolution);
     int probe_index = probe_coord.x+probe_coord.y*lightprobes_w;
     ivec3 probe_pos = ivec3(probe_index%lightprobes_per_axis, (probe_index/lightprobes_per_axis)%lightprobes_per_axis, probe_index/(lightprobes_per_axis*lightprobes_per_axis));
 
-    vec3 ray_dir = oct_to_vec(sample_oct+(blue_noise(gl_FragCoord.xy/256.0).xy-0.5f)*(1.0/lightprobe_resolution));
+    vec3 ray_dir = oct_to_vec(sample_oct+(blue_noise(gl_FragCoord.xy/256.0).xy-0.5f)*(1.0/lightprobe_raw_resolution));
     vec3 pos = texelFetch(lightprobe_x, probe_coord, 0).xyz;
     // vec3 pos = (vec3(probe_pos)+blue_noise(gl_FragCoord.xy/256.0f+vec2(0.8f,0.2f)).xyz)*lightprobe_spacing;
 
