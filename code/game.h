@@ -304,57 +304,39 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     // real_3 look_forward = {-sin(phi)*sin(theta), cos(phi)*sin(theta), -cos(theta)};
     real_3 look_forward = {-sin(phi), cos(phi), 0};
     real_3 look_side    = {cos(phi), sin(phi), 0};
-    #if 1
+
     real move_accel = 0.05;
-    real move_speed = 0.5;
+    real move_speed = 1.5;
     real speed = norm(player->x_dot.xy);
     real z_dot = player->x_dot.z;
     real_2 move_dir = player->x_dot.xy/speed;
     real_3 walk_dir = (walk_inputs.y*look_forward + walk_inputs.x*look_side);
+    walk_dir.z += is_down(M2, input)-is_down(' ', input);
     if(speed == 0) move_dir = 0.5*walk_dir.xy;
-    if(walk_dir.x != 0 || walk_dir.y != 0)
+    if(walk_dir.x != 0 || walk_dir.y != 0 || walk_dir.z != 0)
     {
         walk_dir = normalize(walk_dir);
-        real proj_mag = dot(walk_dir.xy, move_dir);
-        real_2 walk_proj = move_dir*proj_mag;
-        real_2 walk_rej = walk_dir.xy-walk_proj;
-
-        real_2 accel = +move_accel*walk_rej;
-        // if(proj_mag > 0)
-            accel += move_accel*(move_speed-speed*sign(proj_mag))*walk_proj;
-
-        player->x_dot.xy += accel;
+        player->x_dot += move_accel*walk_dir;
+        player->x_dot *= 1.0f-move_accel/move_speed;
     }
     else
     {
-        player->x_dot *= 0.95;
+        player->x_dot *= 0.5;
     }
-    #else
-    real move_accel = 0.3;
-    real move_speed = 1.0;
-    real_3 walk_dir = (walk_inputs.y*look_forward + walk_inputs.x*look_side);
-    if(walk_dir.x != 0 || walk_dir.y != 0)
-    {
-        walk_dir = normalize(walk_dir);
-        // real_3 accel = move_accel*walk_dir;
-        // real speed = norm(player->x_dot);
-        real vproj = dot(player->x_dot, walk_dir); //speed along the acceleration direction
-        real add_speed = move_speed-vproj;
-        if(add_speed > 0)
-        {
-            real accel_speed = min(move_accel*move_speed, add_speed);
-            player->x_dot += accel_speed*walk_dir;
-        }
-    }
-    #endif
+
     // player->x_dot.x *= 0.95;
     // player->x_dot.y *= 0.95;
-    player->x_dot += 2*is_pressed(M2, input)*((real_3){0,0,1}+0.0*look_forward);
-    if(is_down(' ', input))
-    {
-        player->x_dot.x = 3*look_forward.x;
-        player->x_dot.y = 3*look_forward.y;
-    }
+    // player->x_dot += 2*is_pressed(M2, input)*((real_3){0,0,1}+0.0*look_forward);
+    // if(is_down(' ', input))
+    // {
+    //     // player->x_dot.x = 3*look_forward.x;
+    //     // player->x_dot.y = 3*look_forward.y;
+
+    //     // player->x_dot.x = 3*look_forward.x;
+    //     player->x_dot.z -= move_accel;
+    // }
+
+    player->x += player->x_dot;
 
     real fov = pi*120.0/180.0;
     real screen_dist = 1.0/tan(fov/2);
@@ -379,11 +361,11 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     real_3 foot_dist = (real_3){0,0,-15};
 
-    real_3 xs[1] = {player->x+foot_dist};
-    real_3 x_dots[1] = {player->x_dot};
-    simulate_particles(w->c, xs, x_dots, len(xs));
-    player->x = xs[0]-foot_dist;
-    player->x_dot = x_dots[0];
+    // real_3 xs[1] = {player->x+foot_dist};
+    // real_3 x_dots[1] = {player->x_dot};
+    // simulate_particles(w->c, xs, x_dots, len(xs));
+    // player->x = xs[0]-foot_dist;
+    // player->x_dot = x_dots[0];
 
     // player->x += player->x_dot;
 

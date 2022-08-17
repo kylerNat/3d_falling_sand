@@ -57,7 +57,7 @@ void find_collision_points(out vec3 world_collision_points[N_MAX_COLLISION_POINT
                 ivec3 body_coord = ivec3(test_x, test_y, test_z);
                 vec3 world_coord = apply_rotation(body_orientation, vec3(body_coord)+0.5-body_x_cm)+body_x;
 
-                vec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
+                ivec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
 
                 // if(body_voxel.g == 0 && body_voxel.r > 0)
                 if(body_voxel.g == 0)
@@ -110,7 +110,7 @@ void find_surface_points(out vec3 world_collision_points[N_MAX_COLLISION_POINTS]
                 ivec3 body_coord = ivec3(test_x, test_y, test_z);
                 vec3 world_coord = apply_rotation(body_orientation, vec3(body_coord)+0.5-body_x_cm)+body_x;
 
-                vec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
+                ivec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
 
                 // if(body_voxel.g == 0 && body_voxel.r > 0)
                 if(body_voxel.g == 0)

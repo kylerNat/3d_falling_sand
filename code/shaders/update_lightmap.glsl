@@ -105,9 +105,10 @@ void main()
 
         // float total_weight = 0.0;
 
-        vec3 reflection_dir = ray_dir-(2*dot(ray_dir, normal))*normal;
-        reflection_dir += roughness*blue_noise(gl_FragCoord.xy/256.0f+vec2(0.4f,0.6f)).xyz;
-        reflection_dir = normalize(reflection_dir);
+        vec3 reflection_normal = normal+0.5*roughness*(blue_noise(gl_FragCoord.xy/256.0+vec2(0.82,0.34)).xyz-0.5f);
+        reflection_normal = normalize(reflection_normal);
+        vec3 reflection_dir = ray_dir-(2*dot(ray_dir, reflection_normal))*reflection_normal;
+        // reflection_dir += roughness*blue_noise(gl_FragCoord.xy/256.0f+vec2(0.4f,0.6f)).xyz;
 
         vec2 sample_depth;
         color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)*sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);

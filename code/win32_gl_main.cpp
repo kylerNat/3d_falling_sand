@@ -1207,6 +1207,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         }
     }
 
+    bool do_draw_lightprobes = false;
+
     real Deltat = 0;
     //TODO: make render loop evenly sample inputs when vsynced
     while(update_window(&wnd))
@@ -1246,8 +1248,16 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             // for(int i = 0 ; i < 8; i++)
             //     simulate_chunk(w.c, 0);
             if(!is_down('Z', wnd.input)) simulate_chunk(w.c, 1);
+            // if(!is_down('X', wnd.input)) mipmap_chunk(1,5);
             //
-            //TODO: seperate update and render to improve performance and allow for a partial step for visual updating
+
+            if(is_pressed('P', wnd.input)) do_draw_lightprobes = !do_draw_lightprobes;
+
+            /*NOTE FOR NEXT TIME: try upscaling and blurring lightmap,
+              make chunk simulation use material table,
+              add particle simulation
+            */
+
             memcpy(wnd.input.prev_buttons, wnd.input.buttons, sizeof(wnd.input.buttons));
         }
 
@@ -1265,6 +1275,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         if(!is_down('N', wnd.input))
         {
+            move_lightprobes();
             update_lightprobes();
         }
 
@@ -1292,6 +1303,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);
         glEnable(GL_DEPTH_TEST);
+
+        if(do_draw_lightprobes)
+        {
+            glClear(GL_DEPTH_BUFFER_BIT);
+            draw_lightprobes(rd.camera);
+        }
 
         draw_circles(ui.circles, ui.n_circles, ui.camera);
 

@@ -22,6 +22,7 @@ gl_load_operation(void, glVertexAttribPointer, (GLuint index, GLint size, GLenum
 gl_load_operation(void, glEnableVertexAttribArray, (GLuint index));
 gl_load_operation(void, glVertexAttribDivisor, (GLuint index, GLuint divisor));
 gl_load_operation(void, glDrawArraysInstanced, (GLenum mode, GLint first, GLsizei count, GLsizei primcount));
+gl_load_operation(void, glDrawElementsInstanced, (GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei instancecount));
 
 gl_load_operation(void, glBindImageTexture, (GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access, GLenum format));
 
@@ -72,7 +73,7 @@ gl_load_operation(void, glGenFramebuffers, (GLsizei n, GLuint *framebuffers));
 gl_load_operation(void, glBindFramebuffer, (GLenum target, GLuint framebuffer));
 gl_load_operation(void, glFramebufferTexture, (GLenum target, GLenum attachment, GLuint texture, GLint level));
 gl_load_operation(void, glFramebufferTexture2D, (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level));
-gl_load_operation(void, glFramebufferTexture3D, (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLint layer));
+gl_load_operation(void, glFramebufferTextureLayer, (GLenum target, GLenum attachment, GLuint texture, GLint level, GLint layer));
 gl_load_operation(void, glFramebufferRenderbuffer, (GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer));
 gl_load_operation(GLenum, glCheckFramebufferStatus, (GLenum target));
 gl_load_operation(void, glTexImage2DMultisample, (GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLboolean fixedsamplelocations));

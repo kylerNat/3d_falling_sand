@@ -1,7 +1,7 @@
 #ifndef GAME_COMMON
 #define GAME_COMMON
 
-#define N_SOLVER_ITERATIONS 40
+#define N_SOLVER_ITERATIONS 20
 
 struct rational
 {

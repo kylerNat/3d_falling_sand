@@ -42,6 +42,14 @@ vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 de
 
                 // ivec2 sample_coord = lightprobe_resolution*probe_coord+ivec2(lightprobe_resolution*clamp(0.5f*sample_oct+0.5f,0,1));
                 vec2 sample_coord = vec2(lightprobe_padded_resolution*probe_coord+1)+lightprobe_resolution*clamp(0.5f*sample_oct+0.5f,0,1);
+
+                sample_coord += 0.5;
+                vec2 t = trunc(sample_coord);
+                vec2 f = fract(sample_coord);
+                f = f*f*f*(f*(f*6.0-15.0)+10.0);
+                // f = f*f*(-2*f+3);
+                sample_coord = t+f-0.5;
+
                 sample_coord *= vec2(1.0f/lightprobe_resolution_x, 1.0f/lightprobe_resolution_y);
 
                 vec3 probe_x = texelFetch(lightprobe_x, probe_coord, 0).xyz;
