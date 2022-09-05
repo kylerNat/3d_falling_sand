@@ -9,8 +9,8 @@ layout(location = 0) in vec2 r;
 layout(location = 1) in vec2 X;
 
 layout(location = 0) uniform int layer;
-layout(location = 3) uniform usampler3D active_regions_in;
-layout(location = 5) uniform writeonly uimage3D occupied_regions_out;
+layout(location = 4) uniform usampler3D active_regions_in;
+layout(location = 6) uniform writeonly uimage3D occupied_regions_out;
 
 out vec3 p;
 
@@ -39,14 +39,18 @@ void main()
 #shader GL_FRAGMENT_SHADER
 #include "include/header.glsl"
 
-layout(location = 0) out ivec4 frag_color;
+layout(location = 0) out uvec4 out_voxel;
 
 layout(location = 0) uniform int layer;
 layout(location = 1) uniform int frame_number;
-layout(location = 2) uniform isampler3D materials;
-layout(location = 4) uniform writeonly uimage3D active_regions_out;
-layout(location = 5) uniform writeonly uimage3D occupied_regions_out;
-layout(location = 6) uniform int update_cells;
+layout(location = 2) uniform sampler2D material_physical_properties;
+layout(location = 3) uniform usampler3D materials;
+layout(location = 5) uniform writeonly uimage3D active_regions_out;
+layout(location = 6) uniform writeonly uimage3D occupied_regions_out;
+layout(location = 7) uniform int update_cells;
+
+#define MATERIAL_PHYSICAL_PROPERTIES
+#include "include/materials_physical.glsl"
 
 in vec3 p;
 
@@ -83,92 +87,97 @@ void main()
     int i = 0;
     ivec2 dir = ivec2(((rot&1)*(2-rot)), (1-(rot&1))*(1-rot));
 
-    ivec4 c  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z),0);
-    ivec4 u  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z+1),0);
-    ivec4 d  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z-1),0);
-    ivec4 r  = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z),0);
-    ivec4 l  = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z),0);
-    ivec4 dr = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z-1),0);
-    ivec4 ur = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z+1),0);
+    uvec4 c  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z),0);
+    uvec4 u  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z+1),0);
+    uvec4 d  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z-1),0);
+    uvec4 r  = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z),0);
+    uvec4 l  = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z),0);
+    uvec4 dr = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z-1),0);
+    uvec4 ur = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z+1),0);
 
-    ivec4 f  = texelFetch(materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z),0);
-    ivec4 b  = texelFetch(materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z),0);
+    uvec4 f  = texelFetch(materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z),0);
+    uvec4 b  = texelFetch(materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z),0);
 
-    ivec4 ul = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z+1),0);
-    ivec4 ll = texelFetch(materials, ivec3(pos.x-2*dir.x, pos.y-2*dir.y, pos.z),0);
-    ivec4 dl = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z-1),0);
+    uvec4 ul = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z+1),0);
+    uvec4 ll = texelFetch(materials, ivec3(pos.x-2*dir.x, pos.y-2*dir.y, pos.z),0);
+    uvec4 dl = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z-1),0);
 
-    frag_color = c;
+    out_voxel = c;
     if(update_cells == 1)
     {
-        if(c.r == 0)
-        {
-            if(u.r > 0 && u.r != 3) frag_color = u;
-            else if(l.r > 0 && ul.r > 0 && u.r != 3 && ul.r != 3) frag_color = ul;
-            else if(dl.r > 0 && d.r > 0 && l.r > 1 && ll.r > 0 && u.r != 3 && ul.r != 3 && l.r != 3) frag_color = l;
+        if(mat(c) == 0)
+        { //central cell is empty
 
-            // if(u.r == 0 && ul.r == 0 && dl.r > 0 && d.r > 0 && l.r > 0) frag_color = l;
-            // else if(u.r == 0 && l.r > 0) frag_color = ul;
-            // else if(u.r > 0) frag_color = u;
+            //check if upper cell fell           , liquids and sands
+            //then check if upper left cell fell , liquids and sands
+            //then check if left cell flowed     , liquids
+            if(mat(u) != 0 && phase(u) != phase_solid && transient(u)==0)
+                out_voxel = u;
+            else if(mat(l) != 0 && mat(ul) != 0 && phase(u) != phase_solid && phase(ul) != phase_solid && transient(ul)==0)
+                out_voxel = ul;
+            else if(mat(dl) != 0 && mat(d) != 0 && phase(l) == phase_liquid && mat(ll) != 0 && transient(l)==0)
+                out_voxel = l;
+            //might be better to multiply things by 0 instead of branching
         }
-        else if(c.r != 3)
-        {
-            bool fall_allowed = (pos.z > 0 && (d.r == 0 || (dr.r == 0 && r.r == 0)));
-            bool flow_allowed = (pos.z > 0 && r.r == 0 && ur.r == 0 && u.r == 0 && c.r > 1 && l.r > 0);
-            if(fall_allowed || flow_allowed) frag_color.r = 0;
+        else if(phase(c) != phase_solid && transient(c)==0)
+        { //if the cell is not empty and not solid check if it fell or flew
+            bool fall_allowed = (pos.z > 0 && (mat(d) == 0 || (mat(dr) == 0 && mat(r) == 0)));
+            bool flow_allowed = (pos.z > 0 && mat(r) == 0 && mat(ur) == 0 && mat(u) == 0 && mat(l) != 0 && phase(c) > phase_sand);
+            if(fall_allowed || flow_allowed) out_voxel = uvec4(0);
         }
     }
 
-    const int max_depth = 16;
-    if(c.r > 0)
+    int depth = SURF_DEPTH;
+    if(mat(c) != 0 && transient(c)==0)
     {
-        if(l.r == 0 ||
-           r.r == 0 ||
-           u.r == 0 ||
-           d.r == 0 ||
-           f.r == 0 ||
-           b.r == 0) frag_color.g = 0;
+        if(mat(l) == 0 || transient(l) != 0 ||
+           mat(r) == 0 || transient(r) != 0 ||
+           mat(u) == 0 || transient(u) != 0 ||
+           mat(d) == 0 || transient(d) != 0 ||
+           mat(f) == 0 || transient(f) != 0 ||
+           mat(b) == 0 || transient(b) != 0) depth = SURF_DEPTH;
         else
         {
-            frag_color.g = -max_depth;
-            frag_color.g = max(frag_color.g, l.g-1);
-            frag_color.g = max(frag_color.g, r.g-1);
-            frag_color.g = max(frag_color.g, u.g-1);
-            frag_color.g = max(frag_color.g, d.g-1);
-            frag_color.g = max(frag_color.g, f.g-1);
-            frag_color.g = max(frag_color.g, b.g-1);
+            depth = MAX_DEPTH-1;
+            depth = min(depth, depth(l)+1);
+            depth = min(depth, depth(r)+1);
+            depth = min(depth, depth(u)+1);
+            depth = min(depth, depth(d)+1);
+            depth = min(depth, depth(f)+1);
+            depth = min(depth, depth(b)+1);
         }
-
-        frag_color.b = c.b/2;
-        if(frag_color.r == 3) frag_color.b = 1000;
-        // if(frag_color.r == 1) frag_color.b = 100;
-        // frag_color.b = 0;
     }
     else
     {
-        frag_color.g = max_depth;
-        frag_color.g = min(frag_color.g, l.g+1);
-        frag_color.g = min(frag_color.g, r.g+1);
-        frag_color.g = min(frag_color.g, u.g+1);
-        frag_color.g = min(frag_color.g, d.g+1);
-        frag_color.g = min(frag_color.g, f.g+1);
-        frag_color.g = min(frag_color.g, b.g+1);
-
-        // // frag_color.b = 1+texelFetch(materials, ivec3(pos.x, pos.y, layer), 0).b;
-        // float brightness = 100.0;
-        // brightness += brightness_curve(l.b);
-        // brightness += brightness_curve(r.b);
-        // brightness += brightness_curve(u.b);
-        // brightness += brightness_curve(d.b);
-        // brightness += brightness_curve(f.b);
-        // brightness += brightness_curve(b.b);
-        // brightness *= 1.0/6.0;
-        // frag_color.b = int(inverse_brightness_curve(brightness));
+        depth = 0;
+        depth = max(depth, depth(l)-1);
+        depth = max(depth, depth(r)-1);
+        depth = max(depth, depth(u)-1);
+        depth = max(depth, depth(d)-1);
+        depth = max(depth, depth(f)-1);
+        depth = max(depth, depth(b)-1);
     }
-    frag_color.g = clamp(frag_color.g,-max_depth,max_depth);
 
-    // bool changed = c.r != frag_color.r || c.g != frag_color.g || c.b != frag_color.b;
-    bool changed = c.r != frag_color.r || c.g != frag_color.g;
+    uint phase = phase_solid;
+    if(hardness(mat(out_voxel)) == 0.0)                        phase = phase_sand;
+    if(float(temp(out_voxel)) > melting_point(mat(out_voxel))) phase = phase_liquid;
+    if(float(temp(out_voxel)) > boiling_point(mat(out_voxel))) phase = phase_gas;
+
+    uint transient = transient(out_voxel);
+    if(transient == 1)
+    {
+        out_voxel.r = 0;
+        transient = 0;
+    }
+
+    uint temp = 8;
+
+    out_voxel.g = uint(depth) | (phase << 6);
+
+    out_voxel.b = transient | (temp<<2);
+
+    // bool changed = c.r != out_voxel.r || c.g != out_voxel.g || c.b != out_voxel.b;
+    bool changed = c.r != out_voxel.r || c.g != out_voxel.g;
     if(changed)
     {
         imageStore(active_regions_out, ivec3(pos.x/16, pos.y/16, pos.z/16), uvec4(1,0,0,0));

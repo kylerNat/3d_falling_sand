@@ -1,3 +1,7 @@
+#ifndef BODY_DATA_BINDING
+#define BODY_DATA_BINDING 0
+#endif
+
 struct body
 {
     int materials_origin_x; int materials_origin_y; int materials_origin_z;
@@ -39,7 +43,7 @@ float body_m;
 mat3 body_I;
 mat3 body_invI;
 
-layout(std430, binding = 0) buffer body_data
+layout(std430, binding = BODY_DATA_BINDING) buffer body_data
 {
     body bodies[];
 };

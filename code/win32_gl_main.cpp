@@ -243,9 +243,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // //TODO: set correct context
             window_width = LOWORD(lParam);
             window_height = HIWORD(lParam);
-            glViewport(0, 0, window_width, window_height);
-            // glViewport(0.5*(window_width-window_height), 0, window_height, window_height);
-            // glViewport(0, 0.5*(window_height-window_width), window_width, window_width);
             break;
         }
         default:
@@ -567,7 +564,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     manager->current = manager->first;
 
     window_t wnd = create_window(manager, "3D Sand", "3dsand", 1280, 720, 10, 10, hinstance);
-    // fullscreen(wnd);
+    fullscreen(wnd);
     show_window(wnd);
 
     int next_id = 1;
@@ -580,10 +577,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, 1024*sizeof(cpu_body_data)),
         .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, 1024*sizeof(gpu_body_data)),
         .n_bodies = 0,
-        .joints = (joint*) permalloc_clear(manager, 1024*sizeof(joint)),
-        .n_joints = 0,
-        .components = (body_component*) permalloc_clear(manager, 1024*sizeof(body_component)),
-        .n_components = 0,
+        // .joints = (joint*) permalloc_clear(manager, 1024*sizeof(joint)),
+        // .n_joints = 0,
+        // .components = (body_component*) permalloc_clear(manager, 1024*sizeof(body_component)),
+        // .n_components = 0,
         .brains = (brain*) permalloc_clear(manager, 1024*sizeof(brain)),
         .n_brains = 0,
         .c = (chunk*) permalloc(manager, 8*sizeof(chunk)),
@@ -644,6 +641,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 }
 
                 if(abs(z-chunk_size/2) < 5 && abs(x-chunk_size/2)+abs(y-chunk_size/2) > 60) material = 3;
+                if(abs(z-chunk_size/2) < 5 && abs(x-chunk_size/2)+abs(y-chunk_size/2) > 60 && z < chunk_size/2) material = 5;
 
                 // if(y == chunk_size/2 && abs(x-chunk_size/2) <= 2*(i) && x%2 == 0) material = 3;
                 if(y == chunk_size*3/4 && x == chunk_size*3/4+20 && z < 50) material = 3;
@@ -1208,6 +1206,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     }
 
     bool do_draw_lightprobes = false;
+    bool show_fps = true;
+    real smoothed_frame_time = 1.0;
 
     real Deltat = 0;
     //TODO: make render loop evenly sample inputs when vsynced
@@ -1221,6 +1221,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // }
         // const int N_MAX_FRAMES = 2;
         // for(int i = 0; Deltat > 0 && i < N_MAX_FRAMES; Deltat -= dt, i++)
+
+        wnd.last_time = wnd.this_time;
+        QueryPerformanceCounter(&wnd.this_time);
         {
             while(Deltat > dt) Deltat -= dt;
             rd.n_sheets = 0;
@@ -1243,7 +1246,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
             update_and_render(manager, &w, &rd, &ui, &ad, wnd.input);
 
-            if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
+            // if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
+
+            simulate_particles();
+
             // simulate_chunk(w.c, 1);
             // for(int i = 0 ; i < 8; i++)
             //     simulate_chunk(w.c, 0);
@@ -1252,26 +1258,16 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             //
 
             if(is_pressed('P', wnd.input)) do_draw_lightprobes = !do_draw_lightprobes;
+            if(is_pressed(VK_OEM_3, wnd.input)) show_fps = !show_fps;
 
-            /*NOTE FOR NEXT TIME: try upscaling and blurring lightmap,
-              make chunk simulation use material table,
-              add particle simulation
+            /*NOTE FOR NEXT TIME:
+              render at lower resolution, use that for lighting/reflection info,
+              get voxel index of each pixel in low resolution prepass
+              check 4 surrounding voxels during high resolution render to figure out which one to render
             */
 
             memcpy(wnd.input.prev_buttons, wnd.input.buttons, sizeof(wnd.input.buttons));
         }
-
-        glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
-        // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_buffer);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_texture, 0);
-        glViewport(0, 0, resolution_x, resolution_y);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        //Render world
-
-        glEnable(GL_DEPTH_TEST);
-
-        // render_depth_prepass(materials_textures[current_materials_texture], rd.camera_axes, rd.camera_pos, {512,512,512},{0,0,0});
 
         if(!is_down('N', wnd.input))
         {
@@ -1279,9 +1275,33 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             update_lightprobes();
         }
 
+        //Render world
+        glEnable(GL_DEPTH_TEST);
+
+        // render_depth_prepass(materials_textures[current_materials_texture], rd.camera_axes, rd.camera_pos, {512,512,512},{0,0,0});
+
         if(!is_down('B', wnd.input))
         {
-            render_chunk(w.c, rd.camera_axes, rd.camera_pos, w.bodies_gpu, w.n_bodies);
+            render_prepass(rd.camera_axes, rd.camera_pos, (int_3){chunk_size, chunk_size, chunk_size}, (int_3){0,0,0}, w.bodies_gpu, w.n_bodies);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, normal_texture, 0);
+            // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_buffer);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_texture, 0);
+
+            GLenum buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+            glDrawBuffers(len(buffers), buffers);
+
+            glViewport(0, 0, resolution_x, resolution_y);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            render_world(rd.camera_axes, rd.camera_pos);
+
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
+            glDrawBuffers(1, buffers);
+
+            // render_chunk(w.c, rd.camera_axes, rd.camera_pos, w.bodies_gpu, w.n_bodies);
 
             // for(int b = 0; b < w.n_bodies; b++)
             // {
@@ -1293,7 +1313,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
         // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         // glDisable(GL_DEPTH_TEST);
-        // for(int i = 0; i < 3; i++)
+        // for(int i = 0; i < 1; i++)
         // {
         //     denoise(denoised_color_texture, color_texture);
         //     denoise(color_texture, denoised_color_texture);
@@ -1309,6 +1329,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             glClear(GL_DEPTH_BUFFER_BIT);
             draw_lightprobes(rd.camera);
         }
+
+        glClear(GL_DEPTH_BUFFER_BIT);
+        draw_particles(rd.camera);
 
         draw_circles(ui.circles, ui.n_circles, ui.camera);
 
@@ -1328,12 +1351,19 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         //     line_points_offset += ui.n_line_points[l];
         // }
 
+        char frame_time_text[1024];
+        real frame_time = ((real) (wnd.this_time.QuadPart - wnd.last_time.QuadPart))/(wnd.timer_frequency.QuadPart);
+        smoothed_frame_time = lerp(smoothed_frame_time, frame_time, 0.03);
+        sprintf(frame_time_text, "%2.1f ms\n%2.1f fps", smoothed_frame_time*1000.0f, 1.0f/smoothed_frame_time);
+
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, window_width, window_height);
         glDisable(GL_DEPTH_TEST);
         draw_to_screen(color_texture);
+
+        if(show_fps) draw_debug_text(frame_time_text, -1080/5+10, 720/5-10);
     }
     return 0;
 }

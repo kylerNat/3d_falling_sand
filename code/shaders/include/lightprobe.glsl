@@ -1,9 +1,5 @@
 #include "include/lightprobe_header.glsl"
 
-vec3 sign_not_zero(vec3 p) {
-    return 2*step(0, p)-1;
-}
-
 vec2 vec_to_oct(vec3 p)
 {
     vec3 sign_p = sign_not_zero(p);

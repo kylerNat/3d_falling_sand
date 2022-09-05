@@ -280,6 +280,17 @@ void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, i
     unreserve_block(manager);
 }
 
+void spawn_particles(real_3 x, real_3 x_dot)
+{
+    particle_data_list particles = {
+        .n_particles = 1,
+        .particles = {{.voxel_data = {2, (2<<6), (8<<2), 0}, .x = x, .x_dot = x_dot, .alive = true,}},
+    };
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particle_buffer);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(particles.n_particles)+sizeof(particle_data)*particles.n_particles, &particles);
+}
+
 void update_and_render(memory_manager* manager, world* w, render_data* rd, render_data* ui, audio_data* ad, user_input input)
 {
     entity* player = &w->player;
@@ -484,6 +495,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
             // w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
             // w->brains[0].target_accel.z += 0.03;
             w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
+            w->brains[0].target_accel.z -= 0.02+0.02*(w->bodies_gpu[13].x.z-(20+15));
         }
         if(is_down('T', input)
            || (player_in_head && is_down(M2, input)))
@@ -563,12 +575,21 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         // w->bodies_gpu[selected_body].omega *= 0.95;
     }
 
+    static int current_material = 1;
+    for(int i = 1; i <= 8; i++)
+    {
+        if(is_down('0'+i, input))
+        {
+            current_material = i;
+        }
+    }
+
     if(is_down(M1, input))
     {
         int brush_size = 50;
         real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
         pos = clamp_per_axis(pos, 0, chunk_size-brush_size-1);
-        set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, 1);
+        set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, current_material);
     }
 
     // if(is_down('T', input))
@@ -600,12 +621,12 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         set_chunk_region(manager, w, w->c, pos, {10,10,10}, 0);
     }
 
-    if(is_down(M3, input))
-    {
-        real_3 pos = player->x-placement_dist*camera_z;
-        pos = clamp_per_axis(pos, 0, chunk_size-1);
-        set_chunk_voxel(w, w->c, pos, 3);
-    }
+    // if(is_down(M3, input))
+    // {
+    //     real_3 pos = player->x-placement_dist*camera_z;
+    //     pos = clamp_per_axis(pos, 0, chunk_size-1);
+    //     spawn_particles(pos, -1*camera_z);
+    // }
 
     // for(int f = 0; f < AUDIO_BUFFER_MAX_LEN; f++)
     // {

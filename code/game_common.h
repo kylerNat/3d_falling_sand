@@ -9,11 +9,24 @@ struct rational
     int d;
 };
 
-struct particle
+#pragma pack(push, 1)
+struct particle_data
 {
+    uint8_4 voxel_data;
     real_3 x;
     real_3 x_dot;
+
+    bool32 alive;
 };
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct particle_data_list
+{
+    int n_particles;
+    particle_data particles[4096];
+};
+#pragma pack(pop)
 
 struct voxel_data
 {

@@ -27,16 +27,16 @@ layout(location = 2) out vec3 p3;
 layout(location = 3) out vec3 n1;
 layout(location = 4) out vec3 n2;
 layout(location = 5) out vec3 n3;
-layout(location = 6) out ivec3 contact_materials;
+layout(location = 6) out uvec3 contact_materials;
 
 layout(location = 0) uniform int frame_number;
-layout(location = 1) uniform isampler3D materials;
-layout(location = 2) uniform isampler3D body_materials;
+layout(location = 1) uniform usampler3D materials;
+layout(location = 2) uniform usampler3D body_materials;
 layout(location = 3) uniform sampler3D body_forces;
 layout(location = 4) uniform sampler3D body_shifts;
 
 #include "include/body_data.glsl"
-
+#include "include/materials_physical.glsl"
 #include "include/maths.glsl"
 
 smooth in vec2 uv;
@@ -57,16 +57,16 @@ void find_collision_points(out vec3 world_collision_points[N_MAX_COLLISION_POINT
                 ivec3 body_coord = ivec3(test_x, test_y, test_z);
                 vec3 world_coord = apply_rotation(body_orientation, vec3(body_coord)+0.5-body_x_cm)+body_x;
 
-                ivec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
+                uvec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
 
                 // if(body_voxel.g == 0 && body_voxel.r > 0)
-                if(body_voxel.g == 0)
+                if(depth(body_voxel) == SURF_DEPTH)
                 {
                     ivec3 wvc = ivec3(world_coord); //world_voxel_coord
-                    ivec4 world_voxel = texelFetch(materials, wvc, 0);
+                    uvec4 world_voxel = texelFetch(materials, wvc, 0);
                     vec3 rel_pos = vec3(wvc)+0.5-world_coord;
                     // if(world_voxel.r > 0 && dot(rel_pos, rel_pos) <= 1.0)
-                    if(world_voxel.g <= 1)
+                    if(depth(world_voxel) >= SURF_DEPTH-1)
                     {
                         world_collision_points[n_collision_points] = world_coord;
                         world_collision_coord[n_collision_points] = wvc;
@@ -92,7 +92,7 @@ void find_collision_points(out vec3 world_collision_points[N_MAX_COLLISION_POINT
                     //         }
                 }
 
-                test_x += int(max(abs(body_voxel.g)-1, 0));
+                test_x += int(max(abs(depth(body_voxel)-SURF_DEPTH)-1, 0));
             }
 }
 
@@ -110,10 +110,10 @@ void find_surface_points(out vec3 world_collision_points[N_MAX_COLLISION_POINTS]
                 ivec3 body_coord = ivec3(test_x, test_y, test_z);
                 vec3 world_coord = apply_rotation(body_orientation, vec3(body_coord)+0.5-body_x_cm)+body_x;
 
-                ivec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
+                uvec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
 
                 // if(body_voxel.g == 0 && body_voxel.r > 0)
-                if(body_voxel.g == 0)
+                if(depth(body_voxel) == SURF_DEPTH)
                 {
                     ivec3 wvc = ivec3(world_coord); //world_voxel_coord
 
@@ -123,7 +123,7 @@ void find_surface_points(out vec3 world_collision_points[N_MAX_COLLISION_POINTS]
                     if(n_collision_points >= N_MAX_COLLISION_POINTS) return;
                 }
 
-                test_x += int(max(abs(body_voxel.g)-1, 0));
+                test_x += int(max(abs(depth(body_voxel)-SURF_DEPTH)-1, 0));
             }
 }
 
@@ -140,7 +140,7 @@ void main()
     n1 = vec3(0,0,1);
     n2 = vec3(0,0,1);
     n3 = vec3(0,0,1);
-    contact_materials = ivec3(0);
+    contact_materials = uvec3(0);
 
     vec3 world_collision_points[N_MAX_COLLISION_POINTS];
     ivec3 world_collision_coord[N_MAX_COLLISION_POINTS];
@@ -157,21 +157,21 @@ void main()
     float d2 = 16;
     float d3 = 16;
 
-    int best_dist = 16;
+    uint best_depth = MAX_DEPTH;
     float best_rsq = 16;
     for(int cp = 0; cp < n_collision_points; cp++)
     {
         vec3 world_coord = world_collision_points[cp];
         ivec3 wvc = world_collision_coord[cp]; //world_voxel_coord
-        ivec4 world_voxel = texelFetch(materials, wvc, 0);
+        uvec4 world_voxel = texelFetch(materials, wvc, 0);
         vec3 r = world_coord-body_x;
         float rsq = dot(r, r);
-        if(world_voxel.g < best_dist || (world_voxel.g == best_dist && rsq < best_rsq))
+        if(depth(world_voxel) < best_depth || (depth(world_voxel) == best_depth && rsq < best_rsq))
         {
-            best_dist = world_voxel.g;
+            best_depth = depth(world_voxel);
             best_rsq = rsq;
             p1 = world_coord;
-            d1 = world_voxel.g;
+            d1 = depth(world_voxel);
             contact_materials.r = world_voxel.r;
         }
     }
@@ -181,13 +181,13 @@ void main()
     {
         vec3 world_coord = world_collision_points[cp];
         ivec3 wvc = world_collision_coord[cp]; //world_voxel_coord
-        ivec4 world_voxel = texelFetch(materials, wvc, 0);
+        uvec4 world_voxel = texelFetch(materials, wvc, 0);
         float asq = dot(world_coord-p1, world_coord-p1);
         if(asq > best_asq)
         {
             best_asq = asq;
             p2 = world_coord;
-            d2 = world_voxel.g;
+            d2 = depth(world_voxel);
             contact_materials.g = world_voxel.r;
         }
     }
@@ -197,7 +197,7 @@ void main()
     {
         vec3 world_coord = world_collision_points[cp];
         ivec3 wvc = world_collision_coord[cp]; //world_voxel_coord
-        ivec4 world_voxel = texelFetch(materials, wvc, 0);
+        uvec4 world_voxel = texelFetch(materials, wvc, 0);
         vec3 ab = normalize(p2-p1);
         vec3 ac = world_coord-p1;
         float bsq = dot(ac, ac) - sq(dot(ac, ab));
@@ -205,33 +205,33 @@ void main()
         {
             best_bsq = bsq;
             p3 = world_coord;
-            d3 = world_voxel.g;
+            d3 = depth(world_voxel);
             contact_materials.b = world_voxel.r;
         }
     }
 
-    d1 += 16;
-    d2 += 16;
-    d3 += 16;
+    d1 += 1;
+    d2 += 1;
+    d3 += 1;
 
     ivec3 ip1 = ivec3(p1);
     n1 = vec3(
-        texelFetch(materials, ip1+ivec3(1,0,0), 0).g-texelFetch(materials, ip1+ivec3(-1,0,0), 0).g,
-        texelFetch(materials, ip1+ivec3(0,1,0), 0).g-texelFetch(materials, ip1+ivec3(0,-1,0), 0).g,
-        texelFetch(materials, ip1+ivec3(0,0,1), 0).g-texelFetch(materials, ip1+ivec3(0,0,-1), 0).g+0.001);
+        float(depth(texelFetch(materials, ip1+ivec3(-1,0,0), 0)))-float(depth(texelFetch(materials, ip1+ivec3(+1,0,0), 0))),
+        float(depth(texelFetch(materials, ip1+ivec3(0,-1,0), 0)))-float(depth(texelFetch(materials, ip1+ivec3(0,+1,0), 0))),
+        float(depth(texelFetch(materials, ip1+ivec3(0,0,-1), 0)))-float(depth(texelFetch(materials, ip1+ivec3(0,0,+1), 0)))+0.001);
     n1 = d1*normalize(n1);
 
     ivec3 ip2 = ivec3(p2);
     n2 = vec3(
-        texelFetch(materials, ip2+ivec3(1,0,0), 0).g-texelFetch(materials, ip2+ivec3(-1,0,0), 0).g,
-        texelFetch(materials, ip2+ivec3(0,1,0), 0).g-texelFetch(materials, ip2+ivec3(0,-1,0), 0).g,
-        texelFetch(materials, ip2+ivec3(0,0,1), 0).g-texelFetch(materials, ip2+ivec3(0,0,-1), 0).g+0.001);
+        float(depth(texelFetch(materials, ip2+ivec3(-1,0,0), 0)))-float(depth(texelFetch(materials, ip2+ivec3(+1,0,0), 0))),
+        float(depth(texelFetch(materials, ip2+ivec3(0,-1,0), 0)))-float(depth(texelFetch(materials, ip2+ivec3(0,+1,0), 0))),
+        float(depth(texelFetch(materials, ip2+ivec3(0,0,-1), 0)))-float(depth(texelFetch(materials, ip2+ivec3(0,0,+1), 0)))+0.001);
     n2 = d2*normalize(n1);
 
     ivec3 ip3 = ivec3(p3);
     n3 = vec3(
-        texelFetch(materials, ip3+ivec3(1,0,0), 0).g-texelFetch(materials, ip3+ivec3(-1,0,0), 0).g,
-        texelFetch(materials, ip3+ivec3(0,1,0), 0).g-texelFetch(materials, ip3+ivec3(0,-1,0), 0).g,
-        texelFetch(materials, ip3+ivec3(0,0,1), 0).g-texelFetch(materials, ip3+ivec3(0,0,-1), 0).g+0.001);
+        float(depth(texelFetch(materials, ip3+ivec3(-1,0,0), 0)))-float(depth(texelFetch(materials, ip3+ivec3(+1,0,0), 0))),
+        float(depth(texelFetch(materials, ip3+ivec3(0,-1,0), 0)))-float(depth(texelFetch(materials, ip3+ivec3(0,+1,0), 0))),
+        float(depth(texelFetch(materials, ip3+ivec3(0,0,-1), 0)))-float(depth(texelFetch(materials, ip3+ivec3(0,0,+1), 0)))+0.001);
     n3 = d3*normalize(n1);
 }

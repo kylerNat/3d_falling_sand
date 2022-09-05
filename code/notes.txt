@@ -13,11 +13,28 @@ the brain figures out how to move the joint based in the joint type
 
 brain can magically apply forces to the aether, which allows air strafign and slow/fast falling, or flight for sufficiently small creatures
 
-format
-10 bits - material index
- 4 bits - distance field
- 2 bits - corner/edge/face/middle, or maybe sharpness?
+voxel format
+red channel
+8 bits - material index
+
+green channel
+5 bits - distance field
+2 bits - material phase
+
+blue channel
+2 bit  - temporary voxel, used to for particles temporarily inserted for interaction and rendering
+4 bits - temperature
+2 bit  - electrical energy
+
+alpha channel
+6 bits - color variant
+
+material properties:
+density
 
 
 joint - 2 voxels in 2 bodies
 brain - 1 voxel and a tree/graph of bodies
+
+genetics system:
+base pairs are made of elements, and determine your required "diet"

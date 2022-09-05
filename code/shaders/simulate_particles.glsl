@@ -2,33 +2,24 @@
 
 /////////////////////////////////////////////////////////////////
 
-#shader GL_VERTEX_SHADER
-#include "include/header.glsl"
-layout(location = 0) in vec3 x;
-
-smooth out vec2 uv;
-
-void main()
-{
-    gl_Position.xyz = x;
-    gl_Position.w = 1.0;
-    uv = 0.5*x.xy+0.5;
-}
-
-/////////////////////////////////////////////////////////////////
-
-#shader GL_FRAGMENT_SHADER
+#shader GL_COMPUTE_SHADER
 #include "include/header.glsl"
 
-layout(location = 0) out vec3 new_x;
-layout(location = 1) out vec3 new_x_dot;
+// #define N_MAX_PARTICLES 65536
+
+layout(local_size_x = 1024, local_size_y = 1, local_size_z = 1) in;
 
 layout(location = 0) uniform int frame_number;
-layout(location = 1) uniform isampler3D materials;
-layout(location = 2) uniform sampler2D old_x;
-layout(location = 3) uniform sampler2D old_x_dot;
+layout(location = 1) uniform sampler2D material_physical_properties;
+layout(location = 2) uniform usampler3D materials;
+layout(location = 3) uniform writeonly uimage3D materials_out;
+layout(location = 4) uniform writeonly uimage3D active_regions_out;
+layout(location = 5) uniform writeonly uimage3D occupied_regions_out;
 
-smooth in vec2 uv;
+#define MATERIAL_PHYSICAL_PROPERTIES
+#include "include/materials_physical.glsl"
+
+#include "include/particle_data.glsl"
 
 uint rand(uint seed)
 {
@@ -45,63 +36,56 @@ float float_noise(uint seed)
 
 const int chunk_size = 256;
 
-ivec4 voxelFetch(isampler3D tex, ivec3 coord)
-{
-    return texelFetch(materials, coord, 0);
-}
-
 void main()
 {
-    float scale = 1.0/chunk_size;
-    vec3 x = texture(old_x, vec2(0, 0)).rgb;
-    vec3 x_dot = texture(old_x_dot, vec2(0, 0)).rgb;
-    float epsilon = 0.001;
-    // float epsilon = 0.02;
+    uint p = gl_GlobalInvocationID.x;
+    if(!particles[p].alive) return;
+    vec3 x = vec3(particles[p].x, particles[p].y, particles[p].z);
+    vec3 x_dot = vec3(particles[p].x_dot, particles[p].y_dot, particles[p].z_dot);
 
-    vec3 x_ddot = vec3(0,0,-0.08);
-    x_dot += x_ddot;
-
-    float remaining_dist = length(x_dot);
-    if(remaining_dist > epsilon)
+    x += x_dot;
+    x_dot.z -= 0.1;
+    int i = 0;
+    uint transient = 1;
+    while(mat(texelFetch(materials, ivec3(x), 0)) != 0)
     {
-        x += x_dot;
-        if(x.z < epsilon && x_dot.z < 0)
-        {
-            x.z = epsilon;
-            x_dot.z = 0;
-            // x_dot *= 0.99;
-        }
-        int max_iterations = 50;
-        int i = 0;
-        // while(voxelFetch(materials, ivec3(x)).r == 1 || voxelFetch(materials, ivec3(x)).r == 3)
-        while(voxelFetch(materials, ivec3(x)).r != 0)
-        {
-            vec3 gradient = vec3(
-                voxelFetch(materials, ivec3(x+vec3(1,0,0))).g-voxelFetch(materials, ivec3(x+vec3(-1,0,0))).g,
-                voxelFetch(materials, ivec3(x+vec3(0,1,0))).g-voxelFetch(materials, ivec3(x+vec3(0,-1,0))).g,
-                voxelFetch(materials, ivec3(x+vec3(0,0,1))).g-voxelFetch(materials, ivec3(x+vec3(0,0,-1))).g+0.001f
-                );
-            gradient = normalize(gradient);
-            x += 0.05*gradient;
-            float rej = dot(x_dot, gradient);
-            x_dot -= gradient*rej;
-            // x_dot *= 0.99;
-            // x_dot += 1.0*gradient;
-            if(++i > max_iterations) break;
+        vec3 normal = normalize(unnormalized_gradient(materials, ivec3(x)));
+        // x += max(0.1f, float(SURF_DEPTH-depth(voxel)))*normal;
+        x += 0.05f*normal;
+        x_dot -= dot(x_dot, normal)*normal;
 
-            // x.z += 0.01;
-            // x.z = ceil(x.z);
-        }
-        if(voxelFetch(materials, ivec3(x)).r == 2)
+        transient = 0;
+        if(i++ > 50)
         {
-            x_dot *= 0.95;
+            break;
         }
-
-        // if(hit_dir == 0) x.x -= epsilon*sign.x;
-        // if(hit_dir == 1) x.y -= epsilon*sign.y;
-        // if(hit_dir == 2) x.z -= epsilon*sign.z;
     }
 
-    new_x = x;
-    new_x_dot = x_dot;
+    particles[p].x = x.x;
+    particles[p].y = x.y;
+    particles[p].z = x.z;
+
+    particles[p].x_dot = x_dot.x;
+    particles[p].y_dot = x_dot.y;
+    particles[p].z_dot = x_dot.z;
+
+    if(transient == 0 && mat(texelFetch(materials, ivec3(x), 0)) == 0)
+    {
+        uint v = particles[p].voxel_data;
+        uvec4 particle_voxel_data = uvec4((v&0xF), ((v>>8)&0xF), ((v>>16)&0xF)|transient, ((v>>24)&0xF));
+        imageStore(materials_out, ivec3(x), particle_voxel_data);
+        imageStore(active_regions_out, ivec3(x.x/16, x.y/16, x.z/16), uvec4(1,0,0,0));
+        ivec3 cell_x = ivec3(x)%16;
+        if(cell_x.x==15) imageStore(active_regions_out, ivec3(x.x/16+1, x.y/16, x.z/16), uvec4(1,0,0,0));
+        if(cell_x.x== 0) imageStore(active_regions_out, ivec3(x.x/16-1, x.y/16, x.z/16), uvec4(1,0,0,0));
+        if(cell_x.y==15) imageStore(active_regions_out, ivec3(x.x/16, x.y/16+1, x.z/16), uvec4(1,0,0,0));
+        if(cell_x.y== 0) imageStore(active_regions_out, ivec3(x.x/16, x.y/16-1, x.z/16), uvec4(1,0,0,0));
+        if(cell_x.z==15) imageStore(active_regions_out, ivec3(x.x/16, x.y/16, x.z/16+1), uvec4(1,0,0,0));
+        if(cell_x.z== 0) imageStore(active_regions_out, ivec3(x.x/16, x.y/16, x.z/16-1), uvec4(1,0,0,0));
+        imageStore(occupied_regions_out, ivec3(x.x/16, x.y/16, x.z/16), uvec4(1,0,0,0));
+
+        particles[p].alive = false;
+        int dead_index = atomicAdd(n_dead_particles, 1);
+        dead_particles[dead_index] = p;
+    }
 }

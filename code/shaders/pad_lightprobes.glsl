@@ -36,9 +36,9 @@ void main()
 {
     vec2 probe_pos = floor(gl_FragCoord.xy*(1.0f/lightprobe_padded_resolution));
     vec2 oct = (gl_FragCoord.xy-probe_pos*lightprobe_padded_resolution-1.0f)/lightprobe_resolution-0.5f;
-    if(abs(oct.x) > abs(oct.y))
+    if(abs(oct.x) > 0.5)
         oct.y = -oct.y;
-    else
+    if(abs(oct.y) > 0.5)
         oct.x = -oct.x;
     ivec2 sample_coord = ivec2(probe_pos*lightprobe_padded_resolution+1.0f
                                +clamp((oct+0.5f)*lightprobe_resolution, 0, lightprobe_resolution-1));

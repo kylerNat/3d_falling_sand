@@ -1,3 +1,7 @@
+vec3 sign_not_zero(vec3 p) {
+    return 2*step(0, p)-1;
+}
+
 vec4 conjugate(vec4 q)
 {
     return vec4(q.x, -q.y, -q.z, -q.w);

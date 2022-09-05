@@ -25,6 +25,7 @@ layout(location = 0) out vec4 frag_color;
 
 layout(location = 0) uniform sampler2D color;
 layout(location = 1) uniform sampler2D depth;
+layout(location = 2) uniform sampler2D normal;
 
 smooth in vec2 screen_pos;
 
@@ -43,13 +44,17 @@ void main()
     // frag_color.rgb = textureLod(color, p, clamp(4.0f-1000.0f*laplacian, 0, 8)).rgb;
 
     float center_depth = texelFetch(depth, ip, 0).r;
+    vec3 center_normal = texelFetch(normal, ip, 0).rgb;
     float weight = 0.0f;
     frag_color.rgb = vec3(0);
-    for(int dx = -1; dx <= 1; dx++)
-        for(int dy = -1; dy <= 1; dy++)
-            if(abs(1.0-texelFetch(depth, ip+ivec2(dx,dy), 0).r/center_depth) < 0.01)
+    int radius = 3;
+    for(int dx = -radius; dx <= radius; dx++)
+        for(int dy = -radius; dy <= radius; dy++)
+            // if(abs(1.0-texelFetch(depth, ip+ivec2(dx,dy), 0).r/center_depth) < 0.01)
+            if(length(texelFetch(normal, ip+ivec2(dx,dy), 0).rgb-center_normal) < 0.01)
             {
-                float w = exp(-0.5*(sq(dx)+sq(dy)));
+                // float w = exp(-0.5*(sq(dx)+sq(dy)));
+                float w = 1.0;
                 frag_color.rgb += w*texelFetch(color, ip+ivec2(dx,dy), 0).rgb;
                 weight += w;
             }

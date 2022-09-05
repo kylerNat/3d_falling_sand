@@ -25,6 +25,8 @@ layout(location = 0) out vec3 new_x;
 layout(location = 0) uniform isampler3D materials;
 layout(location = 1) uniform sampler2D old_x;
 
+#include "include/materials_physical.glsl"
+
 void main()
 {
     ivec2 probe_coord = ivec2(gl_FragCoord.xy);
@@ -39,17 +41,17 @@ void main()
                          (lightprobe_spacing/2)+lightprobe_spacing*(j/sq(lightprobes_per_axis)));
 
     ivec4 voxel = texelFetch(materials, ix, 0);
-    if(voxel.g < 4)
+    if(depth(voxel) > SURF_DEPTH-4)
     {
         vec3 gradient = vec3(
-            texelFetch(materials, ix+ivec3(1,0,0), 0).g-texelFetch(materials, ix+ivec3(-1,0,0), 0).g,
-            texelFetch(materials, ix+ivec3(0,1,0), 0).g-texelFetch(materials, ix+ivec3(0,-1,0), 0).g,
-            texelFetch(materials, ix+ivec3(0,0,1), 0).g-texelFetch(materials, ix+ivec3(0,0,-1), 0).g+0.001);
+            depth(texelFetch(materials, ix+ivec3(-1,0,0), 0))-depth(texelFetch(materials, ix+ivec3(+1,0,0), 0)),
+            depth(texelFetch(materials, ix+ivec3(0,-1,0), 0))-depth(texelFetch(materials, ix+ivec3(0,+1,0), 0)),
+            depth(texelFetch(materials, ix+ivec3(0,0,-1), 0))-depth(texelFetch(materials, ix+ivec3(0,0,+1), 0))+0.001);
         gradient = normalize(gradient);
 
-        x += 0.1*gradient*(1-voxel.g);
+        x += 0.1*gradient*(1+depth(voxel)-SURF_DEPTH);
     }
-    else if(voxel.g > 8)
+    else if(depth(voxel) < SURF_DEPTH-8)
     {
         x = mix(x, center_x, 0.1);
     }

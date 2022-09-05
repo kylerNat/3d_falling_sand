@@ -1,24 +1,24 @@
-vec3 get_base_color(int material_id)
+vec3 get_base_color(uint material_id)
 {
-    return texelFetch(material_properties, ivec2(0,material_id), 0).rgb;
+    return texelFetch(material_visual_properties, ivec2(0,material_id), 0).rgb;
 }
 
-vec3 get_emission(int material_id)
+vec3 get_emission(uint material_id)
 {
-    return texelFetch(material_properties, ivec2(1,material_id), 0).rgb;
+    return texelFetch(material_visual_properties, ivec2(1,material_id), 0).rgb;
 }
 
-float get_roughness(int material_id)
+float get_roughness(uint material_id)
 {
-    return texelFetch(material_properties, ivec2(2,material_id), 0).r;
+    return texelFetch(material_visual_properties, ivec2(2,material_id), 0).r;
 }
 
-float get_metalicity(int material_id)
+float get_metalicity(uint material_id)
 {
-    return texelFetch(material_properties, ivec2(2,material_id), 0).g;
+    return texelFetch(material_visual_properties, ivec2(2,material_id), 0).g;
 }
 
-float D(int material_id, float nh)
+float D(uint material_id, float nh)
 {
     //Trowbridge-Reitz
     float roughness = get_roughness(material_id);
@@ -26,7 +26,7 @@ float D(int material_id, float nh)
     return alphasq/(pi*sq(sq(nh)*(alphasq-1)+1));
 }
 
-vec3 F(int material_id, float lh)
+vec3 F(uint material_id, float lh)
 {
     //Schlick approximation
     vec3 F0 = mix(vec3(1), get_base_color(material_id), get_metalicity(material_id));
@@ -34,15 +34,16 @@ vec3 F(int material_id, float lh)
 }
 
 //view factor, specular G/(4*dot(n, l)*dot(n,v))
-float V(int material_id, float nh, float nl, float nv)
+float V(uint material_id, float nh, float nl, float nv)
 {
     float roughness = get_roughness(material_id);
     float k = sq(roughness+1)/8;
-    return 1.0f/(4*(nv*(1-k)+k)*(nl*(1-k)+k));
+    // return 1.0f/(4*(nv*(1-k)+k)*(nl*(1-k)+k));
+    return 1.0f/4.0f;
 }
 
 //TODO: should also have transmittance
-vec3 fr(int material_id, vec3 l, vec3 v, vec3 n)
+vec3 fr(uint material_id, vec3 l, vec3 v, vec3 n)
 {
     vec3 h = normalize(l+v);
     float lh = dot(l,h);
@@ -50,5 +51,8 @@ vec3 fr(int material_id, vec3 l, vec3 v, vec3 n)
     float nl = dot(n,l);
     float nv = dot(n,v);
     // return (D(material_id, nh)*V(material_id, lh, nl, nv))*F(material_id, lh);
-    return mix(nl*get_base_color(material_id), (D(material_id, nh)*V(material_id, lh, nl, nv))*F(material_id, lh), get_metalicity(material_id));
+    vec3 diffuse = ((1.0f/pi)*nl)*get_base_color(material_id);
+    vec3 specular = (nl*D(material_id, nh)*V(material_id, lh, nl, nv))*F(material_id, lh);
+    float metalicity = get_metalicity(material_id);
+    return diffuse*(1-metalicity) + specular*mix(0.02, 1.0, metalicity);
 }

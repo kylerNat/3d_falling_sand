@@ -8,9 +8,11 @@
 layout(location = 0) in vec3 x;
 
 layout(location = 0) uniform int layer;
-layout(location = 4) uniform int n_bodies;
+layout(location = 5) uniform int n_bodies;
 
 #include "include/body_data.glsl"
+#define PARTICLE_DATA_BINDING 1
+#include "include/particle_data.glsl"
 
 flat out int b;
 
@@ -26,7 +28,7 @@ void main()
                       bodies[b].size_y,
                       bodies[b].size_z);
 
-    float scale = 2.0/128.0;
+    float scale = 2.0/256.0;
 
     gl_Position = vec4(0.0/0.0, 0.0/0.0, 0, 1);
 
@@ -36,6 +38,21 @@ void main()
     {
         gl_Position.xy = scale*(body_materials_origin.xy-padding+(body_size.xy+2*padding)*x.xy)-1.0;
     }
+
+    if(b == 0 && layer == 0 && gl_VertexID == 0)
+    {
+        int dead_index = atomicAdd(n_dead_particles, -1)-1;
+        //this assumes particle creation and destruction never happen simutaneously
+        uint p = dead_particles[dead_index];
+        particles[p].voxel_data = 2|(2<<(6+8))|(8<<(2+16));
+        particles[p].x = bodies[b].x_x;
+        particles[p].y = bodies[b].x_y;
+        particles[p].z = bodies[b].x_z;
+        particles[p].x_dot = bodies[b].x_dot_x;
+        particles[p].y_dot = bodies[b].x_dot_y;
+        particles[p].z_dot = bodies[b].x_dot_z+5;
+        particles[p].alive = true;
+    }
 }
 
 /////////////////////////////////////////////////////////////////
@@ -43,12 +60,17 @@ void main()
 #shader GL_FRAGMENT_SHADER
 #include "include/header.glsl"
 
-layout(location = 0) out ivec4 frag_color;
+layout(location = 0) out uvec4 frag_color;
 
 layout(location = 0) uniform int layer;
 layout(location = 1) uniform int frame_number;
-layout(location = 2) uniform isampler3D materials;
-layout(location = 3) uniform isampler3D body_materials;
+layout(location = 2) uniform sampler2D material_physical_properties;
+layout(location = 3) uniform usampler3D materials;
+layout(location = 4) uniform usampler3D body_materials;
+
+#include "include/materials_physical.glsl"
+
+#include "include/body_data.glsl"
 
 flat in int b;
 
@@ -93,18 +115,18 @@ void main()
     int i = 0;
     ivec2 dir = ivec2(((rot&1)*(2-rot)), (1-(rot&1))*(1-rot));
 
-    ivec4 c  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z), 0);
-    ivec4 u  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z+1), 0);
-    ivec4 d  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z-1), 0);
-    ivec4 r  = texelFetch(body_materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z), 0);
-    ivec4 l  = texelFetch(body_materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z), 0);
-    ivec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
-    ivec4 ba  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
+    uvec4 c  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z), 0);
+    uvec4 u  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z+1), 0);
+    uvec4 d  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z-1), 0);
+    uvec4 r  = texelFetch(body_materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z), 0);
+    uvec4 l  = texelFetch(body_materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z), 0);
+    uvec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
+    uvec4 ba  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
 
     // c.r = 1;
     frag_color = c;
 
-    const int max_depth = 16;
+    int depth = SURF_DEPTH;
     if(c.r > 0)
     {
         if(l.r == 0 ||
@@ -112,16 +134,16 @@ void main()
            u.r == 0 ||
            d.r == 0 ||
            f.r == 0 ||
-           ba.r == 0) frag_color.g = 0;
+           ba.r == 0) depth = SURF_DEPTH;
         else
         {
-            frag_color.g = -max_depth;
-            frag_color.g = max(frag_color.g, l.g-1);
-            frag_color.g = max(frag_color.g, r.g-1);
-            frag_color.g = max(frag_color.g, u.g-1);
-            frag_color.g = max(frag_color.g, d.g-1);
-            frag_color.g = max(frag_color.g, f.g-1);
-            frag_color.g = max(frag_color.g, ba.g-1);
+            depth = MAX_DEPTH-1;
+            depth = min(depth, depth(l)+1);
+            depth = min(depth, depth(r)+1);
+            depth = min(depth, depth(u)+1);
+            depth = min(depth, depth(d)+1);
+            depth = min(depth, depth(f)+1);
+            depth = min(depth, depth(ba)+1);
         }
 
         frag_color.b = c.b/2;
@@ -130,15 +152,16 @@ void main()
     }
     else
     {
-        frag_color.g = max_depth;
-        frag_color.g = min(frag_color.g, l.g+1);
-        frag_color.g = min(frag_color.g, r.g+1);
-        frag_color.g = min(frag_color.g, u.g+1);
-        frag_color.g = min(frag_color.g, d.g+1);
-        frag_color.g = min(frag_color.g, f.g+1);
-        frag_color.g = min(frag_color.g, ba.g+1);
+        depth = 0;
+        depth = max(depth, depth(l)-1);
+        depth = max(depth, depth(r)-1);
+        depth = max(depth, depth(u)-1);
+        depth = max(depth, depth(d)-1);
+        depth = max(depth, depth(f)-1);
+        depth = max(depth, depth(ba)-1);
     }
-    frag_color.g = clamp(frag_color.g,-max_depth,max_depth);
+
+    frag_color.g = uint(depth);
 
     frag_color.b = 1000;
 }
