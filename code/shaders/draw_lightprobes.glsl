@@ -7,7 +7,7 @@
 layout(location = 0) in vec3 x;
 
 layout(location = 0) uniform mat4 t;
-layout(location = 2) uniform sampler2D lightprobe_x;
+layout(location = 3) uniform sampler2D lightprobe_x;
 
 #include "include/lightprobe_header.glsl"
 
@@ -31,7 +31,8 @@ void main()
 layout(location = 0) out vec4 frag_color;
 
 layout(location = 1) uniform sampler2D lightprobe_color;
-layout(location = 2) uniform sampler2D lightprobe_x;
+layout(location = 2) uniform sampler2D lightprobe_depth;
+layout(location = 3) uniform sampler2D lightprobe_x;
 
 #include "include/lightprobe_header.glsl"
 
@@ -69,5 +70,7 @@ void main()
     float l = 1-sq(f.x-0.5)*sq(f.y-0.5);
     sample_coord = t+f-0.5;
     sample_coord *= vec2(1.0f/lightprobe_resolution_x, 1.0f/lightprobe_resolution_y);
-    frag_color = textureLod(lightprobe_color, sample_coord, l);
+    // frag_color = textureLod(lightprobe_color, sample_coord, l);
+    frag_color.rgb = vec3(textureLod(lightprobe_depth, sample_coord, l).r/16.0);
+    frag_color.a = 1.0;
 }

@@ -132,6 +132,7 @@ GLuint lightprobe_depth_textures[2];
 #include "shaders/include/lightprobe_header.glsl" //lightprobe constants
 
 int current_lightprobe_texture = 0;
+int current_lightprobe_x_texture = 0;
 
 GLuint lightprobe_x_textures[2];
 
@@ -162,10 +163,10 @@ void gl_init_general_buffers(memory_manager* manager)
     {
         glBindTexture(GL_TEXTURE_2D, lightprobe_color_textures[i]);
         // glTexStorage2D(GL_TEXTURE_2D, 1, GL_R11F_G11F_B10F, lightprobe_resolution_x, lightprobe_resolution_y);
-        glTexStorage2D(GL_TEXTURE_2D, 2, GL_RGB16F, lightprobe_resolution_x, lightprobe_resolution_y);
+        glTexStorage2D(GL_TEXTURE_2D, 2, GL_RGBA16F, lightprobe_resolution_x, lightprobe_resolution_y);
         //TODO: can add mip maps to allow for rougher surfaces
 
-        real_3 clear = {0.1,0.1,0.1};
+        real_3 clear = {0.0,0.0,0.0};
         glClearTexImage(lightprobe_color_textures[i], 0, GL_RGB, GL_FLOAT, &clear);
     }
 
@@ -849,7 +850,7 @@ void pad_lightprobes()
 
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_2D, lightprobe_color_textures[current_lightprobe_texture]);
+    glBindTexture(GL_TEXTURE_2D, lightprobe_color_textures[1-current_lightprobe_texture]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
@@ -857,7 +858,7 @@ void pad_lightprobes()
 
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_2D, lightprobe_depth_textures[current_lightprobe_texture]);
+    glBindTexture(GL_TEXTURE_2D, lightprobe_depth_textures[1-current_lightprobe_texture]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
@@ -877,21 +878,21 @@ void pad_lightprobes()
     glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
     add_contiguous_attribute(2, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
 
-    // glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
-    // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lightprobe_color_textures[current_lightprobe_texture], 0);
-    // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, lightprobe_depth_textures[current_lightprobe_texture], 0);
-    // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lightprobe_color_textures[current_lightprobe_texture], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, lightprobe_depth_textures[current_lightprobe_texture], 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
     // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, stencil_buffer);
 
-    // GLenum buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-    // glDrawBuffers(len(buffers), buffers);
+    GLenum buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(len(buffers), buffers);
 
-    // glViewport(0, 0, lightprobe_resolution_x, lightprobe_resolution_y);
+    glViewport(0, 0, lightprobe_resolution_x, lightprobe_resolution_y);
 
     glDisable(GL_BLEND);
-    glEnable(GL_STENCIL_TEST);
-    glStencilMask(0x00);
-    glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+    // glEnable(GL_STENCIL_TEST);
+    // glStencilMask(0x00);
+    // glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
     // glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
 
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
@@ -899,35 +900,39 @@ void pad_lightprobes()
     glEnable(GL_BLEND);
     // glDisable(GL_STENCIL_TEST);
 
-    // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
-    // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
-    // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
 
-    // glDrawBuffers(1, buffers);
+    glDrawBuffers(1, buffers);
+
+    glEnable(GL_DEPTH_TEST);
+    // glDisable(GL_STENCIL_TEST);
 }
 
 void update_lightprobes()
 {
     glUseProgram(update_lightmap_program);
 
-    glCopyImageSubData(lightprobe_color_textures[current_lightprobe_texture], GL_TEXTURE_2D,
-                       0,
-                       0, 0, 0,
-                       lightprobe_color_textures[1-current_lightprobe_texture], GL_TEXTURE_2D,
-                       0,
-                       0, 0, 0,
-                       lightprobe_resolution_x, lightprobe_resolution_y, 1);
+    // glCopyImageSubData(lightprobe_color_textures[current_lightprobe_texture], GL_TEXTURE_2D,
+    //                    0,
+    //                    0, 0, 0,
+    //                    lightprobe_color_textures[1-current_lightprobe_texture], GL_TEXTURE_2D,
+    //                    0,
+    //                    0, 0, 0,
+    //                    lightprobe_resolution_x, lightprobe_resolution_y, 1);
 
-    glCopyImageSubData(lightprobe_depth_textures[current_lightprobe_texture], GL_TEXTURE_2D,
-                       0,
-                       0, 0, 0,
-                       lightprobe_depth_textures[1-current_lightprobe_texture], GL_TEXTURE_2D,
-                       0,
-                       0, 0, 0,
-                       lightprobe_resolution_x, lightprobe_resolution_y, 1);
+    // glCopyImageSubData(lightprobe_depth_textures[current_lightprobe_texture], GL_TEXTURE_2D,
+    //                    0,
+    //                    0, 0, 0,
+    //                    lightprobe_depth_textures[1-current_lightprobe_texture], GL_TEXTURE_2D,
+    //                    0,
+    //                    0, 0, 0,
+    //                    lightprobe_resolution_x, lightprobe_resolution_y, 1);
 
     int texture_i = 0;
     int uniform_i = 0;
+    int image_i = 0;
 
     static int frame_number = 0;
     glUniform1i(uniform_i++, frame_number++);
@@ -960,6 +965,15 @@ void update_lightprobes()
 
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_3D, active_regions_textures[current_active_regions_texture]);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
     glBindTexture(GL_TEXTURE_2D, lightprobe_color_textures[current_lightprobe_texture]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -982,7 +996,6 @@ void update_lightprobes()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
-
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
     glBindTexture(GL_TEXTURE_2D, blue_noise_texture);
@@ -991,72 +1004,17 @@ void update_lightprobes()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
-    size_t offset = 0;
-    int layout_location = 0;
+    glUniform1i(uniform_i++, image_i);
+    glBindImageTexture(image_i++, lightprobe_color_textures[1-current_lightprobe_texture], 0, true, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
-    GLuint vertex_buffer = gl_general_buffers[0];
-    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
-    // real vb[] = {0,0,0};
-    real vb[] = {
-        -1,-1,
-        -1,+1,
-        +1,+1,
-        +1,-1};
-    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
-    add_contiguous_attribute(2, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+    glUniform1i(uniform_i++, image_i);
+    glBindImageTexture(image_i++, lightprobe_depth_textures[1-current_lightprobe_texture], 0, true, 0, GL_WRITE_ONLY, GL_RG16F);
 
+    glDispatchCompute(lightprobes_w/4,lightprobes_h/4,1);
 
-    real probe_pos[2*lightprobes_w*lightprobes_h] = {};
-    for(int i = 0; i < lightprobes_w*lightprobes_h; i++)
-    {
-        probe_pos[2*i+0] = i%lightprobes_w;
-        probe_pos[2*i+1] = i/lightprobes_w;
-    }
-    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(probe_pos), (void*) probe_pos);
-    add_interleaved_attribute(2, GL_FLOAT, false, 2*sizeof(probe_pos[0]), 1);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lightprobe_color_textures[1-current_lightprobe_texture], 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, lightprobe_depth_textures[1-current_lightprobe_texture], 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, stencil_buffer);
-
-    GLenum buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-    glDrawBuffers(len(buffers), buffers);
-
-    glViewport(0, 0, lightprobe_resolution_x, lightprobe_resolution_y);
-
-    glDisable(GL_DEPTH_TEST);
-    glEnable(GL_STENCIL_TEST);
-    glStencilMask(0xFF);
-    glStencilFunc(GL_ALWAYS, 1, 0xFF);
-    // glStencilOp(GL_REPLACE, GL_REPLACE, GL_REPLACE);
-    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-    glClear(GL_STENCIL_BUFFER_BIT);
-
-    glEnable(GL_BLEND);
-
-    glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, lightprobes_w*lightprobes_h);
-
-    current_lightprobe_texture = 1-current_lightprobe_texture;
+    // current_lightprobe_texture = 1-current_lightprobe_texture;
 
     pad_lightprobes();
-
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
-
-    glDrawBuffers(1, buffers);
-
-    glEnable(GL_DEPTH_TEST);
-    glDisable(GL_STENCIL_TEST);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
-    // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_buffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_texture, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
-    glViewport(0, 0, resolution_x, resolution_y);
 }
 
 void draw_lightprobes(real_4x4 camera)
@@ -1071,6 +1029,15 @@ void draw_lightprobes(real_4x4 camera)
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
     glBindTexture(GL_TEXTURE_2D, lightprobe_color_textures[current_lightprobe_texture]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_2D, lightprobe_depth_textures[current_lightprobe_texture]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
@@ -1247,7 +1214,7 @@ void move_lightprobes()
 
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_2D, lightprobe_x_textures[1-current_lightprobe_texture]);
+    glBindTexture(GL_TEXTURE_2D, lightprobe_x_textures[current_lightprobe_x_texture]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1268,7 +1235,7 @@ void move_lightprobes()
     glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
     glViewport(0, 0, lightprobes_w, lightprobes_h);
 
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lightprobe_x_textures[current_lightprobe_texture], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lightprobe_x_textures[1-current_lightprobe_x_texture], 0);
 
     GLenum buffers[] = {GL_COLOR_ATTACHMENT0};
     glDrawBuffers(len(buffers), buffers);
@@ -1278,6 +1245,7 @@ void move_lightprobes()
     glEnable(GL_BLEND);
 
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    current_lightprobe_x_texture = 1-current_lightprobe_x_texture;
 }
 
 

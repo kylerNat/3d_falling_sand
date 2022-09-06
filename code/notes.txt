@@ -38,3 +38,5 @@ brain - 1 voxel and a tree/graph of bodies
 
 genetics system:
 base pairs are made of elements, and determine your required "diet"
+
+blunt force damage based on mass, so you can safely use weapons lighter than you

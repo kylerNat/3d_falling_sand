@@ -38,10 +38,10 @@ struct material_physical_info
 material_visual_info material_visuals[N_MAX_MATERIALS] = {
     {}, //air
     {.base_color = {0.96, 0.84, 0.69}, .roughness = 1.0f, .metalicity = 0.0f}, //sand
-    {.base_color = {0.2, 0.2, 0.8}, .emission = {10, 10, 10}, .roughness = 1.0f, .metalicity = 0.0f}, //water
+    {.base_color = {0.2, 0.2, 0.8}, .emission = {0.5, 0.5, 1.0}, .roughness = 1.0f, .metalicity = 0.0f}, //water
     {.base_color = {1.0, 0.5, 0.5}, .roughness = 0.8f, .metalicity = 1.0f}, //coperish
     {.base_color = {0.8, 0.2, 0.8}, .roughness = 0.3f, .metalicity = 0.0f}, //purply
-    {.base_color = {0.0, 0.0, 0.0}, .emission = {20,20,10}, .roughness = 1.0f, .metalicity = 0.0f}, //light
+    {.base_color = {0.0, 0.0, 0.0}, .emission = {1,1,1}, .roughness = 1.0f, .metalicity = 0.0f}, //light
 };
 
 material_physical_info material_physicals[N_MAX_MATERIALS] = {

@@ -49,9 +49,9 @@ void main()
             depth(texelFetch(materials, ix+ivec3(0,0,-1), 0))-depth(texelFetch(materials, ix+ivec3(0,0,+1), 0))+0.001);
         gradient = normalize(gradient);
 
-        x += 0.1*gradient*(1+depth(voxel)-SURF_DEPTH);
+        x += 0.1*gradient*(5+depth(voxel)-SURF_DEPTH);
     }
-    else if(depth(voxel) < SURF_DEPTH-8)
+    else if(depth(voxel) < SURF_DEPTH-5)
     {
         x = mix(x, center_x, 0.1);
     }

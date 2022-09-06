@@ -64,16 +64,17 @@ vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 de
                 if(dot(dir, normal) > 0.999) return vec3(1,0,0);
                 #endif
 
-                // float weight = sq((dot(normal, dir)+1.0f)*0.5f)+0.2f;
-                float weight = 1.0;
+                float weight = sq((dot(normal, dir)+1)*0.5)+0.2;
+                // float weight = 1.0;
 
-                vec3 trilinear_weights = 1.0f+(1-2*p)*(1.0f/lightprobe_spacing)*dist;
-                weight *= trilinear_weights.x*trilinear_weights.y*trilinear_weights.z+0.001;
+                vec3 base_dist = lightprobe_spacing*(vec3(probe_pos)+0.5)-pos; //distance from base probe position
+                vec3 trilinear_weights = clamp(1.0f+(1-2*p)*(1.0f/lightprobe_spacing)*base_dist, 0, 1);
+                weight *= trilinear_weights.x*trilinear_weights.y*trilinear_weights.z;
 
                 // if(r > probe_depth.r)
                 // {
                 //     float variance = abs(probe_depth.g-(probe_depth.r*probe_depth.r));
-                //     weight *= variance/(variance+(r-probe_depth.r)*(r-probe_depth.r));
+                //     weight *= variance/(variance+sq(r-probe_depth.r));
                 // }
 
                 // I think this makes more sense
@@ -83,10 +84,10 @@ vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 de
 
                 weight = clamp(weight, 0, 1);
 
-                //this smoothly kills low values
-                const float threshold = 0.05f;
-                if(weight < threshold)
-                    weight *= sq(weight)/sq(threshold);
+                // //this smoothly kills low values
+                // const float threshold = 0.02;
+                // if(weight < threshold)
+                //     weight *= sq(weight)/sq(threshold);
 
                 total_color += weight*sqrt(probe_color);
                 depth += weight*(probe_depth);
