@@ -22,13 +22,7 @@ struct body
     float invI_xy; float invI_yy; float invI_zy;
     float invI_xz; float invI_yz; float invI_zz;
 
-    // ivec3 materials_origin;
-    // ivec3 size;
-    // vec3 x_cm;
-    // vec3 x;
-    // vec3 x_dot;
-    // vec4 orientation;
-    // vec3 omega;
+    int cell_material_id;
 };
 
 ivec3 body_materials_origin;
@@ -42,6 +36,8 @@ vec3  body_omega;
 float body_m;
 mat3 body_I;
 mat3 body_invI;
+
+int body_cell_material_id;
 
 layout(std430, binding = BODY_DATA_BINDING) buffer body_data
 {
@@ -70,4 +66,6 @@ void get_body_data(int b)
     body_invI = mat3(bodies[b].invI_xx, bodies[b].invI_yx, bodies[b].invI_zx,
                      bodies[b].invI_xy, bodies[b].invI_yy, bodies[b].invI_zy,
                      bodies[b].invI_xz, bodies[b].invI_yz, bodies[b].invI_zz);
+
+    body_cell_material_id = bodies[b].cell_material_id;
 }

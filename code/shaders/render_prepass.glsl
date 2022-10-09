@@ -120,6 +120,7 @@ void main()
 
     if(hit)
     {
+        normal = normalize(unnormalized_gradient(materials, hit_cell));
         voxel_x = vec3(hit_cell)+0.5;
     }
 
@@ -166,6 +167,7 @@ void main()
             hit_dir = body_hit_dir;
             normal = apply_rotation(body_orientation, body_normal);
             voxel = body_voxel;
+            if(voxel.r >= BASE_CELL_MAT) voxel.r += bodies[b].cell_material_id;
             voxel_orientation = body_orientation;
             voxel_x = apply_rotation(body_orientation, vec3(body_hit_cell)-body_x_cm+0.5)+body_x;
         }
@@ -174,7 +176,6 @@ void main()
     total_dist += hit_dist;
     if(hit)
     {
-        normal = normalize(unnormalized_gradient(materials, hit_cell));
         voxel_data = voxel;
         gl_FragDepth = 1.0f/total_dist;
 

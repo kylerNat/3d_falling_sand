@@ -70,7 +70,7 @@ void main()
     float l = 1-sq(f.x-0.5)*sq(f.y-0.5);
     sample_coord = t+f-0.5;
     sample_coord *= vec2(1.0f/lightprobe_resolution_x, 1.0f/lightprobe_resolution_y);
-    // frag_color = textureLod(lightprobe_color, sample_coord, l);
-    frag_color.rgb = vec3(textureLod(lightprobe_depth, sample_coord, l).r/16.0);
+    frag_color = textureLod(lightprobe_color, sample_coord, l);
+    // frag_color.rgb = vec3(textureLod(lightprobe_depth, sample_coord, l).r/16.0);
     frag_color.a = 1.0;
 }

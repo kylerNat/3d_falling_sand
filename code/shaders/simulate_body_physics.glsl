@@ -32,8 +32,6 @@ layout(location = 6) out uvec3 contact_materials;
 layout(location = 0) uniform int frame_number;
 layout(location = 1) uniform usampler3D materials;
 layout(location = 2) uniform usampler3D body_materials;
-layout(location = 3) uniform sampler3D body_forces;
-layout(location = 4) uniform sampler3D body_shifts;
 
 #include "include/body_data.glsl"
 #include "include/materials_physical.glsl"
@@ -43,15 +41,17 @@ smooth in vec2 uv;
 
 const int chunk_size = 256;
 
+const int padding = 0;
+
 #define N_MAX_COLLISION_POINTS 256
 void find_collision_points(out vec3 world_collision_points[N_MAX_COLLISION_POINTS], out ivec3 world_collision_coord[N_MAX_COLLISION_POINTS], out int n_collision_points)
 {
     n_collision_points = 0;
 
     //TODO: maybe use space filling curves
-    for(int test_z = 0; test_z < body_size.z; test_z+=1)
-        for(int test_y = 0; test_y < body_size.y; test_y+=1)
-            for(int test_x = 0; test_x < body_size.x; test_x+=1)
+    for(int test_z = -padding; test_z < body_size.z+padding; test_z+=1)
+        for(int test_y = -padding; test_y < body_size.y+padding; test_y+=1)
+            for(int test_x = -padding; test_x < body_size.x+padding; test_x+=1)
             {
 
                 ivec3 body_coord = ivec3(test_x, test_y, test_z);
@@ -102,9 +102,9 @@ void find_surface_points(out vec3 world_collision_points[N_MAX_COLLISION_POINTS]
     n_collision_points = 0;
 
     //TODO: maybe use space filling curves
-    for(int test_z = 0; test_z < body_size.z; test_z+=1)
-        for(int test_y = 0; test_y < body_size.y; test_y+=1)
-            for(int test_x = 0; test_x < body_size.x; test_x+=1)
+    for(int test_z = -padding; test_z < body_size.z+padding; test_z+=1)
+        for(int test_y = -padding; test_y < body_size.y+padding; test_y+=1)
+            for(int test_x = -padding; test_x < body_size.x+padding; test_x+=1)
             {
 
                 ivec3 body_coord = ivec3(test_x, test_y, test_z);

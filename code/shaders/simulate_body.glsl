@@ -15,6 +15,7 @@ layout(location = 5) uniform int n_bodies;
 #include "include/particle_data.glsl"
 
 flat out int b;
+flat out ivec3 origin;
 
 void main()
 {
@@ -32,7 +33,9 @@ void main()
 
     gl_Position = vec4(0.0/0.0, 0.0/0.0, 0, 1);
 
-    const int padding = 2;
+    const int padding = 1;
+
+    origin = body_materials_origin;
 
     if(body_materials_origin.z-padding <= layer && layer < body_materials_origin.z+body_size.z+padding)
     {
@@ -60,7 +63,7 @@ void main()
 #shader GL_FRAGMENT_SHADER
 #include "include/header.glsl"
 
-layout(location = 0) out uvec4 frag_color;
+layout(location = 0) out uvec4 out_voxel;
 
 layout(location = 0) uniform int layer;
 layout(location = 1) uniform int frame_number;
@@ -68,11 +71,13 @@ layout(location = 2) uniform sampler2D material_physical_properties;
 layout(location = 3) uniform usampler3D materials;
 layout(location = 4) uniform usampler3D body_materials;
 
+#define MATERIAL_PHYSICAL_PROPERTIES
 #include "include/materials_physical.glsl"
 
 #include "include/body_data.glsl"
 
 flat in int b;
+flat in ivec3 origin;
 
 vec4 qmult(vec4 a, vec4 b)
 {
@@ -123,8 +128,117 @@ void main()
     uvec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
     uvec4 ba  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
 
+    int spawned_cell = 0;
+
+    uint temp = temp(c);
+    uint electric = electric(c);
+    uint trig = 0;
+
+    //b -> genome id
+    //genome id, cell type -> trigger list
+
+    uint mid = mat(c); //material id
+    bool is_cell = mid >= BASE_CELL_MAT;
+    if(is_cell) mid += body_cell_material_id;
+
+    for(int i = 0; i < n_triggers(mid); i++)
+    {
+        uint trigger_data = trigger_info(mid, i);
+        uint condition_type = trigger_data&0xFF;
+        uint action_type = (trigger_data>>8)&0xFF;
+        uint trigger_material = trigger_data>>16;
+        bool condition = false;
+        switch(condition_type)
+        {
+            case trig_always:
+                condition = true;
+                break;
+            case trig_hot:
+                condition = temp > 12;
+                break;
+            case trig_cold:
+                condition = temp <= 4;
+                break;
+            case trig_electric:
+                condition = electric > 0;
+                break;
+            case trig_contact:
+                condition = trig(c) == i;
+                break;
+            default:
+                condition = false;
+        }
+
+        if(condition)
+        {
+            switch(action_type)
+            {
+                case act_grow: {
+                    trig = i+1;
+                    break;
+                }
+                case act_die: {
+                    c = uvec4(0);
+                    break;
+                }
+                case act_heat: {
+                    temp++;
+                    break;
+                }
+                case act_chill: {
+                    temp--;
+                    break;
+                }
+                case act_electrify: {
+                    electric = 3;
+                    break;
+                }
+                case act_explode: {
+                    //TODO: EXPLOSIONS!
+                    break;
+                }
+                case act_spray: {
+                    //create particle of type child_material_id, with velocity in the normal direction
+                    break;
+                }
+                default:
+            }
+            break;
+        }
+    }
+
+    //check if this cell is empty, on the surface, and is filled in the body map
+    //then check for neighbors that are trying to grow
+    if(mid == 0 && all(greaterThan(pos-origin, ivec3(0))) && all(lessThan(pos-origin, ivec3(32-1))))
+    {
+        uvec4 growing_cell = uvec4(0);
+        if(trig(l) != 0)       growing_cell = l;
+        else if(trig(r) != 0)  growing_cell = r;
+        else if(trig(u) != 0)  growing_cell = u;
+        else if(trig(d) != 0)  growing_cell = d;
+        else if(trig(f) != 0)  growing_cell = f;
+        else if(trig(ba) != 0) growing_cell = ba;
+
+        uint growing_mat = mat(growing_cell); //material id
+        if(growing_mat != 0)
+        {
+            bool is_cell = growing_mat >= BASE_CELL_MAT;
+            if(is_cell) growing_mat += body_cell_material_id;
+
+            uint trigger_data = trigger_info(growing_mat, trig(growing_cell)-1);
+            uint condition_type = trigger_data&0xFF;
+            uint action_type = (trigger_data>>8)&0xFF;
+            uint trigger_material = trigger_data>>16;
+
+            if(action_type == act_grow)
+                c.r = mat(growing_cell)+1;
+            else
+                c.r = trigger_material;
+        }
+    }
+
     // c.r = 1;
-    frag_color = c;
+    out_voxel = c;
 
     int depth = SURF_DEPTH;
     if(c.r > 0)
@@ -146,9 +260,9 @@ void main()
             depth = min(depth, depth(ba)+1);
         }
 
-        frag_color.b = c.b/2;
-        if(frag_color.r == 3) frag_color.b = 1000;
-        // frag_color.b = 0;
+        out_voxel.b = c.b/2;
+        if(out_voxel.r == 3) out_voxel.b = 1000;
+        // out_voxel.b = 0;
     }
     else
     {
@@ -161,7 +275,10 @@ void main()
         depth = max(depth, depth(ba)-1);
     }
 
-    frag_color.g = uint(depth);
+    out_voxel.g = uint(depth);
+    // out_voxel.g = uint(depth) | (phase << 6) | (transient << 7);
 
-    frag_color.b = 1000;
+    out_voxel.b = temp | (trig << 4);
+
+    out_voxel.a = colorvar(c) | (electric << 6);
 }

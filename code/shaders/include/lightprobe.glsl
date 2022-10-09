@@ -24,6 +24,7 @@ vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 de
 {
     pos = pos+8*normal; //bias away from surfaces
     vec4 total_color = vec4(0);
+    vec4 total_color_no_cheb = vec4(0);
     depth = vec2(0);
     for(int pz = 0; pz <= 1; pz++)
         for(int py = 0; py <= 1; py++)
@@ -64,7 +65,7 @@ vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 de
                 if(dot(dir, normal) > 0.999) return vec3(1,0,0);
                 #endif
 
-                float weight = sq((dot(normal, dir)+1)*0.5)+0.2;
+                float weight = sq(0.5*dot(normal, dir)+0.5)+0.2;
                 // float weight = 1.0;
 
                 vec3 base_dist = lightprobe_spacing*(vec3(probe_pos)+0.5)-pos; //distance from base probe position
@@ -77,6 +78,8 @@ vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 de
                 //     weight *= variance/(variance+sq(r-probe_depth.r));
                 // }
 
+                total_color_no_cheb += weight*sqrt(probe_color);
+
                 // I think this makes more sense
                 float variance = abs(probe_depth.g-sq(probe_depth.r));
                 float x = (probe_depth.r-r)*inversesqrt(variance);
@@ -84,15 +87,17 @@ vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 de
 
                 weight = clamp(weight, 0, 1);
 
-                // //this smoothly kills low values
-                // const float threshold = 0.02;
-                // if(weight < threshold)
-                //     weight *= sq(weight)/sq(threshold);
+                //this smoothly kills low values
+                const float threshold = 0.02;
+                if(weight < threshold)
+                    weight *= sq(weight)/sq(threshold);
 
                 total_color += weight*sqrt(probe_color);
                 depth += weight*(probe_depth);
             }
-    total_color.rgb = sq(total_color.rgb*(1.0f/total_color.a));
+    total_color.rgb = mix(sq(total_color_no_cheb.rgb*(1.0f/total_color_no_cheb.a)),
+                          sq(total_color.rgb*(1.0f/total_color.a)), min(total_color.a, 1));
+
     depth *= (1.0f/total_color.a);
     return total_color.rgb;
 }

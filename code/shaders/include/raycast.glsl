@@ -14,7 +14,7 @@ bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, i
     int i = 0;
     hit_dist = 0;
 
-    ivec3 ipos = ivec3(floor(pos));
+    ivec3 ipos = ivec3(pos);
 
     for(;;)
     {
@@ -24,6 +24,7 @@ bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, i
             return false;
         }
 
+        #ifdef occupied_regions
         if(texelFetch(occupied_regions, ipos>>4, 0).r == 0)
         {
             vec3 dist = ((0.5f*ray_sign+0.5f)*16.0f+ray_sign*(16.0f*floor(pos*(1.0f/16.0f))-pos))*invabs_ray_dir;
@@ -36,9 +37,10 @@ bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, i
             hit_dist += step_dist;
             // hit_dir = min_dir;
 
-            ipos = ivec3(floor(pos));
+            ipos = ivec3(pos);
         }
         else
+            #endif
         {
             n_texture_reads++;
             uvec4 voxel = texelFetch(materials, ipos+origin, 0);
@@ -58,6 +60,7 @@ bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, i
                 return true;
             }
 
+            #ifndef RAY_CAST_IGNORE_DEPTH
             int depth = SURF_DEPTH-depth(voxel);
             if(depth >= 3
                // #ifdef ACTIVE_REGIONS
@@ -68,8 +71,9 @@ bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, i
                 float skip_dist = (depth-2)/dot(ray_dir,ray_sign);
                 pos += ray_dir*skip_dist;
                 hit_dist += skip_dist;
-                ipos = ivec3(floor(pos));
+                ipos = ivec3(pos);
             }
+            #endif
 
             vec3 dist = (0.5f*ray_sign+0.5f+ray_sign*(vec3(ipos)-pos))*invabs_ray_dir;
 

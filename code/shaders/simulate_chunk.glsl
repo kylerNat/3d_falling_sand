@@ -172,9 +172,9 @@ void main()
 
     uint temp = 8;
 
-    out_voxel.g = uint(depth) | (phase << 6);
+    out_voxel.g = uint(depth) | (phase << 5) | (transient << 7);
 
-    out_voxel.b = transient | (temp<<2);
+    out_voxel.b = temp;
 
     // bool changed = c.r != out_voxel.r || c.g != out_voxel.g || c.b != out_voxel.b;
     bool changed = c.r != out_voxel.r || c.g != out_voxel.g;

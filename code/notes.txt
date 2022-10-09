@@ -11,27 +11,47 @@ crystals:
 nerves connect brain to joints, the connection just lets the brain know the joint exists and that it can be controlled
 the brain figures out how to move the joint based in the joint type
 
-brain can magically apply forces to the aether, which allows air strafign and slow/fast falling, or flight for sufficiently small creatures
+brain can magically apply forces to the aether, which allows air strafing and slow/fast falling, or flight for sufficiently small creatures
 
-voxel format
+32 bit voxel format
 red channel
 8 bits - material index
 
 green channel
 5 bits - distance field
 2 bits - material phase
+1 bit  - transient voxel, used to for particles temporarily inserted for interaction
 
 blue channel
-2 bit  - temporary voxel, used to for particles temporarily inserted for interaction and rendering
 4 bits - temperature
-2 bit  - electrical energy
+4 bits - active trigger
 
 alpha channel
-6 bits - color variant
+6 bits - color
+2 bits - electrical energy
 
 material properties:
 density
 
+-----------------------
+64 bit voxel format // probably too expensive memory-wise
+red channel
+16 bits - material index
+
+green channel
+5 bits - distance field
+2 bits - material phase
+1 bit  - transient voxel, used to for particles temporarily inserted for interaction
+4 bits - temperature
+2 bits - electrical energy
+2 bits - ???
+
+alpha channel
+15 bits - color
+
+blue channel
+13 bits - incubation timer
+3  bits - incubation direction
 
 joint - 2 voxels in 2 bodies
 brain - 1 voxel and a tree/graph of bodies
@@ -40,3 +60,7 @@ genetics system:
 base pairs are made of elements, and determine your required "diet"
 
 blunt force damage based on mass, so you can safely use weapons lighter than you
+
+growth/incubation timer?
+instruction pointer?
+modified properties

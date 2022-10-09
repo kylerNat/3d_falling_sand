@@ -1,4 +1,8 @@
-#define N_MAX_MATERIALS 256
+#ifndef MATERIALS
+#define MATERIALS
+
+#define N_MAX_MATERIALS 2048
+//material_id's only go up to 256, but materials for cell type's can have different properties for different materials
 
 struct material_visual_info
 {
@@ -29,11 +33,13 @@ struct material_physical_info
     //electrical properties
     real conductivity;
 
-    real _;
-    real __;
+    //trigger info
+    real n_triggers;
+    real trigger_info[15]; //3 uint8's packed into a 24 bit uint then converted to a float
 
     //TODO: chance to disappear
 };
+#define N_PHYSICAL_PROPERTIES (sizeof(material_physical_info)/sizeof(float))
 
 material_visual_info material_visuals[N_MAX_MATERIALS] = {
     {}, //air
@@ -52,3 +58,11 @@ material_physical_info material_physicals[N_MAX_MATERIALS] = {
     {.density = 0, .hardness = 1, .melting_point = 16, .boiling_point = 16}, //purply
     {.density = 0, .hardness = 1, .melting_point = 16, .boiling_point = 16}, //light
 };
+
+material_visual_info base_cell_visual = {.base_color = {1, 1, 1}, .roughness = 0.3f, .metalicity = 0.0f};
+material_physical_info base_cell_physical = {.density = 0, .hardness = 1, .melting_point = 16, .boiling_point = 16};
+
+GLuint material_visual_properties_texture;
+GLuint material_physical_properties_texture;
+
+#endif //MATERIALS

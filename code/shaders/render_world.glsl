@@ -96,7 +96,8 @@ void main()
             vec3 hit_x = cube_ray_pos+face_dist*cube_ray_dir;
             vec3 outmost_edge = step(hit_x.zxy, hit_x.xyz)*step(hit_x.yzx, hit_x.xyz);
 
-            if(all(greaterThan(hit_x, vec3(-1.0)-face_dist/100)) &&
+            if(all(greaterThan(hit_x, vec3(-1.0) +face_dist/((270.0/pi)*dot(cube_ray_dir, max_dir))
+                       )) &&
                face_dist < total_dist && face_dist > 0)
             {
                 total_dist = face_dist;
@@ -114,7 +115,8 @@ void main()
         float roughness = get_roughness(material_id);
         vec3 emission = get_emission(material_id);
 
-        frag_color.rgb += -(emission)*dot(normal, ray_dir);
+        // frag_color.rgb += -(emission)*dot(normal, ray_dir);
+        frag_color.rgb += emission;
 
         int n_probe_samples = 1;
         int n_ray_samples = 0;

@@ -5,33 +5,11 @@
 #include "graphics_common.h"
 #include "xaudio2_audio.h"
 #include "game_common.h"
+#include "genetics.h"
 #include "memory.h"
 #include "chunk.h"
 
 real dt = 1.0/60.0; //simulate at 60 hz
-
-struct user_input
-{
-    real_2 mouse;
-    real_2 dmouse;
-    int16 mouse_wheel;
-    byte buttons[32];
-    byte prev_buttons[32];
-};
-
-#define M1 0x01
-#define M2 0x02
-#define M3 0x04
-#define M4 0x05
-#define M5 0x06
-#define M_WHEEL_DOWN 0x0A
-#define M_WHEEL_UP 0x0B
-
-#define is_down(key_code, input) ((input.buttons[(key_code)/8]>>((key_code)%8))&1)
-#define is_pressed(key_code, input) (((input.buttons[(key_code)/8] & ~input.prev_buttons[(key_code)/8])>>((key_code)%8))&1)
-
-#define set_key_down(key_code, input) input.buttons[(key_code)/8] |= 1<<((key_code)%8)
-#define set_key_up(key_code, input) input.buttons[(key_code)/8] &= ~(1<<((key_code)%8))
 
 struct element_componenticle
 {
@@ -212,11 +190,15 @@ struct world
     joint* joints;
     int n_joints;
 
-    body_component* components;
-    int n_components;
-
     brain* brains;
     int n_brains;
+
+    genome* genomes;
+    int n_genomes;
+
+    genedit_window gew;
+
+    bool edit_mode;
 
     chunk * c;
     int8_2 chunk_lookup[2*2*2];
@@ -291,8 +273,26 @@ void spawn_particles(real_3 x, real_3 x_dot)
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(particles.n_particles)+sizeof(particle_data)*particles.n_particles, &particles);
 }
 
-void update_and_render(memory_manager* manager, world* w, render_data* rd, render_data* ui, audio_data* ad, user_input input)
+void update_and_render(memory_manager* manager, world* w, render_data* rd, render_data* ui, audio_data* ad, user_input* input)
 {
+    bool toggle_edit = is_pressed('\t', input);
+    w->edit_mode = w->edit_mode != toggle_edit;
+
+    if(w->edit_mode)
+    {
+        do_edit_window(ui, input, &w->gew);
+        real_4 cursor_color = {1,1,1,1};
+        draw_circle(ui, {input->mouse.x, input->mouse.y, 0}, 0.01, cursor_color);
+    }
+    // else
+    // {
+    //     if(toggle_edit)
+    //     {
+    //         genome* gn = w->gew.active_genome;
+    //         compile_genome(gn, w->gew.genodes);
+    //     }
+    // }
+
     entity* player = &w->player;
     // player->x += player->x_dot;
     real_2 walk_inputs = (real_2){
@@ -304,13 +304,13 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     static real theta = pi/2;
     static real phi = -pi/4;
     // static real phi = 0;
-    // if(is_down(M3, input))
+    if(!w->edit_mode)
     {
-        theta += 0.8*input.dmouse.y;
-        phi -= 0.8*input.dmouse.x;
+        theta += 0.8*input->dmouse.y;
+        phi -= 0.8*input->dmouse.x;
     }
-    // theta += 0.3*input.dmouse.y;
-    // phi -= 0.3*input.dmouse.x;
+    // theta += 0.3*input->dmouse.y;
+    // phi -= 0.3*input->dmouse.x;
 
     // real_3 look_forward = {-sin(phi)*sin(theta), cos(phi)*sin(theta), -cos(theta)};
     real_3 look_forward = {-sin(phi), cos(phi), 0};
@@ -322,7 +322,8 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     real z_dot = player->x_dot.z;
     real_2 move_dir = player->x_dot.xy/speed;
     real_3 walk_dir = (walk_inputs.y*look_forward + walk_inputs.x*look_side);
-    walk_dir.z += is_down(M2, input)-is_down(' ', input);
+    if(!w->edit_mode)
+        walk_dir.z += is_down(M2, input)-is_down(' ', input);
     if(speed == 0) move_dir = 0.5*walk_dir.xy;
     if(walk_dir.x != 0 || walk_dir.y != 0 || walk_dir.z != 0)
     {
@@ -347,7 +348,9 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     player->x_dot.z -= move_accel;
     // }
 
-    player->x += player->x_dot;
+    static int player_in_head = 0;
+
+    if(!player_in_head) player->x += player->x_dot;
 
     real fov = pi*120.0/180.0;
     real screen_dist = 1.0/tan(fov/2);
@@ -357,7 +360,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     static real camera_dist_target = 240;
     static real camera_dist = camera_dist_target;
-    camera_dist_target *= pow(1.0+0.001, -input.mouse_wheel);
+    camera_dist_target *= pow(1.0+0.001, -input->mouse_wheel);
     const real min_camera_dist = 1;
     if(camera_dist_target < min_camera_dist) camera_dist_target = min_camera_dist;
     camera_dist += 0.2*(camera_dist_target-camera_dist);
@@ -381,7 +384,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     // player->x += player->x_dot;
 
     static real placement_dist = 20.0;
-    placement_dist += 0.02*input.mouse_wheel;
+    placement_dist += 0.02*input->mouse_wheel;
 
     for(int b = 0; b < w->n_bodies; b++)
     {
@@ -468,14 +471,16 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     // leg_phase += 0.03;
     // leg_phase = fmod(leg_phase, 1.0);
 
-    bool player_in_head = false;
+    player_in_head = (player_in_head + is_pressed('V', input))%3;
 
     {
-        // w->brains[0].target_accel = (real_3){0,0,-0.1*(-0.5+w->bodies_gpu[13].x_dot.z)}; //by default try to counteract gravity
-        w->brains[0].target_accel = (real_3){0,0,0.03}; //by default try to counteract gravity
-        // w->brains[0].target_accel = (real_3){0,0,0}; //by default try to counteract gravity
-        if(is_down('R', input)
-           || (player_in_head && (walk_dir.x != 0 || walk_dir.y != 0)))
+        brain* br = &w->brains[0];
+        // br->target_accel = (real_3){0,0,-0.1*(-0.5+w->bodies_gpu[13].x_dot.z)}; //by default try to counteract gravity
+        br->target_accel = (real_3){0,0,0.00}; //by default try to counteract gravity
+        // br->target_accel = (real_3){0,0,0}; //by default try to counteract gravity
+
+        br->is_moving = is_down('R', input) || (player_in_head && (walk_dir.x != 0 || walk_dir.y != 0));
+        if(br->is_moving)
         {
             real_3 pos = player->x-placement_dist*camera_z;
             real_3 r = pos-w->bodies_gpu[13].x;
@@ -487,28 +492,30 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
                 target_dir = walk_dir;
             }
 
-            w->brains[0].target_accel += 0.05*target_dir;
-            w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
+            br->target_accel.z += 0.05;
+            br->target_accel += 0.05*target_dir;
+            br->target_accel -= 0.02*w->bodies_gpu[13].x_dot;
         }
         else
         {
-            // w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
-            // w->brains[0].target_accel.z += 0.03;
-            w->brains[0].target_accel -= 0.02*w->bodies_gpu[13].x_dot;
-            w->brains[0].target_accel.z -= 0.02+0.02*(w->bodies_gpu[13].x.z-(20+15));
+            // br->target_accel -= 0.02*w->bodies_gpu[13].x_dot;
+            br->target_accel.z += 0.02;
+            // br->target_accel.z -= 0.01*(w->bodies_gpu[13].x.z-(w->bodies_gpu[5].x.z+16));
         }
         if(is_down('T', input)
            || (player_in_head && is_down(M2, input)))
         {
-            w->brains[0].target_accel.z += 0.1;
+            br->is_moving = true;
+            br->target_accel.z += 0.1;
             //TODO: should be foot normals
-            // w->brains[0].target_accel += 0.05*w->bodies_cpu[13].contact_normals[0];
+            // br->target_accel += 0.05*w->bodies_cpu[13].contact_normals[0];
         }
 
         if(is_down('Y', input)
            || (player_in_head && is_down(' ', input)))
         {
-            w->brains[0].target_accel.z -= 0.1;
+            br->is_moving = true;
+            br->target_accel.z -= 0.1;
         }
     }
 
@@ -534,12 +541,13 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
 
-    if(player_in_head) player->x = w->bodies_gpu[13].x-2.0*camera_z;
+    if(player_in_head == 2) player->x = lerp(player->x, w->bodies_gpu[13].x+10.0*camera_z+2*camera_y, 0.3);
+    if(player_in_head == 1) player->x = w->bodies_gpu[13].x-5*camera_z;
 
-    if(is_pressed('V', input))
-    {
-        play_sound(ad, &waterfall, 0.1);
-    }
+    // if(is_pressed('V', input))
+    // {
+    //     play_sound(ad, &waterfall, 0.1);
+    // }
 
     static int selected_body = 0;
     if(is_pressed('Q', input)) selected_body--;
@@ -584,7 +592,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         }
     }
 
-    if(is_down(M1, input))
+    if(is_down(M1, input) && !w->edit_mode)
     {
         int brush_size = 50;
         real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};

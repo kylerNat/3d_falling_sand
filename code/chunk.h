@@ -3,14 +3,6 @@
 
 #define chunk_size 512
 
-enum storage_mode
-{
-    sm_disk,
-    sm_compressed,
-    sm_memory,
-    sm_gpu,
-};
-
 struct chunk_gpu_entry;
 
 struct chunk
@@ -29,9 +21,6 @@ int current_materials_texture = 0;
 #define body_texture_size 256
 GLuint body_materials_textures[2];
 int current_body_materials_texture = 0;
-
-GLuint body_forces_texture;
-GLuint body_shifts_texture;
 
 struct chunk_gpu_entry
 {
@@ -66,15 +55,17 @@ void load_body_to_gpu(cpu_body_data* bc, gpu_body_data* bg)
     // has_loaded = true;
     if(bc->storage_level < sm_gpu)
     {
-        bc->materials_texture = body_materials_textures[current_body_materials_texture];
-        bg->materials_origin = {2+16*(n_bodies%8),2+16*((n_bodies/8)%8),2+16*(n_bodies/64)};
+        int padding = 2;
+        int size = 32+padding;
+        int bodies_per_row = (body_texture_size-2*padding)/size;
+        bg->materials_origin = {padding+size*(n_bodies%bodies_per_row),padding+size*((n_bodies/bodies_per_row)%bodies_per_row),padding+size*(n_bodies/sq(bodies_per_row))};
         n_bodies++;
 
-        glBindTexture(GL_TEXTURE_3D, bc->materials_texture);
+        glBindTexture(GL_TEXTURE_3D, body_materials_textures[current_body_materials_texture]);
         glTexSubImage3D(GL_TEXTURE_3D, 0,
                         bg->materials_origin.x, bg->materials_origin.y, bg->materials_origin.z,
                         bg->size.x, bg->size.y, bg->size.z,
-                        GL_RED_INTEGER, GL_UNSIGNED_SHORT,
+                        GL_RED_INTEGER, GL_UNSIGNED_BYTE,
                         bc->materials);
         bc->storage_level = sm_gpu;
     }

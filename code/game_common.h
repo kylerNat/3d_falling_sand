@@ -3,6 +3,160 @@
 
 #define N_SOLVER_ITERATIONS 20
 
+enum ui_type
+{
+    ui_none,
+    ui_gene,
+    ui_form,
+    ui_form_voxel,
+    ui_window,
+    n_ui_elements
+};
+
+struct ui_element
+{
+    int type;
+    void* element;
+};
+
+struct user_input
+{
+    real_2 mouse;
+    real_2 dmouse;
+    int16 mouse_wheel;
+    byte buttons[32];
+    byte prev_buttons[32];
+    ui_element active_ui_element;
+};
+
+#define M1 0x01
+#define M2 0x02
+#define M3 0x04
+#define M4 0x05
+#define M5 0x06
+#define M_WHEEL_DOWN 0x0A
+#define M_WHEEL_UP 0x0B
+
+#define is_down(key_code, input) (((input)->buttons[(key_code)/8]>>((key_code)%8))&1)
+#define is_pressed(key_code, input) ((((input)->buttons[(key_code)/8] & ~(input)->prev_buttons[(key_code)/8])>>((key_code)%8))&1)
+
+#define set_key_down(key_code, input) input.buttons[(key_code)/8] |= 1<<((key_code)%8)
+#define set_key_up(key_code, input) input.buttons[(key_code)/8] &= ~(1<<((key_code)%8))
+
+enum storage_mode
+{
+    sm_disk,
+    sm_compressed,
+    sm_memory,
+    sm_gpu,
+};
+
+enum special_voxel_type
+{
+    vox_player_brain,
+    vox_brain,
+    vox_neck,
+    vox_heart,
+    vox_hip,
+    vox_knee,
+    vox_foot,
+    vox_shoulder,
+    vox_elbow,
+    vox_hand,
+};
+
+enum joint_type
+{
+    joint_root,
+    joint_ball,
+    joint_condyloid,
+    joint_hinge,
+};
+
+enum endpoint_type
+{
+    endpoint_eye,
+    endpoint_hand,
+    endpoint_foot,
+    n_endpoint_types,
+};
+
+enum target_value_type
+{
+    tv_velocity,
+    tv_angular_velocity,
+};
+
+enum foot_state
+{
+    foot_lift,
+    foot_swing,
+    foot_down,
+    foot_push,
+};
+
+struct ray_hit
+{
+    bool hit;
+    int_3 pos;
+    int_3 dir;
+    real dist;
+};
+
+ray_hit cast_ray(uint8* materials, real_3 ray_dir, real_3 ray_origin, int_3 size, int_3 origin, int max_iterations)
+{
+    real_3 ray_sign = sign_not_zero_per_axis(ray_dir);
+    real_3 inv_ray_dir = divide_components({1,1,1}, ray_dir);
+    real_3 invabs_ray_dir = divide_components(ray_sign, ray_dir);
+
+    int_3 bounding_planes = {ray_dir.x < 0 ? size.x:0, ray_dir.y < 0 ? size.y:0, ray_dir.z < 0 ? size.z:0};
+    real_3 bounding_dists = multiply_components((real_cast(bounding_planes)-ray_origin), inv_ray_dir);
+    real skip_dist = max(max(max(bounding_dists.x, bounding_dists.y), bounding_dists.z), 0.0f);
+    skip_dist += 0.001;
+    real_3 pos = ray_origin + skip_dist*ray_dir;
+    real total_dist = skip_dist;
+
+    int_3 ipos = int_cast(pos);
+
+    int_3 dir = {};
+
+    int i = 0;
+    for ever
+    {
+        if(ipos.x < 0 || ipos.y < 0 || ipos.z < 0
+           || ipos.x >= size.x || ipos.y >= size.y || ipos.z >= size.z)
+        {
+            return {false};
+        }
+
+        if(materials[ipos.x+size.x*(ipos.y+size.y*ipos.z)] != 0)
+        {
+            return {true, ipos, dir, total_dist};
+        }
+
+        real_3 dist = multiply_components((0.5f*ray_sign+(real_3){0.5f,0.5f,0.5f}
+                                           +multiply_components(ray_sign, (real_cast(ipos)-pos))),
+                                          invabs_ray_dir);
+
+        int_3 min_dir = {};
+        real min_dist = 0;
+        if(dist.x < dist.y && dist.x < dist.z) {min_dist = dist.x; min_dir = {1,0,0};}
+        if(dist.y < dist.z && dist.y < dist.x) {min_dist = dist.y; min_dir = {0,1,0};}
+        if(dist.z < dist.x && dist.z < dist.y) {min_dist = dist.z; min_dir = {0,0,1};}
+        pos += min_dist*ray_dir;
+        dir = multiply_components(min_dir, int_cast(ray_sign));
+        ipos += dir;
+        total_dist += min_dist;
+
+        if(++i > max_iterations)
+        {
+            return {false};
+        }
+    }
+}
+
+#include "genetics.h"
+
 struct rational
 {
     int n;
@@ -68,8 +222,7 @@ struct child_joint
 
 struct cpu_body_data
 {
-    uint16* materials;
-    GLuint materials_texture;
+    uint8* materials;
     int storage_level;
     int* component_ids;
     int n_components;
@@ -103,8 +256,7 @@ struct cpu_body_data
     real_3 contact_forces[3];
     // real_3 deltax_dot_integral[3]; //this is for doing PI constraint solving, if just P isn't enough
 
-    int_2 endpoints[N_MAX_ENDPOINTS];
-    int endpoint_types[N_MAX_ENDPOINTS];
+    int genome_id;
 };
 
 #pragma pack(push, 1)
@@ -120,72 +272,10 @@ struct gpu_body_data
     real m;
     real_3x3 I;
     real_3x3 invI;
+
+    int cell_material_id; //material_id of cell type 0 for this body
 };
 #pragma pack(pop)
-
-enum special_voxel_type
-{
-    vox_player_brain,
-    vox_brain,
-    vox_neck,
-    vox_heart,
-    vox_hip,
-    vox_knee,
-    vox_foot,
-    vox_shoulder,
-    vox_elbow,
-    vox_hand,
-};
-
-enum joint_type
-{
-    joint_ball,
-    joint_condyloid,
-    joint_hinge,
-};
-
-enum endpoint_type
-{
-    endpoint_eye,
-    endpoint_hand,
-    endpoint_foot,
-    n_endpoint_types,
-};
-
-struct limb
-{
-    int state;
-};
-
-//nodes for the body map
-struct body_part
-{
-    int type;
-    int* children;
-    int* child_joints;
-    int n_children;
-    int_3* endpoints;
-    int n_endpoints;
-
-    real total_m;
-    real_3x3 total_I;
-
-    int body_id;
-};
-
-enum target_value_type
-{
-    tv_velocity,
-    tv_angular_velocity,
-};
-
-enum foot_state
-{
-    foot_lift,
-    foot_swing,
-    foot_down,
-    foot_push,
-};
 
 #define MAX_COYOTE_TIME 6.0f
 
@@ -216,45 +306,8 @@ struct brain
     int n_endpoints;
     real walk_phase;
     real_3 target_accel;
-};
-
-enum body_part_type
-{
-    part_leg,
-    n_body_part_types,
-};
-
-enum body_component_type
-{
-    comp_joint,
-    comp_brain,
-    n_body_component_types,
-};
-
-struct forque
-{
-    real_3 force;
-    real_3 torque;
-};
-
-//convex hull of range of allowed forces
-struct force_hull
-{
-    forque* points;
-};
-
-//things that need to be simulated
-struct body_component
-{
-    int type;
-    void* data;
-};
-
-struct collision_point
-{
-    real_3 x;
-    real_3 normal;
-    real depth;
+    real_3 stabilize_accel;
+    bool is_moving;
 };
 
 struct bounding_box
@@ -298,12 +351,13 @@ voxel_data get_voxel_data(int_3 x);
 //figure out stuff like which feet to raise or lower
 void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* brains, int n_brains, render_data* rd)
 {
-
     for(int brain_id = 0; brain_id < n_brains; brain_id++)
     {
         brain* br = &brains[brain_id];
         int n_feet_down = 0;
         int n_feet = 0;
+
+        br->stabilize_accel = {};
 
         endpoint* most_extended_foot = 0;
         real most_extension = -1000;
@@ -345,22 +399,49 @@ void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* br
                         most_extension = extension;
                     }
 
-                    //make sure there's actually a contact
-                    for(int i = 0;; i++)
+                    if(br->is_moving)
                     {
-                        if(i >= 3)
+                        for(int i = 0; i < 3; i++)
                         {
-                            // ep->foot_phase += 0.1f;
-                            // ep->coyote_time = 0;
-                            ep->is_grabbing = false;
-                            break;
+                            body_cpu->contact_locked[i] = false;
                         }
-                        if(body_cpu->contact_depths[i] <= 1)
+
+                        //make sure there's actually a contact
+                        for(int i = 0;; i++)
                         {
-                            // ep->coyote_time = MAX_COYOTE_TIME;
-                            // ep->foot_phase = -1.0f;
-                            break;
+                            if(i >= 3)
+                            {
+                                // ep->foot_phase += 0.1f;
+                                // ep->coyote_time = 0;
+                                ep->is_grabbing = false;
+                                break;
+                            }
+
+                            if(body_cpu->contact_depths[i] <= 1)
+                            {
+                                // ep->coyote_time = MAX_COYOTE_TIME;
+                                ep->foot_phase = -1.0f;
+                                break;
+                            }
                         }
+                    }
+                    else
+                    {
+                        // for(int i = 0; i < 3; i++)
+                        // {
+                        //     if(body_cpu->contact_depths[i] <= 1)
+                        //     {
+                        //         // body_cpu->contact_locked[i] = true;
+                        //         ep->grab_point = body_cpu->contact_points[i];
+                        //         ep->grab_normal = body_cpu->contact_normals[i];
+                        //         break;
+                        //     }
+                        // }
+
+                        real k = 0.005;
+                        br->stabilize_accel.z += k*16;
+                        br->stabilize_accel -= k*(root_gpu->x-foot_x);
+                        br->stabilize_accel -= 0.01f*root_gpu->x_dot;
                     }
 
                     // if(ep->foot_phase > 0.0f)
@@ -405,38 +486,53 @@ void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* br
                             {
                                 ep->is_grabbing = true;
                                 ep->grab_target = 0;
-                                // ep->grab_point = body_cpu->contact_points[i];
-                                ep->grab_point = foot_x;
+                                ep->grab_point = body_cpu->contact_points[i];
+                                // ep->grab_point = foot_x;
                                 ep->grab_normal = body_cpu->contact_normals[i];
 
                                 ep->foot_phase = -1.0f;
-                                // body_cpu->contact_locked[i] = true;
+                                // body_cpu->contact_locked[i] = !br->is_moving;
                                 break;
                             }
                 }
             }
+
+            // rd->log_pos
+            //     += sprintf(rd->debug_log+rd->log_pos,
+            //                "foot %i state: %s, phase = %.2f, coyote = %.2f, depth = %.2f, %s\n",
+            //                ep->body_id,
+            //                ep->is_grabbing ? "grab" : "free",
+            //                ep->foot_phase, ep->coyote_time,
+            //                body_cpu->contact_depths[0],
+            //                body_cpu->contact_locked[0] ? "locked" : "unlock"
+            //         );
         }
 
-        // if(n_feet_down > 1)
-        // {
-        //     if(most_extended_foot)
-        //     {
-        //         // most_extended_foot->foot_phase = lerp(most_extended_foot->foot_phase, 1, 0.01);
-        //         most_extended_foot->foot_phase += 0.5;
-        //         most_extended_foot->foot_phase = clamp(most_extended_foot->foot_phase, -1.0f, 1.0f);
+        if(n_feet_down > 0)
+        {
+            br->stabilize_accel /= n_feet_down;
+        }
 
-        //         // if(most_extended_foot->foot_phase > 0.0f)
-        //         {
-        //             most_extended_foot->is_grabbing = false;
-        //             most_extended_foot->foot_phase = 1.0f;
+        if(n_feet_down > 1 && br->is_moving)
+        {
+            if(most_extended_foot)
+            {
+                // // most_extended_foot->foot_phase = lerp(most_extended_foot->foot_phase, 1, 0.01);
+                // most_extended_foot->foot_phase += 0.5;
+                // most_extended_foot->foot_phase = clamp(most_extended_foot->foot_phase, -1.0f, 1.0f);
 
-        //             cpu_body_data* body_cpu = &bodies_cpu[most_extended_foot->body_id];
-        //             for(int i = 0; i < 3; i++)
-        //                 body_cpu->contact_locked[i] = false;
-        //         }
-        //     }
-        // }
-        // else
+                // if(most_extended_foot->foot_phase > 0.0f)
+                {
+                    most_extended_foot->is_grabbing = false;
+                    // most_extended_foot->foot_phase = 1.0f;
+
+                    cpu_body_data* body_cpu = &bodies_cpu[most_extended_foot->body_id];
+                    for(int i = 0; i < 3; i++)
+                        body_cpu->contact_locked[i] = false;
+                }
+            }
+        }
+        else
         {
             if(most_forward_foot)
             {
@@ -484,6 +580,9 @@ void iterate_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain*
             real_3 grab_force = {}; //force between the grabbed object and the root body
             real_3 endpoint_force = {}; //force directly applied to the endpoint
 
+            // //air control
+            // grab_force -= (0.04f/N_SOLVER_ITERATIONS)*br->target_accel;
+
             if(ep->type == endpoint_foot)
             {
                 real_3 foot_x = r+body_gpu->x;
@@ -491,48 +590,62 @@ void iterate_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain*
 
                 real_3 root_r = foot_x - anchor_x;
 
-                real COF = 0.5; //TODO: actually get this from the collision data
+                real COF = 1.2; //TODO: actually get this from the collision data
 
                 if(ep->coyote_time > 0) //the foot is on the ground
                 {
-                    real_3 foot_force = -1.0f*br->target_accel;
-                    real normal_force = -dot(foot_force, ep->grab_normal);
+                    real_3 foot_force = -1.0f*br->target_accel-br->stabilize_accel;
+                    real min_normal_force = 1.0f;
+                    real normal_force = max(-dot(foot_force, ep->grab_normal), -min_normal_force);
                     real_3 tangent_force = rej(foot_force, ep->grab_normal);
-                    real max_tangent_force = COF*normal_force;
+                    real max_tangent_force = COF*abs(normal_force);
+
+                    // rd->log_pos
+                    //     += sprintf(rd->debug_log+rd->log_pos, "normal_force = %f, tangent_force = %f\n",
+                    //                normal_force, norm(tangent_force));
 
                     real_3 grab_x = ep->grab_point;
                     real_3 grab_normal = ep->grab_normal;
 
-                    //constrain to friction cone
+                    // //constrain to friction cone
                     // if(normsq(tangent_force) > sq(max_tangent_force))
                     // {
-                    //     foot_force = max_tangent_force*tangent_force - normal_force*ep->grab_normal;
+                    //     tangent_force = max_tangent_force*normalize(tangent_force);
                     // }
-                    // if(normal_force > 0.0f)
-                    if(body_cpu->contact_depths[0] <= 1)
-                    {
-                        grab_force = (1.0f/N_SOLVER_ITERATIONS)*foot_force;
-                        grab_force *= (1.0f/MAX_COYOTE_TIME)*ep->coyote_time;
-                    }
+                    // foot_force = tangent_force - normal_force*ep->grab_normal;
+
+                    // if(body_cpu->contact_depths[0] <= 1)
+                    // {
+                    //     grab_force = (1.0f/N_SOLVER_ITERATIONS)*foot_force;
+                    //     grab_force *= (1.0f/MAX_COYOTE_TIME)*ep->coyote_time;
+                    //     grab_force *= 0.5;
+                    //     // force = (1.0f/N_SOLVER_ITERATIONS)*foot_force;
+                    //     // force *= (1.0f/MAX_COYOTE_TIME)*ep->coyote_time;
+                    // }
+
+                    force = (1.0f/N_SOLVER_ITERATIONS)*foot_force;
+                    // force *= (1.0f/MAX_COYOTE_TIME)*ep->coyote_time;
+
 
                     if(ep->grab_target)
                     {
-                        gpu_body_data* grabbed_gpu  = &bodies_gpu[ep->grab_target];
+                        gpu_body_data* grabbed_gpu = &bodies_gpu[ep->grab_target];
                         real_3 grabbed_r = apply_rotation(grabbed_gpu->orientation, ep->grab_point);
                         grab_x = grabbed_gpu->x+grabbed_r;
 
                         grab_normal = apply_rotation(grabbed_gpu->orientation, ep->grab_normal);
                     }
 
-                    //SLEEP NOTES:
-                    /*
-                      add force to position center of mass over centroid of feet grab points
-                      try having invisible feet particles that the real feet follow, check the actual feet periodically to make sure the ground is actually still there
-                     */
-
                     // force = (1.0f/N_SOLVER_ITERATIONS)*0.05f*(grab_x-foot_x);
                     // endpoint_force += (1.0f/N_SOLVER_ITERATIONS)*0.01f*dot(grab_x-foot_x, grab_normal)*(grab_normal);
-                    // endpoint_force += (1.0f/N_SOLVER_ITERATIONS)*0.01f*(grab_x-foot_x);
+                    // endpoint_force += (1.0f/N_SOLVER_ITERATIONS)*0.001f*(grab_x-foot_x);
+
+                    // if(!br->is_moving)
+                    // {
+                    //     force += -(0.5f/N_SOLVER_ITERATIONS)*br->stabilize_accel;
+                    //     // force += (1.0f/N_SOLVER_ITERATIONS)*0.001f*(grab_x-foot_x);
+                    //     force += (1.0f/N_SOLVER_ITERATIONS)*(real_3){0,0,-0.012};
+                    // }
                     draw_circle(rd, grab_x, 0.3f, {0,1,1,1});
                 }
                 if(!ep->is_grabbing) //the foot is swinging forward
@@ -983,7 +1096,7 @@ void iterate_joints(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_
 void iterate_contact_points(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_bodies, render_data* rd)
 {
     real COR = 0.2;
-    real COF = 1.2;
+    real COF = 10.2;
 
     static int frame_number = 0;
     frame_number++;
@@ -1052,23 +1165,37 @@ void iterate_contact_points(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu
 
                 real normal_force = dot(deltax_dot, normal);
 
+                real_3 u_t = u-u_n*normal;
+                real_3 tangent = normalize_or_zero(u_t);
+
                 //if static friction impulse is outside of the friction cone, compute kinetic impulse
-                if(normsq(deltax_dot) > (1.0+sq(COF))*sq(normal_force) || normal_force < 0)
+                if(normsq(deltax_dot) > (1+sq(COF))*sq(normal_force) || normal_force < 0)
                 {
                     real_3 impulse_dir = normal;
                     //only apply friction if normal force is positive,
                     //techincally I think there should be negative friction but need to figure out consistent direction for that
                     real effective_COR = COR;
-                    if(normal_force > 0)
-                    {
-                        effective_COR = 0;
-                        impulse_dir += -COF*normalize(rej(u, normal));
-                    }
-                    normal_force = -((1.0f+effective_COR)*u_n)/dot(K*impulse_dir, normal);
-                    normal_force = max(normal_force, -body_cpu->normal_forces[i]);
-                    // normal_force = max(normal_force, 0.0f);
+                    // if(normal_force > 0)
+                    // {
+                    //     effective_COR = 0;
+                    //     // impulse_dir += -COF*tangent;
+                    //     impulse_dir += -deltax_dot;
+                    // }
+                    // normal_force = -((1.0f+effective_COR)*u_n)/dot(K*impulse_dir, normal);
+                    // normal_force = max(normal_force, -body_cpu->normal_forces[i]);
+                    normal_force = max(normal_force, 0.0f);
+                    real_3 tangent_force = deltax_dot-normal_force*normal;
+                    impulse_dir += COF*normalize(tangent_force);
                     deltax_dot = normal_force*impulse_dir;
                 }
+
+                // //kinetic friction is unstable, so just make coefficient of static friction infinite
+                // if(normal_force < 0)
+                // {
+                //     real_3 impulse_dir = normal;
+                //     normal_force = 0;
+                //     deltax_dot = {};
+                // }
 
                 if(norm(deltax_dot) > 1000)
                 {

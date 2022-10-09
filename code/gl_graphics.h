@@ -86,11 +86,10 @@ GLuint occupied_regions_texture;
 #define occupied_regions_width 16
 #define occupied_regions_size (chunk_size/occupied_regions_width)
 
-GLuint material_visual_properties_texture;
-GLuint material_physical_properties_texture;
-
 #define N_MAX_BODIES 4096
 GLuint body_buffer;
+
+GLuint form_materials_texture;
 
 #define N_MAX_PARTICLES 4096
 GLuint particle_buffer;
@@ -101,12 +100,6 @@ GLuint body_omega_texture;
 GLuint contact_point_textures[3];
 GLuint contact_normal_textures[3];
 GLuint contact_material_texture;
-
-#define N_MAX_CAPSULES 4096
-GLuint capsules_texture;
-
-GLuint collision_point_texture;
-GLuint collision_normal_texture;
 
 GLuint prepass_x_texture;
 GLuint prepass_orientation_texture;
@@ -136,6 +129,8 @@ int current_lightprobe_x_texture = 0;
 
 GLuint lightprobe_x_textures[2];
 
+GLuint spritesheet_texture;
+
 GLuint blue_noise_texture;
 int blue_noise_w;
 int blue_noise_h;
@@ -152,7 +147,7 @@ void gl_init_general_buffers(memory_manager* manager)
 
     glGenTextures(1, &prepass_voxel_texture);
     glBindTexture(GL_TEXTURE_2D, prepass_voxel_texture);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8UI, prepass_resolution_x, prepass_resolution_y);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16UI, prepass_resolution_x, prepass_resolution_y);
 
     glGenTextures(1, &prepass_color_texture);
     glBindTexture(GL_TEXTURE_2D, prepass_color_texture);
@@ -166,7 +161,7 @@ void gl_init_general_buffers(memory_manager* manager)
         glTexStorage2D(GL_TEXTURE_2D, 2, GL_RGBA16F, lightprobe_resolution_x, lightprobe_resolution_y);
         //TODO: can add mip maps to allow for rougher surfaces
 
-        real_3 clear = {0.0,0.0,0.0};
+        real_3 clear = {0.05,0.05,0.05};
         glClearTexImage(lightprobe_color_textures[i], 0, GL_RGB, GL_FLOAT, &clear);
     }
 
@@ -254,9 +249,17 @@ void gl_init_general_buffers(memory_manager* manager)
 
     glGenTextures(1, &material_physical_properties_texture);
     glBindTexture(GL_TEXTURE_2D, material_physical_properties_texture);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, 4, N_MAX_MATERIALS);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, N_PHYSICAL_PROPERTIES, N_MAX_MATERIALS);
     // glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, 3, N_MAX_MATERIALS, 0, GL_RGB, GL_FLOAT, materials);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 3, N_MAX_MATERIALS, GL_RGB, GL_FLOAT, material_physicals);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, N_PHYSICAL_PROPERTIES, N_MAX_MATERIALS, GL_RED, GL_FLOAT, material_physicals);
+
+    // glGenBuffers(1, &material_visual_properties_buffer);
+    // glBindBuffer(GL_SHADER_STORAGE_BUFFER, material_visual_properties_buffer);
+    // glBufferStorage(GL_SHADER_STORAGE_BUFFER, N_MAX_MATERIALS*sizeof(material_visual_info), 0, GL_DYNAMIC_STORAGE_BIT);
+
+    // glGenBuffers(1, &material_physical_properties_buffer);
+    // glBindBuffer(GL_SHADER_STORAGE_BUFFER, material_physical_properties_buffer);
+    // glBufferStorage(GL_SHADER_STORAGE_BUFFER, N_MAX_MATERIALS*sizeof(material_physical_info), 0, GL_DYNAMIC_STORAGE_BIT);
 
     glGenTextures(len(materials_textures), materials_textures);
     for(int i = 0; i < len(materials_textures); i++)
@@ -272,13 +275,9 @@ void gl_init_general_buffers(memory_manager* manager)
         glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGBA8UI, body_texture_size, body_texture_size, body_texture_size);
     }
 
-    glGenTextures(1, &body_forces_texture);
-    glBindTexture(GL_TEXTURE_3D, body_forces_texture);
-    glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGB16F, body_texture_size, body_texture_size, body_texture_size);
-
-    glGenTextures(1, &body_shifts_texture);
-    glBindTexture(GL_TEXTURE_3D, body_shifts_texture);
-    glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGB16F, body_texture_size, body_texture_size, body_texture_size);
+    glGenTextures(1, &form_materials_texture);
+    glBindTexture(GL_TEXTURE_3D, form_materials_texture);
+    glTexStorage3D(GL_TEXTURE_3D, 1, GL_R8UI, form_texture_size, form_texture_size, form_texture_size);
 
     glGenFramebuffers(1, &frame_buffer);
     // glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
@@ -332,12 +331,31 @@ void gl_init_general_buffers(memory_manager* manager)
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, body_buffer);
 
+    glGenTextures(1, &spritesheet_texture);
+    glBindTexture(GL_TEXTURE_2D, spritesheet_texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8I, 4096, 4096);
+
     byte* blue_noise_data = stbi_load("HDR_RGBA_0.png", &blue_noise_w, &blue_noise_h, 0, 4);
     glGenTextures(1, &blue_noise_texture);
     glBindTexture(GL_TEXTURE_2D, blue_noise_texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, blue_noise_w, blue_noise_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, blue_noise_data);
     stbi_image_free(blue_noise_data);
 }
+
+struct sprite_info
+{
+    int_2 offset;
+    int_2 size;
+};
+
+// sprite_info load_to_spritesheet(char* filename, GLuint texture)
+// {
+//     sprite_info out;
+//     byte* image_data = stbi_load(filename, &out.size.x, &out.size.y, 0, 4);
+//     glBindTexture(GL_TEXTURE_2D, texture);
+//     glTexSubImage2D(GL_TEXTURE_2D, 0, out.offset.x, out.offset.y, out.size.x, out.size.y, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
+//     stbi_image_free(image_data);
+// }
 
 #define add_attribute_common(dim, gl_type, do_normalize, stride, offset_advance, divisor) \
     glEnableVertexAttribArray(layout_location);                         \
@@ -587,7 +605,7 @@ void draw_debug_text(char* text, real x, real y)
     #define vertex_size (sizeof(float)*3+sizeof(uint8)*4)
 
     //buffer square coord data (bounding box of circle)
-    byte vb[1024*vertex_size] = {};
+    byte vb[4096*vertex_size] = {};
     int n_quads = stb_easy_font_print(x, -y, text, NULL, vb, sizeof(vb));
     glBufferSubData(GL_ARRAY_BUFFER, offset, 4*vertex_size*n_quads, (void*) vb);
 
@@ -839,6 +857,101 @@ void render_world(real_3x3 camera_axes, real_3 camera_pos)
     glDisable(GL_BLEND);
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
     glEnable(GL_BLEND);
+}
+
+void load_form_to_gpu(cpu_form_data* fc, gpu_form_data* fg)
+{
+    static int n_forms = 0;
+    if(fc->storage_level < sm_gpu)
+    {
+        int padding = 0;
+        int size = 32;
+        int forms_per_row = (form_texture_size-2*padding)/size;
+        fg->materials_origin = {padding+size*(n_forms%forms_per_row),padding+size*((n_forms/forms_per_row)%forms_per_row),padding+size*(n_forms/sq(forms_per_row))};
+        n_forms++;
+
+        glBindTexture(GL_TEXTURE_3D, form_materials_texture);
+        glTexSubImage3D(GL_TEXTURE_3D, 0,
+                        fg->materials_origin.x, fg->materials_origin.y, fg->materials_origin.z,
+                        fg->size.x, fg->size.y, fg->size.z,
+                        GL_RED_INTEGER, GL_UNSIGNED_BYTE,
+                        fc->materials);
+        fc->storage_level = sm_gpu;
+    }
+}
+
+void reload_form_to_gpu(cpu_form_data* fc, gpu_form_data* fg)
+{
+    glBindTexture(GL_TEXTURE_3D, form_materials_texture);
+    glTexSubImage3D(GL_TEXTURE_3D, 0,
+                    fg->materials_origin.x, fg->materials_origin.y, fg->materials_origin.z,
+                    fg->size.x, fg->size.y, fg->size.z,
+                    GL_RED_INTEGER, GL_UNSIGNED_BYTE,
+                    fc->materials);
+}
+
+void render_editor_voxels(real_3x3 camera_axes, real_3 camera_pos, genedit_window* gew)
+{
+    glUseProgram(render_editor_voxels_program);
+
+    genome* gn = gew->active_genome;
+
+    int texture_i = 0;
+    int uniform_i = 0;
+
+    //camera
+    glUniformMatrix3fv(uniform_i++, 1, false, (GLfloat*) &camera_axes);
+    glUniform3fv(uniform_i++, 1, (GLfloat*) &camera_pos);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_2D, material_visual_properties_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_3D, form_materials_texture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_2D, blue_noise_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    static int frame_number = 0;
+    glUniform1i(uniform_i++, frame_number++);
+    glUniform1i(uniform_i++, gn->n_forms);
+
+    glUniform1i(uniform_i++, gew->active_form);
+    glUniform3iv(uniform_i++, 1, (int*) &gew->active_cell);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(gn->forms_gpu[0])*gn->n_forms, gn->forms_gpu);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, body_buffer);
+
+    size_t offset = 0;
+    int layout_location = 0;
+
+    GLuint vertex_buffer = gl_general_buffers[0];
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+    real vb[] = {-1,-1,0,
+        -1,+1,0,
+        +1,+1,0,
+        +1,-1,0};
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
+    add_contiguous_attribute(3, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 }
 
 void pad_lightprobes()
@@ -1715,6 +1828,7 @@ void simulate_bodies(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n
     GLenum buffers[] = {GL_COLOR_ATTACHMENT0};
     glDrawBuffers(len(buffers), buffers);
 
+    //TODO: loop with each set of genomes loaded
     for(int l = 0; l < body_texture_size; l++)
     {
         glUniform1i(layer_number_uniform, l);
@@ -1755,24 +1869,6 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
     glBindTexture(GL_TEXTURE_3D, body_materials_textures[current_body_materials_texture]);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-
-    glUniform1i(uniform_i++, texture_i);
-    glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_3D, body_forces_texture);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-
-    glUniform1i(uniform_i++, texture_i);
-    glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_3D, body_shifts_texture);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

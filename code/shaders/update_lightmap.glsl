@@ -83,7 +83,8 @@ void main()
             float roughness = get_roughness(material_id);
             vec3 emission = get_emission(material_id);
 
-            color += -(emission)*dot(normal, ray_dir);
+            // color += -(emission)*dot(normal, ray_dir);
+            color += emission;
 
             // float total_weight = 0.0;
 

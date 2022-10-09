@@ -55,7 +55,7 @@
 void* platform_big_alloc(size_t memory_size)
 {
     void* out = VirtualAlloc(0, memory_size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-    assert(out, "VirtualAlloc failed allocating ", memory_size, " bytes, error code = ", (int) GetLastError());
+    assert(out, "VirtualAlloc failed allocating ", memory_size, " bytes, error code = ", (int) GetLastError(),"\n");
     return out;
 }
 // #define platform_big_alloc(memory_size) malloc(memory_size);
@@ -544,7 +544,10 @@ int update_window(window_t* wnd)
     // auto window_height = wnd_rect.bottom-wnd_rect.top;
     // glViewport(0.5*(window_width-window_height), 0, window_height, window_height);
 
-    wnd->input.mouse += wnd->input.dmouse;
+    // wnd->input.mouse += wnd->input.dmouse;
+
+    wnd->input.mouse = {(2.0*cursor_point.x-(window_rect.left+window_rect.right))/window_height,
+        (-2.0*cursor_point.y+(window_rect.bottom+window_rect.top))/window_height};
 
     real gamma = 2.2;
     glClearColor(pow(0.2, gamma), pow(0.0, gamma), pow(0.3, gamma), 1.0);
@@ -583,9 +586,48 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // .n_components = 0,
         .brains = (brain*) permalloc_clear(manager, 1024*sizeof(brain)),
         .n_brains = 0,
+
+        .genomes = (genome*) permalloc_clear(manager, 1024*sizeof(genome)),
+        .n_genomes = 0,
+
+        .gew = {
+            .x = {-0.9, 0.9},
+
+            .theta = pi/2,
+            .phi = 0,
+            .camera_dist = 16.0,
+
+            .camera_axes = {
+                1, 0, 0,
+                0, 1, 0,
+                0, 0, 1,
+            },
+            .camera_pos = {0,0,-10},
+
+            .genodes = (genode*) permalloc_clear(manager, 1024*sizeof(genode)),
+            .n_genodes = 0,},
+
         .c = (chunk*) permalloc(manager, 8*sizeof(chunk)),
         .chunk_lookup = {},
     };
+
+    genome* gn = &w.genomes[w.n_genomes++];
+    *gn = {
+        .forms_cpu = (cpu_form_data*) permalloc(manager, 1024*sizeof(cpu_form_data)),
+        .forms_gpu = (gpu_form_data*) permalloc(manager, 1024*sizeof(gpu_form_data)),
+        .n_forms = 0,
+        .cell_types = (cell_type*) permalloc_clear(manager, 128*sizeof(cell_type)),
+        .n_cell_types = 3,
+    };
+    for(int i = 0; i < gn->n_cell_types; i++)
+    {
+        gn->cell_types[i].visual = material_visuals+128+i;
+        gn->cell_types[i].physical = material_physicals+128+i;
+    }
+
+    w.gew.active_genome = &w.genomes[0];
+
+    compile_genome(w.gew.active_genome,  w.gew.genodes);
 
     int max_3d_texture_size;
     glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE, &max_3d_texture_size);
@@ -607,6 +649,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 // height += clamp(ramp_height-abs(y-128), 0, ramp_height);
                 if(sqrt(rsq) < 80 && z < height+ramp_height-5) material = 2;
                 height += clamp((float) ramp_height-abs(sqrt(rsq)-80), 0.0, (float) ramp_height);
+                height += max((y*(x-400)/chunk_size), 0);
                 if(z < height) material = 1;
                 // else if(z < chunk_size-1) material = (randui(&w.seed)%prob)==0;
                 // if(x == chunk_size/2+0 && y == chunk_size/2+0) material = 2;
@@ -619,6 +662,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 if(z > chunk_size-10) material = 3;
 
                 int door_width = 40;
+                //outer walls
                 if(abs(x-chunk_size/2) > door_width/2 && abs(y-chunk_size/2) > door_width/2 ||
                    x <            5 ||
                    x > chunk_size-5 ||
@@ -632,10 +676,11 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     // if(chunk_size-z <= 10) material = 3;
                 }
 
+                //inner walls
                 int wall_thickness = 20;
                 if((abs(x-chunk_size/2) < wall_thickness/2 || abs(y-chunk_size/2) < wall_thickness/2) &&
                    !(abs(x-chunk_size*1/4) < door_width/2 || abs(y-chunk_size*1/4) < door_width/2
-                     || abs(x-chunk_size*3/4) < door_width/2 || abs(y-chunk_size*3/4) < door_width/2))
+                     || abs(x-chunk_size*3/4) < door_width/2 || abs(y-chunk_size*3/4) < door_width/2 || x > 400))
                 {
                      material = 3;
                 }
@@ -655,7 +700,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     for(int b = 0; b < 4; b++)
     {
         w.bodies_gpu[b].size = {12,12,12};
-        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
+        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
         w.bodies_gpu[b].x = {chunk_size*3/4-5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
@@ -710,14 +755,17 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     int limb_thickness = 1;
     real head_size = 5;
 
+    int body_material = 128;
+
     int limb_start_id = w.n_bodies;
     int body_id;
     int head_id;
     for(int i = 0; i < 8; i++) //limbs
     {
         int b = w.n_bodies;
-        w.bodies_gpu[b].size = {limb_length,limb_thickness,limb_thickness};
-        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
+        int_3 size = {limb_length,limb_thickness,limb_thickness};
+        w.bodies_gpu[b].size = {16,16,16};
+        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
         w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
@@ -734,11 +782,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
         // w.b->orientation = w.b->orientation*rotation;
 
-        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
-            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
-                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+        int_3 offset = (w.bodies_gpu[b].size-size)/2;
+        for(int z = offset.z; z < offset.z+size.z; z++)
+            for(int y = offset.y; y < offset.y+size.y; y++)
+                for(int x = offset.x; x < offset.x+size.x; x++)
                 {
-                    int material = 4;
+                    int material = body_material;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
 
                     real m = 0.001;
@@ -758,8 +807,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     {
         int b = w.n_bodies;
         body_id = b;
-        w.bodies_gpu[b].size = {body_length,body_width,body_depth};
-        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
+        int_3 size = {body_length,body_width,body_depth};
+        w.bodies_gpu[b].size = {16,16,16};
+        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
         w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
@@ -774,12 +824,14 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
         // w.b->orientation = w.b->orientation*rotation;
 
-        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
-            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
-                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+        int_3 offset = (w.bodies_gpu[b].size-size)/2;
+        log_output("offset: ", offset, "\n");
+        for(int z = offset.z; z < offset.z+size.z; z++)
+            for(int y = offset.y; y < offset.y+size.y; y++)
+                for(int x = offset.x; x < offset.x+size.x; x++)
                 {
                     int material = 0;
-                    if(x < shoulder_length || (z == 0 && y == body_width/2)) material = 4;
+                    if(x-offset.x < shoulder_length || (z-offset.z == 0 && y-offset.y == body_width/2)) material = body_material;
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
 
                     real m = 0.001;
@@ -799,9 +851,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     {
         int b = w.n_bodies;
         head_id = b;
-        w.bodies_gpu[b].size = {6,6,6};
-        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
-        w.bodies_gpu[b].x_cm = {head_size/2,head_size/2,head_size/2};
+        int_3 size = {head_size, head_size, head_size};
+        w.bodies_gpu[b].size = {16,16,16};
+        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
+        w.bodies_gpu[b].x_cm = real_cast((w.bodies_gpu[b].size-size)/2)+0.5*real_cast(size);
         w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
@@ -815,13 +868,18 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
         // w.b->orientation = w.b->orientation*rotation;
 
-        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
-            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
-                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+        int_3 offset = (w.bodies_gpu[b].size-size)/2;
+        log_output("offset: ", offset, "\n");
+        for(int z = offset.z; z < offset.z+size.z; z++)
+            for(int y = offset.y; y < offset.y+size.y; y++)
+                for(int x = offset.x; x < offset.x+size.x; x++)
                 {
-                    if(x >= head_size || y >= head_size || z >= head_size) continue;
-                    int material = 4;
+                    // if(x >= head_size || y >= head_size || z >= head_size) continue;
+                    int material = body_material;
+                    // if(abs(x-w.bodies_gpu[b].size.x/2+0.5f) >= 0.5*head_size-1) material++;
+
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+
                     real m = 0.001;
                     if(material == 0) m = 0;
                     w.bodies_gpu[b].m += m;
@@ -839,7 +897,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     {
         int b = w.n_bodies;
         w.bodies_gpu[b].size = {20,10,5};
-        w.bodies_cpu[b].materials = (uint16*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint16));
+        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
         w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
@@ -897,7 +955,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     w.bodies_cpu[head_id].joints[w.bodies_cpu[head_id].n_children++] = {
         .type = joint_ball,
         .child_body_id = body_id,
-        .pos = {{(head_size-1)/2,(head_size-1)/2,0}, {body_length-1,body_width/2,0}},
+        .pos = {{5+(head_size-1)/2,5+(head_size-1)/2,5}, {4+body_length-1,5+(body_width-1)/2,7}},
         .axis = {2,0},
         .max_speed = 0.5,
         .max_torque = 0.2,
@@ -908,7 +966,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.bodies_cpu[limb_start_id+2*i].joints[w.bodies_cpu[limb_start_id+2*i].n_children++] = {
             .type = joint_ball,
             .child_body_id = limb_start_id+2*i+1,
-            .pos = {{limb_length-1,0,0}, {0,0,0}},
+            .pos = {{5+limb_length-1,7,7}, {5,7,7}},
             .axis = {1,1},
             .max_speed = 0.5,
             .max_torque = 0.2,
@@ -954,7 +1012,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
         .type = joint_ball,
         .child_body_id = limb_start_id+0,
-        .pos = {{0,0,0}, {0,0,0}},
+        .pos = {{4,5,7}, {5,7,7}},
         .axis = {1,1},
         .max_speed = 0.5,
         .max_torque = 0.2,
@@ -963,7 +1021,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
         .type = joint_ball,
         .child_body_id = limb_start_id+2,
-        .pos = {{0,body_width-1,0}, {0,0,0}},
+        .pos = {{4,5+body_width-1,7}, {5,7,7}},
         .axis = {1,1},
         .max_speed = 0.5,
         .max_torque = 0.2,
@@ -996,20 +1054,20 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     br->endpoints[br->n_endpoints++] = {
         .type = endpoint_foot,
         .body_id = 5,
-        .pos = {limb_length-1,0,0},
+        .pos = {5+limb_length-1,7,7},
         .foot_phase = 0.0,
 
-        .root_anchor = {(head_size-1)/2,(head_size-1)/2,0},
+        .root_anchor = {5+(head_size-1)/2,5+(head_size-1)/2,5},
         .root_dist = 2*limb_length+body_length-3,
     };
 
     br->endpoints[br->n_endpoints++] = {
         .type = endpoint_foot,
         .body_id = 7,
-        .pos = {limb_length-1,0,0},
+        .pos = {5+limb_length-1,7,7},
         .foot_phase = 0.5,
 
-        .root_anchor = {(head_size-1)/2,(head_size-1)/2,0},
+        .root_anchor = {5+(head_size-1)/2,5+(head_size-1)/2,5},
         .root_dist = 2*limb_length+body_length-3,
     };
 
@@ -1018,10 +1076,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     //     .type = endpoint_foot,
     //     .body_id = 9,
     //     .pos = {limb_length-1,0,0},
-    //     .state = foot_lift,
-    //     .foot_phase_offset = 0.0,
-    //     .target_type = tv_velocity,
-    //     .target_value = {0,0,0},
+    //     .foot_phase = 0.0,
 
     //     .root_anchor = {shoulder_length-1,0,0},
     //     .root_dist = 2*limb_length,
@@ -1032,20 +1087,11 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     //     .type = endpoint_foot,
     //     .body_id = 11,
     //     .pos = {limb_length-1,0,0},
-    //     .state = foot_lift,
-    //     .foot_phase_offset = 0.5,
-    //     .target_type = tv_velocity,
-    //     .target_value = {0,0,0},
+    //     .foot_phase = 0.5,
 
     //     .root_anchor = {shoulder_length-1,body_width-1,0},
     //     .root_dist = 2*limb_length,
     // };
-
-
-    for(int j = 0; j < w.n_joints; j++)
-    {
-        w.components[w.n_components++] = {comp_joint, (void*) &w.joints[j]};
-    }
 
     for(int b = 0; b < w.n_bodies; b++)
     {
@@ -1057,6 +1103,37 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.bodies_cpu[b].contact_depths[2] = 16.0f;
 
         load_body_to_gpu(&w.bodies_cpu[b], &w.bodies_gpu[b]);
+    }
+
+    gn->forms_cpu[0].joint_type = joint_root;
+
+    for(int b = head_id; b >= limb_start_id; b--)
+    {
+        int f = gn->n_forms++;
+        gn->forms_cpu[f].gpu_data = &gn->forms_gpu[f];
+        gn->forms_cpu[f].materials = w.bodies_cpu[b].materials;
+        gn->forms_gpu[f].size = w.bodies_gpu[b].size;
+        gn->forms_gpu[f].x_cm = w.bodies_gpu[b].x_cm;
+
+        gn->forms_gpu[f].cell_material_id = w.bodies_gpu[b].cell_material_id;
+
+        gn->forms_gpu[f].x = {0,-f,1+f};
+        gn->forms_gpu[f].orientation = {1,0,0,0};
+
+
+        for(int c = 0; c < w.bodies_cpu[b].n_children; c++)
+        {
+            child_joint* joint = &w.bodies_cpu[b].joints[c];
+            int child_form_id = head_id-joint->child_body_id;
+            gn->forms_cpu[child_form_id].parent_form_id = f;
+            gn->forms_cpu[child_form_id].joint_type = joint->type;
+            gn->forms_cpu[child_form_id].joint_pos[0] = joint->pos[0];
+            gn->forms_cpu[child_form_id].joint_pos[1] = joint->pos[1];
+            gn->forms_cpu[child_form_id].joint_axis[0] = joint->axis[0];
+            gn->forms_cpu[child_form_id].joint_axis[1] = joint->axis[1];
+        }
+
+        load_form_to_gpu(&gn->forms_cpu[f], &gn->forms_gpu[f]);
     }
 
     // CreateDirectory(w.tim.savedir, 0);
@@ -1079,6 +1156,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         .blobs = (blob_render_info*) permalloc(manager, 10000*sizeof(blob_render_info)),
         .n_blobs = 0,
+
+        .debug_log = (char*) permalloc_clear(manager, 4096),
     };
 
     render_data ui = {
@@ -1092,6 +1171,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         .spherical_functions = (spherical_function_render_info*) permalloc(manager, 1000*sizeof(spherical_function_render_info)),
         .n_spherical_functions = 0,
+        .debug_log = (char*) permalloc_clear(manager, 4096),
     };
 
     audio_data ad;
@@ -1234,6 +1314,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             rd.n_total_line_points = 0;
             rd.n_lines = 0;
             rd.n_line_points[0] = 0;
+            rd.log_pos = 0;
+            rd.debug_log[0] = 0;
 
             ui.n_sheets = 0;
             ui.n_spherical_functions = 0;
@@ -1241,10 +1323,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             ui.n_total_line_points = 0;
             ui.n_lines = 0;
             ui.n_line_points[0] = 0;
+            ui.log_pos = 0;
+            ui.debug_log[0] = 0;
 
             update_sounds(&ad);
 
-            update_and_render(manager, &w, &rd, &ui, &ad, wnd.input);
+            update_and_render(manager, &w, &rd, &ui, &ad, &wnd.input);
 
             // if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
 
@@ -1253,12 +1337,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             // simulate_chunk(w.c, 1);
             // for(int i = 0 ; i < 8; i++)
             //     simulate_chunk(w.c, 0);
-            if(!is_down('Z', wnd.input)) simulate_chunk(w.c, 1);
+            if(!is_down('Z', &wnd.input)) simulate_chunk(w.c, 1);
             // if(!is_down('X', wnd.input)) mipmap_chunk(1,5);
             //
 
-            if(is_pressed('P', wnd.input)) do_draw_lightprobes = !do_draw_lightprobes;
-            if(is_pressed(VK_OEM_3, wnd.input)) show_fps = !show_fps;
+            if(is_pressed('P', &wnd.input)) do_draw_lightprobes = !do_draw_lightprobes;
+            if(is_pressed(VK_OEM_3, &wnd.input)) show_fps = !show_fps;
 
             /*NOTE FOR NEXT TIME:
               render at lower resolution, use that for lighting/reflection info,
@@ -1269,7 +1353,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             memcpy(wnd.input.prev_buttons, wnd.input.buttons, sizeof(wnd.input.buttons));
         }
 
-        if(!is_down('N', wnd.input))
+        if(!is_down('N', &wnd.input))
         {
             move_lightprobes();
             update_lightprobes();
@@ -1280,7 +1364,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         // render_depth_prepass(materials_textures[current_materials_texture], rd.camera_axes, rd.camera_pos, {512,512,512},{0,0,0});
 
-        if(!is_down('B', wnd.input))
+        if(!is_down('B', &wnd.input))
         {
             render_prepass(rd.camera_axes, rd.camera_pos, (int_3){chunk_size, chunk_size, chunk_size}, (int_3){0,0,0}, w.bodies_gpu, w.n_bodies);
 
@@ -1308,6 +1392,16 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             //     render_body(w.bodies_cpu+b, w.bodies_gpu+b, rd.camera_axes, rd.camera_pos);
             // }
         }
+        else
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
+            // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_buffer);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_texture, 0);
+
+            glViewport(0, 0, resolution_x, resolution_y);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
 
         // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, denoised_color_texture, 0);
         // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
@@ -1320,8 +1414,16 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // }
         // glEnable(GL_DEPTH_TEST);
 
+        if(w.edit_mode)
+        {
+            glDisable(GL_DEPTH_TEST);
+            render_editor_voxels(w.gew.camera_axes, w.gew.camera_pos, &w.gew);
+            glEnable(GL_DEPTH_TEST);
+        }
+
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);
+        draw_circles(ui.circles, ui.n_circles, ui.camera);
         glEnable(GL_DEPTH_TEST);
 
         if(do_draw_lightprobes)
@@ -1332,8 +1434,6 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         glClear(GL_DEPTH_BUFFER_BIT);
         draw_particles(rd.camera);
-
-        draw_circles(ui.circles, ui.n_circles, ui.camera);
 
         // draw_circles(ground_circles, n_ground_circles, rd.camera);
 
@@ -1364,6 +1464,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         draw_to_screen(color_texture);
 
         if(show_fps) draw_debug_text(frame_time_text, -1080/5+10, 720/5-10);
+        draw_debug_text(rd.debug_log, -1080/5+10, -720/5+50);
+        draw_debug_text(ui.debug_log, -1080/5+10, -720/5+50);
     }
     return 0;
 }

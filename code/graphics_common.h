@@ -4,8 +4,6 @@
 struct render_data;
 void draw_circle(render_data* rd, real_3 x, real radius, real_4 color);
 
-#include "game_common.h"
-
 /*NOTE: I should probably be enforcing the packing of these structs, since they are directly copied
   to opengl buffers, but they're all multiples of 4 bytes anyway so it will probably work out*/
 
@@ -95,6 +93,9 @@ struct render_data
 
     blob_render_info* blobs;
     uint n_blobs;
+
+    char* debug_log;
+    size_t log_pos;
 };
 
 void draw_circle(render_data* rd, real_3 x, real radius, real_4 color)
