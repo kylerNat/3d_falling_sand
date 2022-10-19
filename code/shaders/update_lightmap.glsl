@@ -83,6 +83,8 @@ void main()
             float roughness = get_roughness(material_id);
             vec3 emission = get_emission(material_id);
 
+            emission += vec3(1,0.05,0.1)*clamp((1.0/127.0)*(float(temp(voxel))-128), 0.0, 1.0);
+
             // color += -(emission)*dot(normal, ray_dir);
             color += emission;
 

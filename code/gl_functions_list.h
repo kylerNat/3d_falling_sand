@@ -53,6 +53,7 @@ gl_load_operation(void, glUniform1i, (GLuint location, GLint v0));
 gl_load_operation(void, glUniform1f, (GLuint location, GLfloat v0));
 gl_load_operation(void, glUniform2f, (GLuint location, GLfloat v0, GLfloat v1));
 gl_load_operation(void, glUniform3f, (GLuint location, GLfloat v0, GLfloat v1, GLfloat v2));
+gl_load_operation(void, glUniform2fv, (GLuint location, GLsizei count, GLfloat* value));
 gl_load_operation(void, glUniform3iv, (GLuint location, GLsizei count, GLint* value));
 gl_load_operation(void, glUniform3fv, (GLuint location, GLsizei count, GLfloat* value));
 gl_load_operation(void, glUniform4fv, (GLuint location, GLsizei count, GLfloat* value));

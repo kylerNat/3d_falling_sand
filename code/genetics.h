@@ -50,6 +50,7 @@ struct gpu_form_data
     quaternion orientation;
 
     int cell_material_id;
+    int is_mutating;
 };
 #pragma pack(pop)
 
@@ -121,7 +122,7 @@ struct gene_data
     int_2 sprite_offset;
     int_2 sprite_size;
 
-    int replication_time;
+    int growth_time;
     int life_cost;
 
     passive_function passive_fun;
@@ -164,23 +165,23 @@ void color_cell_blue(material_visual_info* visual, material_physical_info* physi
 gene_data gene_list[] =
 {
     {.type = gene_passive, .name = "Red Pigment", .sprite_filename = "ui/genes/Red.png",
-     .replication_time = 0, .life_cost = 0, .passive_fun = color_cell_red},
+     .growth_time = 0, .life_cost = 0, .passive_fun = color_cell_red},
     {.type = gene_passive, .name = "Green Pigment", .sprite_filename = "ui/genes/Green.png",
-     .replication_time = 0, .life_cost = 0, .passive_fun = color_cell_green},
+     .growth_time = 0, .life_cost = 0, .passive_fun = color_cell_green},
     {.type = gene_passive, .name = "Blue Pigment", .sprite_filename = "ui/genes/Blue.png",
-     .replication_time = 0, .life_cost = 0, .passive_fun = color_cell_blue},
+     .growth_time = 0, .life_cost = 0, .passive_fun = color_cell_blue},
     {.type = gene_passive, .name = "Hardness", .sprite_filename = "ui/genes/Hardness.png",
-     .replication_time = 2, .life_cost = 5, .passive_fun = harden},
+     .growth_time = 20, .life_cost = 5, .passive_fun = harden},
     {.type = gene_passive, .name = "Conductivity", .sprite_filename = "ui/genes/Conductivity.png",
-     .replication_time = 1, .life_cost = 1, .passive_fun = conductify},
+     .growth_time = 5, .life_cost = 1, .passive_fun = conductify},
     {.type = gene_passive, .name = "Density", .sprite_filename = "ui/genes/Density.png",
-     .replication_time = 1, .life_cost = 1, .passive_fun = densify},
+     .growth_time = 5, .life_cost = 1, .passive_fun = densify},
     {.type = gene_trigger, .name = "Auto Trigger", .sprite_filename = "ui/genes/trigger_always.png",
-     .replication_time = 1, .life_cost = 2, .trigger_id = trig_always},
+     .growth_time = 5, .life_cost = 2, .trigger_id = trig_always},
     {.type = gene_active, .name = "Die", .sprite_filename = "ui/genes/die.png",
-     .replication_time = 0, .life_cost = 0, .action_id = act_die},
+     .growth_time = 0, .life_cost = 0, .action_id = act_die},
     {.type = gene_active, .name = "Grow Next", .sprite_filename = "ui/genes/grow.png",
-     .replication_time = 0, .life_cost = 10, .action_id = act_grow},
+     .growth_time = 0, .life_cost = 10, .action_id = act_grow},
 };
 
 //returns if the genode is held
@@ -233,10 +234,10 @@ struct genedit_window
     int_3 active_cell;
     int_3 active_dir;
 
-    real_2 drag_origin;
-    int_3 old_dir;
+    real_3 extrude_counter;
 
-    real extrusion_counter;
+    int drag_key;
+    int active_material;
 };
 
 void compile_genome(genome* gn, genode* genodes)
@@ -255,6 +256,8 @@ void compile_genome(genome* gn, genode* genodes)
         {
             int gene_id = cell->genes[g];
             gene_data gene = gene_list[gene_id];
+
+            cell->physical->growth_time += gene.growth_time;
 
             if(gene.passive_fun) gene.passive_fun(cell->visual, cell->physical);
 
@@ -289,18 +292,17 @@ void drag_form(gpu_form_data* form_gpu, real_3 grab_point, real_3 target_x)
                                    grab_point
                                    +(real_3){0.5, 0.5, 0.5}-form_gpu->x_cm);
 
-    real_3 dir = normalize(form_gpu->x-target_x);
+    real_3 dir = normalize_or_zero(form_gpu->x-target_x);
 
     form_gpu->x = norm(form_r)*dir+target_x;
 
-    real_3 old_dir = normalize(form_r);
+    // log_output("grab_point: ", grab_point, "\n");
+    // log_output("x_cm: ", form_gpu->x_cm, "\n");
+    // log_output("r: ", form_r, "\n");
 
-    real_3 sine = cross(old_dir, dir);
-    real cosine = sqrt(1.0f-normsq(sine));
-    real_3 sin_half = sqrt(0.5f*(1-cosine))*normalize(sine);
-    real cos_half = sqrt(0.5f*(1+cosine));
+    real_3 old_dir = normalize_or_zero(form_r);
 
-    quaternion rotation = {cos_half, -sin_half.x, -sin_half.y, -sin_half.z};
+    quaternion rotation = get_rotation_between(old_dir, dir);
 
     form_gpu->orientation = rotation*form_gpu->orientation;
 }
@@ -312,20 +314,49 @@ void solve_form_joints(genome* g)
         cpu_form_data* form_cpu = &g->forms_cpu[f];
         gpu_form_data* form_gpu = &g->forms_gpu[f];
 
-        if(form_cpu->joint_type == joint_root) continue;
+        real_3 base_x = {};
+        real_3 grab_pos = form_gpu->x_cm;
 
-        cpu_form_data* parent_cpu = &g->forms_cpu[form_cpu->parent_form_id];
-        gpu_form_data* parent_gpu = &g->forms_gpu[form_cpu->parent_form_id];
+        if(form_cpu->joint_type != joint_root)
+        {
+            cpu_form_data* parent_cpu = &g->forms_cpu[form_cpu->parent_form_id];
+            gpu_form_data* parent_gpu = &g->forms_gpu[form_cpu->parent_form_id];
 
-        real_3 parent_r = apply_rotation(parent_gpu->orientation,
-                                         real_cast(form_cpu->joint_pos[0])
-                                         +(real_3){0.5, 0.5, 0.5}-parent_gpu->x_cm);
-        real_3 base_x = parent_gpu->x + parent_r;
+            real_3 parent_r = apply_rotation(parent_gpu->orientation,
+                                             real_cast(form_cpu->joint_pos[0])
+                                             +(real_3){0.5, 0.5, 0.5}-parent_gpu->x_cm);
+            base_x = parent_gpu->x + parent_r;
 
-        // form_gpu->x += 0.05*(form_gpu->x-parent_gpu->x);
-        // form_gpu->x.z -= 0.2;
+            form_gpu->x += 0.2*(form_gpu->x-parent_gpu->x);
+            // form_gpu->x.z -= 0.2;
 
-        drag_form(form_gpu, real_cast(form_cpu->joint_pos[1]), base_x);
+            grab_pos = real_cast(form_cpu->joint_pos[1]);
+
+            drag_form(form_gpu, grab_pos, base_x);
+        }
+
+        real center_threshold = 0.5;
+
+        if(abs(form_gpu->x.y) < center_threshold)
+        {
+            real_3 axis = form_gpu->x-base_x;
+            real_3 forward_dir = apply_rotation(form_gpu->orientation, (real_3){0,1,0});
+            real_3 centered_dir = {1,0,0};
+            if(normsq(axis) > 0.0001)
+            {
+                forward_dir = normalize_or_zero(rej(forward_dir, axis));
+                centered_dir = normalize_or_zero(rej(centered_dir, axis));
+            }
+
+            quaternion rotation = get_rotation_between(forward_dir, centered_dir);
+            real t = abs(form_gpu->x.y);
+            rotation = (quaternion){1.0-t,0,0,0} + t*rotation;
+            rotation = normalize(rotation);
+            assert(rotation.r == rotation.r && rotation.i == rotation.i && rotation.j == rotation.j && rotation.k == rotation.k);
+            form_gpu->orientation = rotation*form_gpu->orientation;
+        }
+
+        form_gpu->orientation = normalize(form_gpu->orientation);
     }
 };
 
@@ -335,6 +366,7 @@ bool set_form_cell(cpu_form_data* form_cpu, gpu_form_data* form_gpu, int_3 pos, 
        && pos.x < form_gpu->size.x && pos.y < form_gpu->size.y && pos.z < form_gpu->size.z)
     {
         int index = pos.x+form_gpu->size.x*(pos.y+form_gpu->size.y*pos.z);
+        int old_material = form_cpu->materials[index];
         form_cpu->materials[index] = material;
         return true;
     }
@@ -482,6 +514,8 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
         gpu_form_data* form_gpu = &gew->active_genome->forms_gpu[f];
         cpu_form_data* form_cpu = &gew->active_genome->forms_cpu[f];
 
+        form_gpu->is_mutating = false;
+
         float fov = pi*120.0/180.0;
         float screen_dist = 1.0/tan(fov/2);
         real_3 ray_dir = (+input->mouse.x*gew->camera_axes[0]
@@ -521,17 +555,22 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
             if(is_pressed(M1, input))
             {
                 input->active_ui_element = {ui_form_voxel, hit_form_cpu};
-                gew->extrusion_counter = 0;
-                gew->drag_origin = input->mouse;
+                gew->extrude_counter = {};
+                gew->drag_key = M1;
+                gew->active_material = 128;
             }
             if(is_pressed(M2, input))
             {
-                int_3 add_pos = hit.pos;
+                input->active_ui_element = {ui_form_voxel, hit_form_cpu};
+                gew->extrude_counter = {};
+                gew->drag_key = M2;
+                gew->active_material = 0;
 
-                gpu_form_data* form_gpu = hit_form_cpu->gpu_data;
-
-                hit_form_cpu->materials[add_pos.x+form_gpu->size.x*(add_pos.y+form_gpu->size.y*add_pos.z)] = 0;
-                reload_form_to_gpu(hit_form_cpu, form_gpu);
+                if(set_form_cell(hit_form_cpu, hit_form_cpu->gpu_data, hit.pos, gew->active_material))
+                {
+                    hit_form_cpu->gpu_data->is_mutating = true;
+                    reload_form_to_gpu(hit_form_cpu, hit_form_cpu->gpu_data);
+                }
             }
         }
         else
@@ -543,13 +582,16 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
     if(input->active_ui_element.type == ui_form_voxel)
     {
 
-        if(!is_down(M1, input)) input->active_ui_element = {};
+        if(!is_down(gew->drag_key, input)) input->active_ui_element = {};
         else
         {
             bool extruded = false;
 
             gpu_form_data* form_gpu = &gew->active_genome->forms_gpu[gew->active_form];
             cpu_form_data* form_cpu = &gew->active_genome->forms_cpu[gew->active_form];
+
+            float fov = pi*120.0/180.0;
+            float screen_dist = 1.0/tan(fov/2);
 
             //the position of the cell in camera coordinates
             real_3 cell_x =
@@ -558,71 +600,94 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
             //camera axes should be an orthogonal matrix, so this is the inverse
             cell_x = transpose(gew->camera_axes)*cell_x;
 
-            float fov = pi*120.0/180.0;
-            float screen_dist = 1.0/tan(fov/2);
-
             real_3x3 cell_axes = apply_rotation(form_gpu->orientation, real_identity_3(1));
             cell_axes = transpose(gew->camera_axes)*cell_axes;
-            int_3 extrude_dir = {};
-            real axis_dist = 0;
-            real axis_proj = 0;
+
+            int extrude_dir = 0;
+            real max_extrude_counter = 0;
+            int extrude_sign = 0;
+            real_2 voxel_screen_pos = -(screen_dist/cell_x.z)*cell_x.xy;
+            input->mouse = voxel_screen_pos;
+            //TODO: disable the axis going more into the screen when axes overlap
+
+            real_2 axis[3] = {};
+
             for(int i = 0; i < 3; i++)
             {
                 real_3 dir = cell_axes[i];
-                real_2 axis = {
-                    (dir.x*screen_dist)/cell_x.z+(dir.z*cell_x.x*screen_dist)/sq(cell_x.z),
-                    (dir.y*screen_dist)/cell_x.z+(dir.z*cell_x.y*screen_dist)/sq(cell_x.z)
+                axis[i] = {
+                    (dir.x*screen_dist)/cell_x.z-(dir.z*cell_x.x*screen_dist)/sq(cell_x.z),
+                    (dir.y*screen_dist)/cell_x.z-(dir.z*cell_x.y*screen_dist)/sq(cell_x.z)
                 };
-                if(abs(dot(cell_axes[i], normalize(cell_x))) > 0.8) continue;
-                axis = axis/normsq(axis);
 
-                // real new_axis_dist = abs(dot(input->mouse-gew->drag_origin, normalize(axis)));
-                real new_axis_dist = abs(dot(input->dmouse, normalize(axis)));
-                if(new_axis_dist > axis_dist)
+                axis[i] = 40.0f*normalize(axis[i]);
+            }
+            for(int i = 0; i < 3; i++)
+            {
+                for(int j = i+1; j < 3; j++)
                 {
-                    extrude_dir = {};
-                    axis_dist = new_axis_dist;
-                    // axis_proj = dot(input->mouse-gew->drag_origin, axis);
-                    real proj = dot(input->dmouse, axis);
-                    axis_proj = 0.5*abs(proj);
-                    extrude_dir[i] = -sign(proj);
+                    real overlap = abs(dot(normalize(axis[i]), normalize(axis[j])));
+                    real overlap_threshold = 0.7;
+                    if(overlap > overlap_threshold)
+                    {
+                        real z1 = abs(dot(cell_axes[i], normalize(cell_x)));
+                        real z2 = abs(dot(cell_axes[j], normalize(cell_x)));
+                        if(z1 > z2)
+                        {
+                            axis[i] /= 1.0f+(overlap-overlap_threshold)/(1.0f-overlap_threshold);
+                        }
+                        else
+                        {
+                            axis[j] /= 1.0f+(overlap-overlap_threshold)/(1.0f-overlap_threshold);
+                        }
+                    }
                 }
             }
 
-            gew->extrusion_counter += axis_proj;
-
-            // gew->extrusion_counter += 0.5*dot(input->dmouse, inv_extrude_proj);
-            // gew->extrusion_counter += -0.01*input->mouse_wheel;
-
-            gew->extrusion_counter = clamp(gew->extrusion_counter, -8.0f, 8.0f);
-
-            // ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "inv_extrude_proj: (%f, %f)\n",
-            //                        inv_extrude_proj.x, inv_extrude_proj.y);
-
-            ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "extrusion_counter: %f\n", gew->extrusion_counter);
-
-            ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "active_cell: (%d, %d, %d)\n",
-                                   gew->active_cell.x, gew->active_cell.y, gew->active_cell.z);
-
-            ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "extrude_dir: (%d, %d, %d)\n",
-                                   extrude_dir.x, extrude_dir.y, extrude_dir.z);
-
-            while(gew->extrusion_counter >= 1)
+            for(int i = 0; i < 3; i++)
             {
-                int_3 add_pos = gew->active_cell+extrude_dir;
+                ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "axis %d: (%f, %f)\n",
+                                       i, axis[i].x, axis[i].y);
+                draw_circle(ui, pad_3(voxel_screen_pos+0.05*normalize(axis[i])), 0.01, {i==0, i==1, i==2, 1});
+                draw_circle(ui, pad_3(voxel_screen_pos-0.05*normalize(axis[i])), 0.01, {i==0, i==1, i==2, 1});
+                // draw_circle(ui, pad_3(voxel_screen_pos-0.05*normalize(axis[i])*gew->extrude_counter[i]), 0.01, {i==0, i==1, i==2, 1});
 
-                if(set_form_cell(form_cpu, form_gpu, add_pos, 128))
+                gew->extrude_counter[i] += -0.5f*dot(input->dmouse, axis[i]);
+                if(abs(gew->extrude_counter[i]) > max_extrude_counter)
                 {
-                    gew->active_cell += extrude_dir;
+                    max_extrude_counter = abs(gew->extrude_counter[i]);
+                    extrude_dir = i;
+                    extrude_sign = sign(gew->extrude_counter[i]);
+                }
+            }
 
-                    extruded = true;
-                    gew->extrusion_counter -= 1;
+            // real_3 extrude_x =
+            //     apply_rotation(form_gpu->orientation, real_cast(gew->active_cell)
+            //                    +(real_3){0.5, 0.5, 0.5}-form_gpu->x_cm+gew->extrude_counter) + form_gpu->x - gew->camera_pos;
+            // extrude_x = transpose(gew->camera_axes)*extrude_x;
+            // real_2 extrude_screen_pos = -(screen_dist/extrude_x.z)*extrude_x.xy;
+            // draw_circle(ui, pad_3(extrude_screen_pos), 0.01, {1,1,1,1});
+
+            for(; max_extrude_counter > 1; max_extrude_counter -= 1)
+            {
+                gew->extrude_counter = {};
+
+                int_3 pos = gew->active_cell;
+                pos[extrude_dir] += extrude_sign;
+                if(set_form_cell(form_cpu, form_gpu, pos, gew->active_material))
+                {
+                    gew->active_cell = pos;
+                    form_gpu->is_mutating = true;
+                    reload_form_to_gpu(form_cpu, form_gpu);
                 }
                 else break;
             }
 
-            if(extruded)
-                reload_form_to_gpu(form_cpu, form_gpu);
+            ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "active_cell: (%d, %d, %d)\n",
+                                   gew->active_cell.x, gew->active_cell.y, gew->active_cell.z);
+
+            ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "extrude_counter: (%f, %f, %f)\n",
+                                   gew->extrude_counter.x, gew->extrude_counter.y, gew->extrude_counter.z);
         }
     }
 

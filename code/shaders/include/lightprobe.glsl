@@ -72,13 +72,13 @@ vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 de
                 vec3 trilinear_weights = clamp(1.0f+(1-2*p)*(1.0f/lightprobe_spacing)*base_dist, 0, 1);
                 weight *= trilinear_weights.x*trilinear_weights.y*trilinear_weights.z;
 
+                total_color_no_cheb += weight*sqrt(probe_color);
+
                 // if(r > probe_depth.r)
                 // {
                 //     float variance = abs(probe_depth.g-(probe_depth.r*probe_depth.r));
                 //     weight *= variance/(variance+sq(r-probe_depth.r));
                 // }
-
-                total_color_no_cheb += weight*sqrt(probe_color);
 
                 // I think this makes more sense
                 float variance = abs(probe_depth.g-sq(probe_depth.r));
@@ -95,8 +95,9 @@ vec3 sample_lightprobe_color(vec3 pos, vec3 normal, vec2 sample_oct, out vec2 de
                 total_color += weight*sqrt(probe_color);
                 depth += weight*(probe_depth);
             }
-    total_color.rgb = mix(sq(total_color_no_cheb.rgb*(1.0f/total_color_no_cheb.a)),
-                          sq(total_color.rgb*(1.0f/total_color.a)), min(total_color.a, 1));
+    // total_color.rgb = mix(sq(total_color_no_cheb.rgb*(1.0f/total_color_no_cheb.a)),
+    //                       sq(total_color.rgb*(1.0f/total_color.a)), min(total_color.a, 1));
+    total_color.rgb = sq(total_color.rgb*(1.0f/total_color.a));
 
     depth *= (1.0f/total_color.a);
     return total_color.rgb;

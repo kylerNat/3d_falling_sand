@@ -274,6 +274,7 @@ struct gpu_body_data
     real_3x3 invI;
 
     int cell_material_id; //material_id of cell type 0 for this body
+    int form_id;
 };
 #pragma pack(pop)
 
@@ -696,6 +697,10 @@ void iterate_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain*
             }
             // else
             {
+                real reduced_mass = 1.0f/(1.0f/root_gpu->m+1.0f/body_gpu->m);
+                endpoint_force *= reduced_mass/0.125f;
+                force *= root_gpu->m/0.125f;
+
                 real_3 net_endpoint_force = force+endpoint_force;
                 body_gpu->x_dot += (1.0f/body_gpu->m)*net_endpoint_force;
                 body_gpu->omega += body_gpu->invI*cross(r, net_endpoint_force);

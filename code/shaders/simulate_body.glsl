@@ -8,10 +8,12 @@
 layout(location = 0) in vec3 x;
 
 layout(location = 0) uniform int layer;
-layout(location = 5) uniform int n_bodies;
+layout(location = 6) uniform int n_bodies;
 
 #include "include/body_data.glsl"
-#define PARTICLE_DATA_BINDING 1
+#define FORM_DATA_BINDING 1
+#include "include/form_data.glsl"
+#define PARTICLE_DATA_BINDING 2
 #include "include/particle_data.glsl"
 
 flat out int b;
@@ -47,7 +49,7 @@ void main()
         int dead_index = atomicAdd(n_dead_particles, -1)-1;
         //this assumes particle creation and destruction never happen simutaneously
         uint p = dead_particles[dead_index];
-        particles[p].voxel_data = 2|(2<<(6+8))|(8<<(2+16));
+        particles[p].voxel_data = 3|(2<<(6+8))|(8<<(2+16))|(15<<24);
         particles[p].x = bodies[b].x_x;
         particles[p].y = bodies[b].x_y;
         particles[p].z = bodies[b].x_z;
@@ -70,11 +72,17 @@ layout(location = 1) uniform int frame_number;
 layout(location = 2) uniform sampler2D material_physical_properties;
 layout(location = 3) uniform usampler3D materials;
 layout(location = 4) uniform usampler3D body_materials;
+layout(location = 5) uniform usampler3D form_materials;
 
 #define MATERIAL_PHYSICAL_PROPERTIES
 #include "include/materials_physical.glsl"
 
 #include "include/body_data.glsl"
+#define FORM_DATA_BINDING 1
+#include "include/form_data.glsl"
+#define PARTICLE_DATA_BINDING 2
+#include "include/particle_data.glsl"
+
 
 flat in int b;
 flat in ivec3 origin;
@@ -113,6 +121,9 @@ void main()
     pos.xy = ivec2(gl_FragCoord.xy);
     pos.z = layer;
 
+    get_body_data(b);
+    if(body_form_id != 0) get_form_data(body_form_id-1);
+
     //+,0,-,0
     //0,+,0,-
     // int rot = (frame_number+layer)%4;
@@ -128,14 +139,14 @@ void main()
     uvec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
     uvec4 ba  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
 
+    ivec3 form_pos = pos-body_materials_origin+form_materials_origin;
+    uint form_voxel = texelFetch(form_materials, form_pos, 0).r;
+
     int spawned_cell = 0;
 
     uint temp = temp(c);
-    uint electric = electric(c);
+    uint volt = volt(c);
     uint trig = 0;
-
-    //b -> genome id
-    //genome id, cell type -> trigger list
 
     uint mid = mat(c); //material id
     bool is_cell = mid >= BASE_CELL_MAT;
@@ -160,7 +171,7 @@ void main()
                 condition = temp <= 4;
                 break;
             case trig_electric:
-                condition = electric > 0;
+                condition = volt > 0;
                 break;
             case trig_contact:
                 condition = trig(c) == i;
@@ -190,7 +201,7 @@ void main()
                     break;
                 }
                 case act_electrify: {
-                    electric = 3;
+                    volt = 3;
                     break;
                 }
                 case act_explode: {
@@ -209,7 +220,16 @@ void main()
 
     //check if this cell is empty, on the surface, and is filled in the body map
     //then check for neighbors that are trying to grow
-    if(mid == 0 && all(greaterThan(pos-origin, ivec3(0))) && all(lessThan(pos-origin, ivec3(32-1))))
+    if(form_is_mutating==1 && mid != form_voxel)
+    {
+        c = uvec4(0);
+    }
+
+    if(mid != form_voxel && form_voxel != 0 && depth(c) >= SURF_DEPTH-1 && frame_number%growth_time(form_voxel) == 0)
+    {
+        c.r = form_voxel;
+    }
+    else if(mid == 0 && all(greaterThan(pos-origin, ivec3(0))) && all(lessThan(pos-origin, ivec3(32-1))))
     {
         uvec4 growing_cell = uvec4(0);
         if(trig(l) != 0)       growing_cell = l;
@@ -278,7 +298,7 @@ void main()
     out_voxel.g = uint(depth);
     // out_voxel.g = uint(depth) | (phase << 6) | (transient << 7);
 
-    out_voxel.b = temp | (trig << 4);
+    out_voxel.b = temp;
 
-    out_voxel.a = colorvar(c) | (electric << 6);
+    out_voxel.a = volt | (trig << 4);
 }

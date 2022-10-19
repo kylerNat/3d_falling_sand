@@ -70,7 +70,7 @@ void main()
     if(transient == 0 && mat(texelFetch(materials, ivec3(x), 0)) == 0)
     {
         uint v = particles[p].voxel_data;
-        uvec4 particle_voxel_data = uvec4((v&0xF), ((v>>8)&0xF), ((v>>16)&0xF)|transient, ((v>>24)&0xF));
+        uvec4 particle_voxel_data = uvec4((v&0xF), ((v>>8)&0x7)|(transient<<7), ((v>>16)&0xF), ((v>>24)&0xF)|7);
         imageStore(materials_out, ivec3(x), particle_voxel_data);
         imageStore(active_regions_out, ivec3(x.x/16, x.y/16, x.z/16), uvec4(1,0,0,0));
         ivec3 cell_x = ivec3(x)%16;

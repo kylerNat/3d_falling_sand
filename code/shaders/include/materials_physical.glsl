@@ -1,11 +1,22 @@
+#ifdef UINT_PACKED_MATERIALS
+#define         mat(vox) (vox&0xFF)
+#define       depth(vox) (int((vox>>8)&0x1F))
+#define       phase(vox) ((vox>>13)&0x3)
+#define   transient(vox) ((vox>>15)&0x1)
+#define        temp(vox) ((vox>>16)&0xFF)
+#define        volt(vox) ((vox>>24)&0xF)
+#define        trig(vox) ((vox>>30))
+#define        flow(vox) ((vox>>30))
+#else
 #define         mat(vox) (vox.r)
 #define       depth(vox) (int(vox.g&0x1F))
 #define       phase(vox) ((vox.g>>5)&0x3)
 #define   transient(vox) (vox.g>>7)
-#define        temp(vox) (vox.b&0xF)
-#define        trig(vox) (vox.b>>4)
-#define    colorvar(vox) (vox.a&0x3F)
-#define    electric(vox) (vox.a>>6)
+#define        temp(vox) (vox.b)
+#define        volt(vox) (vox.a&0xF)
+#define        trig(vox) (vox.a>>4)
+#define        flow(vox) (vox.a>>4)
+#endif
 
 #define MAX_DEPTH 32
 #define SURF_DEPTH 16
@@ -64,19 +75,29 @@ float heat_capacity(uint material_id)
     return texelFetch(material_physical_properties, ivec2(5,material_id), 0).r;
 }
 
-float conductivity(uint material_id)
+float thermal_conductivity(uint material_id)
 {
-    return texelFetch(material_physical_properties, ivec2(6,material_id), 0).r;
+    return texelFetch(material_physical_properties, ivec2(6,material_id), 0).r+0.001;
 }
 
-float n_triggers(uint material_id)
+float conductivity(uint material_id)
 {
     return texelFetch(material_physical_properties, ivec2(7,material_id), 0).r;
 }
 
+int growth_time(uint material_id)
+{
+    return int(texelFetch(material_physical_properties, ivec2(8,material_id), 0).r);
+}
+
+float n_triggers(uint material_id)
+{
+    return texelFetch(material_physical_properties, ivec2(9,material_id), 0).r;
+}
+
 uint trigger_info(uint material_id, uint trigger_id)
 {
-    return uint(texelFetch(material_physical_properties, ivec2(8+trigger_id,material_id), 0).r);
+    return uint(texelFetch(material_physical_properties, ivec2(10+trigger_id,material_id), 0).r);
 }
 
 #endif

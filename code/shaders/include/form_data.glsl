@@ -11,6 +11,7 @@ struct form
     float orientation_r; float orientation_x; float orientation_y; float orientation_z;
 
     int cell_material_id;
+    int is_mutating;
 };
 
 ivec3 form_materials_origin;
@@ -20,6 +21,7 @@ vec3  form_x;
 vec4  form_orientation;
 
 int form_cell_material_id;
+int form_is_mutating;
 
 layout(std430, binding = FORM_DATA_BINDING) buffer form_data
 {
@@ -41,4 +43,5 @@ void get_form_data(int f)
     form_x_cm = vec3(forms[f].x_cm_x, forms[f].x_cm_y, forms[f].x_cm_z);
 
     form_cell_material_id = forms[f].cell_material_id;
+    form_is_mutating = forms[f].is_mutating;
 }

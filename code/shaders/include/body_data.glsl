@@ -23,6 +23,7 @@ struct body
     float invI_xz; float invI_yz; float invI_zz;
 
     int cell_material_id;
+    int form_id;
 };
 
 ivec3 body_materials_origin;
@@ -38,6 +39,7 @@ mat3 body_I;
 mat3 body_invI;
 
 int body_cell_material_id;
+int body_form_id;
 
 layout(std430, binding = BODY_DATA_BINDING) buffer body_data
 {
@@ -68,4 +70,5 @@ void get_body_data(int b)
                      bodies[b].invI_xz, bodies[b].invI_yz, bodies[b].invI_zz);
 
     body_cell_material_id = bodies[b].cell_material_id;
+    body_form_id = bodies[b].form_id;
 }

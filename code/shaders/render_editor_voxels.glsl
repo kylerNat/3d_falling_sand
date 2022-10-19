@@ -141,7 +141,7 @@ void main()
         vec3 reflection_dir = normal;
 
         float light_value = 0.5*dot(reflection_dir, spotlight_dir)+0.5+0.2;
-        light_value *= dot(camera_pos, camera_pos)/sq(total_dist);
+        light_value *= 0.5*dot(camera_pos, camera_pos)/sq(total_dist);
 
         frag_color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)*light_value;
     }

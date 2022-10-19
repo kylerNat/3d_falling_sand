@@ -226,31 +226,32 @@ void set_chunk_voxel(world* w, chunk* c, real_3 pos, uint16 material)
                     active_data);
 }
 
-void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, int_3 size, uint16 material)
+void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, int_3 size, uint8_4 voxel)
 {
     // pos = clamp_per_axis(pos, 0, chunk_size-1);
 
     int_3 active_data_size = {(int(pos.x)%16+size.x+15)/16, (int(pos.y)%16+size.y+15)/16, (int(pos.z)%16+size.z+15)/16};
 
-    byte* data = reserve_block(manager, size.x*size.y*size.z*3*sizeof(uint16)
+    byte* data = reserve_block(manager, size.x*size.y*size.z*4*sizeof(uint8)
                                + active_data_size.x*active_data_size.y*active_data_size.z*sizeof(uint));
-    uint16* materials_data = (uint16*) data;
-    uint* active_data = (uint*) (data+size.x*size.y*size.z*3*sizeof(uint16));
+    uint8* materials_data = (uint8*) data;
+    uint* active_data = (uint*) (data+size.x*size.y*size.z*4*sizeof(uint8));
     for(int i = 0; i < active_data_size.x*active_data_size.y*active_data_size.z; i++)
         active_data[i] = {0xFFFFFFFF};
 
     for(int i = 0; i < size.x*size.y*size.z; i++)
     {
-        materials_data[3*i+0] = material;
-        materials_data[3*i+1] = 0;
-        materials_data[3*i+2] = 0;
+        materials_data[4*i+0] = voxel[0];
+        materials_data[4*i+1] = voxel[1];
+        materials_data[4*i+2] = voxel[2];
+        materials_data[4*i+3] = voxel[3];
     }
     glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
     glActiveTexture(GL_TEXTURE0 + 0);
     glTexSubImage3D(GL_TEXTURE_3D, 0,
                     pos.x, pos.y, pos.z,
                     size.z, size.y, size.z,
-                    GL_RGB_INTEGER, GL_UNSIGNED_SHORT,
+                    GL_RGBA_INTEGER, GL_UNSIGNED_BYTE,
                     materials_data);
 
     glBindTexture(GL_TEXTURE_3D, active_regions_textures[current_active_regions_texture]);
@@ -266,7 +267,7 @@ void spawn_particles(real_3 x, real_3 x_dot)
 {
     particle_data_list particles = {
         .n_particles = 1,
-        .particles = {{.voxel_data = {2, (2<<6), (8<<2), 0}, .x = x, .x_dot = x_dot, .alive = true,}},
+        .particles = {{.voxel_data = {3, (2<<6), (8<<2), 15}, .x = x, .x_dot = x_dot, .alive = true,}},
     };
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particle_buffer);
@@ -282,7 +283,8 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     {
         do_edit_window(ui, input, &w->gew);
         real_4 cursor_color = {1,1,1,1};
-        draw_circle(ui, {input->mouse.x, input->mouse.y, 0}, 0.01, cursor_color);
+        if(input->active_ui_element.type != ui_form_voxel)
+            draw_circle(ui, {input->mouse.x, input->mouse.y, 0}, 0.01, cursor_color);
     }
     // else
     // {
@@ -525,7 +527,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     w->joints[j].torques = {0,0,0};
     // }
 
-    simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
+    simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->gew.active_genome->forms_gpu, w->gew.active_genome->n_forms);
     simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
 
     // w->bodies_cpu[5].contact_locked[0] = true;
@@ -597,7 +599,15 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         int brush_size = 50;
         real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
         pos = clamp_per_axis(pos, 0, chunk_size-brush_size-1);
-        set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, current_material);
+        set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,0,255,current_material==4?15:0});
+    }
+
+    if(is_down(M3, input) && !w->edit_mode)
+    {
+        int brush_size = 1;
+        real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
+        pos = clamp_per_axis(pos, 0, chunk_size-brush_size-1);
+        set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,0,0,current_material==4?15:0});
     }
 
     // if(is_down('T', input))
@@ -615,7 +625,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
         real_3 pos = player->x-placement_dist*camera_z;
         pos = clamp_per_axis(pos, 0, chunk_size-11);
-        set_chunk_region(manager, w, w->c, pos, {10,10,10}, 2);
+        set_chunk_region(manager, w, w->c, pos, {10,10,10}, {2});
     }
 
     if(is_down(M5, input))
@@ -626,7 +636,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
         real_3 pos = player->x-placement_dist*camera_z;
         pos = clamp_per_axis(pos, 0, chunk_size-11);
-        set_chunk_region(manager, w, w->c, pos, {10,10,10}, 0);
+        set_chunk_region(manager, w, w->c, pos, {10,10,10}, {0});
     }
 
     // if(is_down(M3, input))
