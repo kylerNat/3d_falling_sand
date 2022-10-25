@@ -109,7 +109,7 @@ void main()
         vec3 form_hit_dir;
         vec3 form_normal;
         uvec4 form_voxel;
-        bool form_hit = cast_ray(form_materials, form_ray_dir, form_pos, form_size, form_origin, form_hit_pos, form_hit_dist, form_hit_cell, form_hit_dir, form_normal, form_voxel, 100);
+        bool form_hit = cast_ray(form_materials, form_ray_dir, form_pos, form_size, form_origin, 0, form_hit_pos, form_hit_dist, form_hit_cell, form_hit_dir, form_normal, form_voxel, 100);
         // if(form_hit && (!hit || form_jump_dist+form_hit_dist < hit_dist) && b != 13 && b != 12)
         if(form_hit && (!hit || form_jump_dist+form_hit_dist < hit_dist))
         {

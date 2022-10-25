@@ -24,7 +24,7 @@ void main()
 layout(location = 0) out vec3 voxel_x;
 layout(location = 1) out vec4 voxel_orientation;
 layout(location = 2) out uvec4 voxel_data;
-layout(location = 3) out vec3 voxel_color;
+layout(location = 3) out vec4 voxel_color;
 
 layout(location = 0) uniform mat3 camera_axes;
 layout(location = 1) uniform vec3 camera_pos;
@@ -114,13 +114,14 @@ void main()
     vec3 hit_dir;
     vec3 normal;
     uvec4 voxel;
-    bool hit = cast_ray(materials, ray_dir, pos, size, origin, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
+    uint medium  = texelFetch(materials, ivec3(pos), 0).r;
+    bool hit = cast_ray(materials, ray_dir, pos, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
     // bool hit = coarse_cast_ray(ray_dir, pos, hit_pos, hit_dist, hit_cell, hit_dir, normal);
     // voxel = texelFetch(materials, hit_cell, 0);
 
     if(hit)
     {
-        normal = normalize(unnormalized_gradient(materials, hit_cell));
+        // normal = normalize(unnormalized_gradient(materials, hit_cell));
         voxel_x = vec3(hit_cell)+0.5;
     }
 
@@ -156,7 +157,7 @@ void main()
         vec3 body_hit_dir;
         vec3 body_normal;
         uvec4 body_voxel;
-        bool body_hit = cast_ray(body_materials, body_ray_dir, body_pos, body_size, body_origin, body_hit_pos, body_hit_dist, body_hit_cell, body_hit_dir, body_normal, body_voxel, 100);
+        bool body_hit = cast_ray(body_materials, body_ray_dir, body_pos, body_size, body_origin, 0, body_hit_pos, body_hit_dist, body_hit_cell, body_hit_dir, body_normal, body_voxel, 100);
         // if(body_hit && (!hit || body_jump_dist+body_hit_dist < hit_dist) && b != 13 && b != 12)
         if(body_hit && (!hit || body_jump_dist+body_hit_dist < hit_dist))
         {
@@ -173,83 +174,58 @@ void main()
         }
     }
 
+    vec4 transmission = vec4(1);
+
+    voxel_color = vec4(0);
+
     total_dist += hit_dist;
     if(hit)
     {
         voxel_data = voxel;
         gl_FragDepth = 1.0f/total_dist;
 
-        // uint material_id = voxel.r;
-        // float roughness = get_roughness(material_id);
-        // vec3 emission = get_emission(material_id);
+        for(int i = 0; i < 5; i++)
+        {
+            if(opacity(mat(voxel)) >= 1) break;
+            vec3 ray_pos = hit_pos;
+            if(ivec3(ray_pos) != hit_cell) ray_pos += 0.001*ray_dir;
+            float c = dot(ray_dir, normal);
+            float r = refractive_index(medium)/refractive_index(mat(voxel));
+            float square = 1.0-sq(r)*(1.0-sq(c));
+            if(square > 0) ray_dir = r*ray_dir-(r*c+sqrt(square))*normal;
+            else ray_dir = ray_dir - 2*c*normal; //total internal reflection
+            ray_dir = normalize(ray_dir);
+            medium = mat(voxel);
+            bool hit = cast_ray(materials, ray_dir, ray_pos, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
 
-        // voxel_color.rgb += -(emission)*dot(normal, ray_dir);
+            if(hit)
+            {
+                transmission *= exp(-opacity(mat(medium))*hit_dist);
+            }
+            else
+            {
+                break;
+            }
 
-        // float n_probe_samples = 1;
-        // float n_ray_samples = 0;
-        // float n_samples = n_probe_samples+n_ray_samples;
-        // for(int samp = 0; samp < n_probe_samples; samp++)
-        // {
-        //     vec3 reflection_normal = normal+0.5*roughness*(blue_noise(gl_FragCoord.xy/256.0+samp*vec2(0.82,0.34)).xyz-0.5f);
-        //     // vec3 reflection_normal = normal;
-        //     reflection_normal = normalize(reflection_normal);
-        //     vec3 reflection_dir = ray_dir - 2*dot(ray_dir, reflection_normal)*reflection_normal;
-        //     // vec3 reflection_dir = normal;
-        //     vec2 sample_depth;
-        //     voxel_color.rgb += (1.0f/n_samples)*fr(material_id, reflection_dir, -ray_dir, normal)
-        //         *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
-        // }
+            if(dot(transmission, transmission) < 0.001) break;
 
-        // for(int samp = 0; samp < n_ray_samples; samp++)
-        // {
-        //     vec3 reflection_dir = ray_dir - 2*dot(ray_dir, normal)*normal;
-        //     // reflection_dir += roughness*(blue_noise(gl_FragCoord.xy/256.0+(n_probe_samples*samp)*vec2(0.82,0.34)).xyz-0.5f);
-        //     reflection_dir = normalize(reflection_dir);
-        //     vec3 reflect_pos = hit_pos+0.5*reflection_dir;
-        //     // bool hit = coarse_cast_ray(reflection_dir, reflect_pos, hit_pos, hit_dist, hit_cell, hit_dir, normal);
-        //     bool hit = cast_ray(materials, reflection_dir, reflect_pos, size, origin, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 50);
-        //     vec3 reflectance = fr(material_id, reflection_dir, -ray_dir, normal);
-        //     if(hit)
-        //     {
-        //         // int material_id = texelFetch(materials, hit_cell, 0).r;
-        //         int material_id = voxel.r;
-        //         float roughness = get_roughness(material_id);
-        //         vec3 emission = get_emission(material_id);
+            uint material_id = voxel.r;
+            float roughness = get_roughness(material_id);
+            vec3 emission = get_emission(material_id);
 
-        //         voxel_color.rgb += (1.0f/n_samples)*reflectance*(emission)*dot(normal, reflection_dir);
+            // voxel_color.rgb += -(emission)*dot(normal, ray_dir);
+            voxel_color.rgb += emission;
 
-        //         vec2 sample_depth;
+            //TODO: actual blackbody color
+            voxel_color.rgb += vec3(1,0.05,0.1)*clamp((1.0/127.0)*(float(temp(voxel))-128), 0.0, 1.0);
 
-        //         vec3 reflection2_dir = ray_dir - 2*dot(ray_dir, normal)*normal;
-        //         reflection2_dir += roughness*(blue_noise(gl_FragCoord.xy/256.0+samp*vec2(0.82,0.34)).xyz-0.5f);
-        //         reflection2_dir = normalize(reflection2_dir);
-        //         voxel_color.rgb += (1.0f/n_samples)*reflectance
-        //             *fr(material_id, reflection2_dir, -reflection_dir, normal)
-        //             *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
-        //     }
-        //     else
-        //     {
-        //         vec2 sample_depth;
-        //         voxel_color.rgb += (1.0f/n_samples)*fr(material_id, reflection_dir, -ray_dir, normal)
-        //             *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
-        //     }
-        // }
+            voxel_color.rgb += vec3(0.7,0.3,1.0)*clamp((1.0/15.0)*(float(volt(voxel))), 0.0, 1.0);
+
+            vec3 reflection_dir = normal;
+            vec2 sample_depth;
+            voxel_color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)
+                *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
+            voxel_color *= transmission;
+        }
     }
-    // else
-    // {
-    //     vec2 sample_depth;
-    //     vec3 sample_color = sample_lightprobe_color(hit_pos, ray_dir, vec_to_oct(ray_dir), sample_depth);
-    //     gl_FragDepth = 1.0f-sample_depth.r/(512.0f*sqrt(3));
-    //     gl_FragDepth = clamp(gl_FragDepth, -1, 1);
-    //     voxel_color.rgb = sample_color;
-    //     voxel_color.a = 1.0f;
-    // }
-
-    // voxel_color.rgb = mix(voxel_color.rgb, sample_lightprobe_color(camera_pos, ray_dir, vec_to_oct(ray_dir)), 0.2);
-
-    // voxel_color.rgb = mix(vec3(1,0,0), vec3(0,0,1), n_texture_reads*1.0/20);
-    // voxel_color.rgb = mix(vec3(1,0,0), vec3(0,0,1), i*1.0/20);
-    // voxel_color.rgb *= clamp(1.0-1.0*total_dist/chunk_size, 0, 1);
-
-    // voxel_color.rgb = clamp(voxel_color.rgb, 0, 1);
 }

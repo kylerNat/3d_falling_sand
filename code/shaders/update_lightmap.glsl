@@ -69,7 +69,7 @@ void main()
         ivec3 origin = ivec3(0);
         ivec3 size = ivec3(512);
         uvec4 voxel;
-        bool hit = cast_ray(materials, ray_dir, probe_x, size, origin, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 24);
+        bool hit = cast_ray(materials, ray_dir, probe_x, size, origin, 0, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 24);
 
         vec3 color = vec3(0);
         vec2 depth = vec2(0);

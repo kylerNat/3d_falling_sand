@@ -16,13 +16,13 @@ out vec3 p;
 
 void main()
 {
-    int z = layer/16;
+    int z = layer>>4;
     int y = int(X.y);
     int x = int(X.x);
 
     p=vec3(16*x,16*y,layer);
 
-    gl_Position = vec4(-2,-2,0,1);
+    gl_Position = vec4(0.0/0.0,0.0/0.0,0,1);
 
     float scale = 2.0f/32.0f;
 
@@ -69,6 +69,11 @@ float float_noise(uint seed)
 
 const int chunk_size = 256;
 
+uint conduction_dir(ivec3 pos)
+{
+    return rand(rand(frame_number+rand(rand(rand(pos.z)+pos.y)+pos.x)))%6;
+}
+
 void main()
 {
     float scale = 1.0/chunk_size;
@@ -90,21 +95,30 @@ void main()
     int i = 0;
     ivec2 dir = ivec2(((flow&1)*(2-flow)), (1-(flow&1))*(1-flow)); //(0,1), (1,0), (0,-1), (-1,0)
 
-    uvec4 u  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z+1),0);
-    uvec4 d  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z-1),0);
-    uvec4 r  = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z),0);
-    uvec4 l  = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z),0);
+    ivec3 pu = ivec3(pos.x, pos.y, pos.z+1);
+    ivec3 pd = ivec3(pos.x, pos.y, pos.z-1);
+    ivec3 pr = ivec3(pos.x+dir.x, pos.y+dir.y, pos.z);
+    ivec3 pl = ivec3(pos.x-dir.x, pos.y-dir.y, pos.z);
+    ivec3 pf = ivec3(pos.x-dir.y, pos.y+dir.x, pos.z);
+    ivec3 pb = ivec3(pos.x+dir.y, pos.y-dir.x, pos.z);
+
+    uvec4 u  = texelFetch(materials, pu, 0);
+    uvec4 d  = texelFetch(materials, pd, 0);
+    uvec4 r  = texelFetch(materials, pr, 0);
+    uvec4 l  = texelFetch(materials, pl, 0);
+    uvec4 f  = texelFetch(materials, pf, 0);
+    uvec4 b  = texelFetch(materials, pb, 0);
+
     uvec4 dr = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z-1),0);
     uvec4 ur = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z+1),0);
-
-    uvec4 f  = texelFetch(materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z),0);
-    uvec4 b  = texelFetch(materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z),0);
 
     uvec4 ul = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z+1),0);
     uvec4 ll = texelFetch(materials, ivec3(pos.x-2*dir.x, pos.y-2*dir.y, pos.z),0);
     uvec4 dl = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z-1),0);
 
-    if(update_cells == 1)
+    uvec4 uu = texelFetch(materials, ivec3(pos.x, pos.y, pos.z+2),0);
+
+    if(update_cells == 1 && frame_number != 0)
     {
         if(mat(c) == 0)
         { //central cell is empty
@@ -112,11 +126,17 @@ void main()
             //check if upper cell fell           , liquids and sands
             //then check if upper left cell fell , liquids and sands
             //then check if left cell flowed     , liquids
-            if(mat(u) != 0 && phase(u) != phase_solid && transient(u)==0)
+            if(mat(u) != 0 && phase(u) >= phase_sand && transient(u)==0)
                 c = u;
-            else if(mat(l) != 0 && mat(ul) != 0 && mat(u) == 0 && phase(ul) != phase_solid && flow(ul) == flow && transient(ul)==0)
+            else if(mat(ul) != 0 && mat(l) != 0 && mat(u) == 0 && phase(ul) >= phase_sand && flow(ul) == flow && transient(ul)==0)
                 c = ul;
-            else if(mat(dl) != 0 && mat(d) != 0 && (mat(ul) == 0 || phase(ul) < phase_sand || flow(ul) != flow) && phase(l) == phase_liquid && flow(l) == flow && transient(l)==0)
+            else if(mat(l) != 0 && mat(dl) != 0 && mat(d) != 0 && phase(l) == phase_liquid && flow(l) == flow && transient(l)==0)
+                c = l;
+            else if(mat(d) != 0 && phase(d) == phase_gas && transient(d)==0)
+                c = d;
+            else if(mat(dl) != 0 && mat(l) != 0 && mat(d) == 0 && phase(dl) == phase_gas && flow(dl) == flow && transient(dl)==0)
+                c = dl;
+            else if(mat(l) != 0 && mat(ul) != 0 && mat(u) != 0 && phase(l) == phase_gas && flow(l) == flow && transient(l)==0)
                 c = l;
             else
             {
@@ -151,13 +171,23 @@ void main()
         }
         else if(phase(c) != phase_solid && transient(c)==0)
         { //if the cell is not empty and not solid check if it fell or flew
-            bool fall_allowed = (pos.z > 0 && (mat(d) == 0 || (mat(dr) == 0 && mat(r) == 0 && flow(dr) == flow)));
+            bool fall_allowed = (pos.z > 0 && (mat(d) == 0 || (mat(dr) == 0 && mat(r) == 0 && flow(dr) == flow)) && phase(c) >= phase_sand);
             bool flow_allowed = (pos.z > 0 && mat(r) == 0
                                  && mat(dr) != 0 && mat(d) != 0
                                  && (mat(ur) == 0 || phase(ur) < phase_sand || flow(ur) != flow)
                                  && (mat(u) == 0 || phase(u) < phase_sand)
-                                 && phase(c) > phase_sand && flow(r) == flow);
-            if(fall_allowed || flow_allowed) c = uvec4(0);
+                                 && phase(c) == phase_liquid && flow(r) == flow);
+
+            //TODO: check for other higher priority motions, in addition to uu falling
+            bool float_allowed = (pos.z < 511 && (mat(u) == 0 || (mat(ur) == 0 && mat(r) == 0 && flow(ur) == flow)) && phase(c) == phase_gas && (mat(uu) == 0 || (phase(uu) <= phase_solid)));
+
+            bool gas_flow_allowed = (pos.z > 0 && mat(r) == 0
+                                     && mat(ur) != 0 && mat(u) != 0
+                                     && (mat(dr) == 0 || phase(dr) < phase_sand || flow(dr) != flow)
+                                     && (mat(d) == 0 || phase(d) < phase_sand)
+                                     && phase(c) == phase_gas && flow(r) == flow);
+
+            if(fall_allowed || flow_allowed || float_allowed || gas_flow_allowed) c = uvec4(0);
             else
             {
                 flow = rand(rand(rand(frame_number)))%4;
@@ -188,102 +218,50 @@ void main()
         }
     }
 
-    int depth = SURF_DEPTH;
-    if(mat(c) != 0 && transient(c)==0)
-    {
-        if(mat(r) == 0 || transient(r) != 0 ||
-           mat(l) == 0 || transient(l) != 0 ||
-           mat(u) == 0 || transient(u) != 0 ||
-           mat(d) == 0 || transient(d) != 0 ||
-           mat(f) == 0 || transient(f) != 0 ||
-           mat(b) == 0 || transient(b) != 0) depth = SURF_DEPTH;
-        else
-        {
-            depth = MAX_DEPTH-1;
-            depth = min(depth, depth(r)+1);
-            depth = min(depth, depth(l)+1);
-            depth = min(depth, depth(u)+1);
-            depth = min(depth, depth(d)+1);
-            depth = min(depth, depth(f)+1);
-            depth = min(depth, depth(b)+1);
-        }
-    }
+    int depth = MAX_DEPTH-1;
+    uint permaterial = permaterial(c);
+    if((permaterial(u) != permaterial) ||
+       (permaterial(d) != permaterial) ||
+       (permaterial(r) != permaterial) ||
+       (permaterial(l) != permaterial) ||
+       (permaterial(f) != permaterial) ||
+       (permaterial(b) != permaterial)) depth = 0;
     else
     {
-        depth = 0;
-        depth = max(depth, depth(r)-1);
-        depth = max(depth, depth(l)-1);
-        depth = max(depth, depth(u)-1);
-        depth = max(depth, depth(d)-1);
-        depth = max(depth, depth(f)-1);
-        depth = max(depth, depth(b)-1);
+        depth = min(depth, depth(u)+1);
+        depth = min(depth, depth(d)+1);
+        depth = min(depth, depth(r)+1);
+        depth = min(depth, depth(l)+1);
+        depth = min(depth, depth(f)+1);
+        depth = min(depth, depth(b)+1);
     }
 
-    uint volt = volt(c);
+    int volt = int(volt(c));
 
-    // // float capacitance = 0;
-    // vec2 avg_volt = vec2(0);
-    // float r_c = 1.0/conductivity(mat(c));
-    // if(mat(r)!=0 && volt(r)>0 && conductivity(mat(r))>0){float sigma=1.0/(r_c+1.0/conductivity(mat(r)));avg_volt+=vec2(sigma*float(volt(r)),sigma);}
-    // if(mat(l)!=0 && volt(l)>0 && conductivity(mat(l))>0){float sigma=1.0/(r_c+1.0/conductivity(mat(l)));avg_volt+=vec2(sigma*float(volt(l)),sigma);}
-    // if(mat(u)!=0 && volt(u)>0 && conductivity(mat(u))>0){float sigma=1.0/(r_c+1.0/conductivity(mat(u)));avg_volt+=vec2(sigma*float(volt(u)),sigma);}
-    // if(mat(d)!=0 && volt(d)>0 && conductivity(mat(d))>0){float sigma=1.0/(r_c+1.0/conductivity(mat(d)));avg_volt+=vec2(sigma*float(volt(d)),sigma);}
-    // if(mat(f)!=0 && volt(f)>0 && conductivity(mat(f))>0){float sigma=1.0/(r_c+1.0/conductivity(mat(f)));avg_volt+=vec2(sigma*float(volt(f)),sigma);}
-    // if(mat(b)!=0 && volt(b)>0 && conductivity(mat(b))>0){float sigma=1.0/(r_c+1.0/conductivity(mat(b)));avg_volt+=vec2(sigma*float(volt(b)),sigma);}
-    // if(avg_volt.y > 0)
-    // {
-    //     avg_volt.x = avg_volt.x/avg_volt.y;
-
-    //     float dvolt = avg_volt.x-float(volt)-1;
-    //     float dvolt_i = round(dvolt);
-    //     float dvolt_f = dvolt-dvolt_i;
-    //     if((rand(frame_number+rand(rand(pos.z))))%32 < int(32.0*abs(dvolt_f))) dvolt_i += sign(dvolt_f);
-    //     volt = uint(clamp(float(volt)+dvolt_i, 0.0, 255.0));
-    // }
-    // // if(volt > 1) volt = volt-1;
-    // if(conductivity(mat(c)) == 0)
-    // {
-    //     volt = 0;
-    // }
     if(conductivity(mat(c)) > 0)
     {
+        uint cd = conduction_dir(pos);
         int dvolt = 0;
-        int volti = int(volt);
-        int nvolti = int(volt);
+        int nvolt = volt;
         int neighbors = 0;
-        uint current_dir = rand(frame_number+rand(rand(rand(pos.z)+pos.y)+pos.x)+10)%6;
-        if(mat(r)!=0 && conductivity(mat(r))>0){if(volt(r)>0)neighbors++; if(current_dir==0)nvolti = max(nvolti, int(volt(r)));}
-        if(mat(l)!=0 && conductivity(mat(l))>0){if(volt(l)>0)neighbors++; if(current_dir==1)nvolti = max(nvolti, int(volt(l)));}
-        if(mat(u)!=0 && conductivity(mat(u))>0){if(volt(u)>0)neighbors++; if(current_dir==2)nvolti = max(nvolti, int(volt(u)));}
-        if(mat(d)!=0 && conductivity(mat(d))>0){if(volt(d)>0)neighbors++; if(current_dir==3)nvolti = max(nvolti, int(volt(d)));}
-        if(mat(f)!=0 && conductivity(mat(f))>0){if(volt(f)>0)neighbors++; if(current_dir==4)nvolti = max(nvolti, int(volt(f)));}
-        if(mat(b)!=0 && conductivity(mat(b))>0){if(volt(b)>0)neighbors++; if(current_dir==5)nvolti = max(nvolti, int(volt(b)));}
-        dvolt = nvolti-volti;
-        // if((rand(frame_number+rand(rand(rand(pos.z)+pos.y)+pos.x))%4)!=0) dvolt--;
+        if(mat(r)!=0 && conductivity(mat(r))>0){if(volt(r)>0)neighbors++; nvolt = max(nvolt, int(volt(r)));}
+        if(mat(l)!=0 && conductivity(mat(l))>0){if(volt(l)>0)neighbors++; nvolt = max(nvolt, int(volt(l)));}
+        if(mat(u)!=0 && conductivity(mat(u))>0){if(volt(u)>0)neighbors++; nvolt = max(nvolt, int(volt(u)));}
+        if(mat(d)!=0 && conductivity(mat(d))>0){if(volt(d)>0)neighbors++; nvolt = max(nvolt, int(volt(d)));}
+        if(mat(f)!=0 && conductivity(mat(f))>0){if(volt(f)>0)neighbors++; nvolt = max(nvolt, int(volt(f)));}
+        if(mat(b)!=0 && conductivity(mat(b))>0){if(volt(b)>0)neighbors++; nvolt = max(nvolt, int(volt(b)));}
+        dvolt = nvolt-volt;
+        if((rand(frame_number+rand(rand(rand(pos.z)+pos.y)+pos.x))%7)!=0) dvolt--;
+        // if(volt <= 8 && neighbors == 0) dvolt--;
         if(dvolt > 0 && neighbors > 1) dvolt = 0;
-        volti = volti+dvolt;
-        volt = clamp(volti, 0, 15);
-
-        // int dvolt = 0;
-        // int volti = int(volt);
-        // if(mat(r)!=0 && conductivity(mat(r))>0){dvolt += 2*sign(int(volt(r))-volti);}
-        // if(mat(l)!=0 && conductivity(mat(l))>0){dvolt += 2*sign(int(volt(l))-volti);}
-        // if(mat(u)!=0 && conductivity(mat(u))>0){dvolt += 2*sign(int(volt(u))-volti);}
-        // if(mat(d)!=0 && conductivity(mat(d))>0){dvolt += 2*sign(int(volt(d))-volti);}
-        // if(mat(f)!=0 && conductivity(mat(f))>0){dvolt += 2*sign(int(volt(f))-volti);}
-        // if(mat(b)!=0 && conductivity(mat(b))>0){dvolt += 2*sign(int(volt(b))-volti);}
-        volt = uint(clamp(volti, 0, 15));
+        volt = volt+dvolt;
+        volt = clamp(volt, 0, 15);
     }
     else
     {
         volt = 0;
     }
     if(frame_number == 0) volt = 0;
-
-    // if(mat(c) == 4)
-    // {
-    //     volt = 15;
-    // }
 
     uint temp = temp(c);
     // if(mat(c) == 4) temp = 255; else
@@ -294,10 +272,10 @@ void main()
         //NOTE: this would save some divisions by storing thermal resistivity,
         //      but it's nicer to define materials in terms of conductivity so 0 has well defined behavior
         float r_c = 1.0/thermal_conductivity(mat(c));
-        {float k = 1.0/(r_c+1.0/thermal_conductivity(mat(r))); Q += k*(float(temp(r))-float(temp));}
-        {float k = 1.0/(r_c+1.0/thermal_conductivity(mat(l))); Q += k*(float(temp(l))-float(temp));}
         {float k = 1.0/(r_c+1.0/thermal_conductivity(mat(u))); Q += k*(float(temp(u))-float(temp));}
         {float k = 1.0/(r_c+1.0/thermal_conductivity(mat(d))); Q += k*(float(temp(d))-float(temp));}
+        {float k = 1.0/(r_c+1.0/thermal_conductivity(mat(r))); Q += k*(float(temp(r))-float(temp));}
+        {float k = 1.0/(r_c+1.0/thermal_conductivity(mat(l))); Q += k*(float(temp(l))-float(temp));}
         {float k = 1.0/(r_c+1.0/thermal_conductivity(mat(f))); Q += k*(float(temp(f))-float(temp));}
         {float k = 1.0/(r_c+1.0/thermal_conductivity(mat(b))); Q += k*(float(temp(b))-float(temp));}
 
@@ -319,11 +297,14 @@ void main()
     }
     else temp = 100;
 
-    // temp = clamp(temp+volt, 0u, 255u);
+    // temp = clamp(temp+abs((volt-int(volt(c)))), 0u, 255u);
+    temp = clamp(temp+volt, 0u, 255u);
+
+    if(mat(c) == 6 && temp < 128) c.r = 0;
 
     uint phase = phase_solid;
     if(hardness(mat(c)) == 0.0
-       || (mat(r) == 0 && mat(l) == 0 && mat(u) == 0 && mat(d) == 0 && mat(f) == 0 && mat(b) == 0)) phase = phase_sand;
+       || (mat(u) == 0 && mat(d) == 0 && mat(r) == 0 && mat(l) == 0 && mat(f) == 0 && mat(b) == 0)) phase = phase_sand;
     if(float(temp) > melting_point(mat(c))) phase = phase_liquid;
     if(float(temp) > boiling_point(mat(c))) phase = phase_gas;
 
@@ -344,7 +325,7 @@ void main()
 
     // bool changed = c.r != out_voxel.r || c.g != out_voxel.g || c.b != out_voxel.b;
     // bool changed = c.r != out_voxel.r || c.g != out_voxel.g;
-    bool changed = c.r != out_voxel.r || c.g != out_voxel.g || (int(c.b) != int(out_voxel.b) && out_voxel.b > 128) || volt != volt(c);
+    bool changed = c.r != out_voxel.r || c.g != out_voxel.g || (int(c.b) != int(out_voxel.b) && out_voxel.b > 128) || volt != volt(c) || volt > 0;
     if(changed)
     {
         imageStore(active_regions_out, ivec3(pos.x/16, pos.y/16, pos.z/16), uvec4(1,0,0,0));

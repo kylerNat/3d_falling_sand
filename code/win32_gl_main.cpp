@@ -575,7 +575,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     manager->current = manager->first;
 
     window_t wnd = create_window(manager, "3D Sand", "3dsand", 1280, 720, 10, 10, hinstance);
-    fullscreen(wnd);
+    // fullscreen(wnd);
     show_window(wnd);
 
     int next_id = 1;
@@ -658,6 +658,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 int ramp_height = 20;
                 // height += clamp(ramp_height-abs(y-128), 0, ramp_height);
                 if(sqrt(rsq) < 80 && z < height+ramp_height-5) material = 2;
+                if(sqrt(rsq) < 80 && z < 20) material = 5;
                 height += clamp((float) ramp_height-abs(sqrt(rsq)-80), 0.0, (float) ramp_height);
                 height += max((y*(x-400)/chunk_size), 0);
                 if(z < height) material = 1;
@@ -685,6 +686,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     // if(chunk_size-z <= 10) material = 3;
                 }
 
+                int glass_thickness = 3;
+                if(x > 400 && y > 400 && z > 100 && z < 200 &&
+                   (x < 400+glass_thickness || y < 400+glass_thickness || z < 100+glass_thickness)) material = 7;
+
                 //inner walls
                 int wall_thickness = 20;
                 if((abs(x-chunk_size/2) < wall_thickness/2 || abs(y-chunk_size/2) < wall_thickness/2) &&
@@ -705,6 +710,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     else if(z >= height)
                         material = 0;
                 }
+
+                if(z == height+10 && x < 50 && y < 50) material = 3;
 
                 // if(y == chunk_size/2 && abs(x-chunk_size/2) <= 2*(i) && x%2 == 0) material = 3;
                 if(y == chunk_size*3/4 && x == chunk_size*3/4+20 && z < 50) material = 3;
@@ -1362,7 +1369,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             // simulate_chunk(w.c, 1);
             // for(int i = 0 ; i < 8; i++)
             //     simulate_chunk(w.c, 0);
-            if(!is_down('Z', &wnd.input)) simulate_chunk(w.c, 1);
+            if(!is_down('Z', &wnd.input)) simulate_chunk_atomic(w.c, 1);
             // if(is_pressed('Z', &wnd.input)) simulate_chunk(w.c, 1);
 
             if(is_pressed('P', &wnd.input)) do_draw_lightprobes = !do_draw_lightprobes;

@@ -16,20 +16,20 @@ layout(location = 6) uniform int n_bodies;
 #define PARTICLE_DATA_BINDING 2
 #include "include/particle_data.glsl"
 
-flat out int b;
+flat out int bi;
 flat out ivec3 origin;
 
 void main()
 {
-    b = gl_InstanceID;
+    bi = gl_InstanceID;
 
     // get_body_data(b);
-    body_materials_origin = ivec3(bodies[b].materials_origin_x,
-                                  bodies[b].materials_origin_y,
-                                  bodies[b].materials_origin_z);
-    body_size = ivec3(bodies[b].size_x,
-                      bodies[b].size_y,
-                      bodies[b].size_z);
+    body_materials_origin = ivec3(bodies[bi].materials_origin_x,
+                                  bodies[bi].materials_origin_y,
+                                  bodies[bi].materials_origin_z);
+    body_size = ivec3(bodies[bi].size_x,
+                      bodies[bi].size_y,
+                      bodies[bi].size_z);
 
     float scale = 2.0/256.0;
 
@@ -44,20 +44,20 @@ void main()
         gl_Position.xy = scale*(body_materials_origin.xy-padding+(body_size.xy+2*padding)*x.xy)-1.0;
     }
 
-    if(b == 0 && layer == 0 && gl_VertexID == 0)
-    {
-        int dead_index = atomicAdd(n_dead_particles, -1)-1;
-        //this assumes particle creation and destruction never happen simutaneously
-        uint p = dead_particles[dead_index];
-        particles[p].voxel_data = 3|(2<<(6+8))|(8<<(2+16))|(15<<24);
-        particles[p].x = bodies[b].x_x;
-        particles[p].y = bodies[b].x_y;
-        particles[p].z = bodies[b].x_z;
-        particles[p].x_dot = bodies[b].x_dot_x;
-        particles[p].y_dot = bodies[b].x_dot_y;
-        particles[p].z_dot = bodies[b].x_dot_z+5;
-        particles[p].alive = true;
-    }
+    // if(bi == 0 && layer == 0 && gl_VertexID == 0)
+    // {
+    //     int dead_index = atomicAdd(n_dead_particles, -1)-1;
+    //     //this assumes particle creation and destruction never happen simutaneously
+    //     uint p = dead_particles[dead_index];
+    //     particles[p].voxel_data = 3|(2<<(6+8))|(8<<(2+16))|(15<<24);
+    //     particles[p].x = bodies[bi].x_x;
+    //     particles[p].y = bodies[bi].x_y;
+    //     particles[p].z = bodies[bi].x_z;
+    //     particles[p].x_dot = bodies[bi].x_dot_x;
+    //     particles[p].y_dot = bodies[bi].x_dot_y;
+    //     particles[p].z_dot = bodies[bi].x_dot_z+5;
+    //     particles[p].alive = true;
+    // }
 }
 
 /////////////////////////////////////////////////////////////////
@@ -84,7 +84,7 @@ layout(location = 5) uniform usampler3D form_materials;
 #include "include/particle_data.glsl"
 
 
-flat in int b;
+flat in int bi;
 flat in ivec3 origin;
 
 vec4 qmult(vec4 a, vec4 b)
@@ -121,7 +121,7 @@ void main()
     pos.xy = ivec2(gl_FragCoord.xy);
     pos.z = layer;
 
-    get_body_data(b);
+    get_body_data(bi);
     if(body_form_id != 0) get_form_data(body_form_id-1);
 
     //+,0,-,0
@@ -137,7 +137,7 @@ void main()
     uvec4 r  = texelFetch(body_materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z), 0);
     uvec4 l  = texelFetch(body_materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z), 0);
     uvec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
-    uvec4 ba  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
+    uvec4 b  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
 
     ivec3 form_pos = pos-body_materials_origin+form_materials_origin;
     uint form_voxel = texelFetch(form_materials, form_pos, 0).r;
@@ -225,7 +225,7 @@ void main()
         c = uvec4(0);
     }
 
-    if(mid != form_voxel && form_voxel != 0 && depth(c) >= SURF_DEPTH-1 && frame_number%growth_time(form_voxel) == 0)
+    if(mid != form_voxel && form_voxel != 0 && depth(c) == 0 && frame_number%growth_time(form_voxel) == 0)
     {
         c.r = form_voxel;
     }
@@ -237,7 +237,7 @@ void main()
         else if(trig(u) != 0)  growing_cell = u;
         else if(trig(d) != 0)  growing_cell = d;
         else if(trig(f) != 0)  growing_cell = f;
-        else if(trig(ba) != 0) growing_cell = ba;
+        else if(trig(b) != 0) growing_cell = b;
 
         uint growing_mat = mat(growing_cell); //material id
         if(growing_mat != 0)
@@ -260,39 +260,22 @@ void main()
     // c.r = 1;
     out_voxel = c;
 
-    int depth = SURF_DEPTH;
-    if(c.r > 0)
-    {
-        if(l.r == 0 ||
-           r.r == 0 ||
-           u.r == 0 ||
-           d.r == 0 ||
-           f.r == 0 ||
-           ba.r == 0) depth = SURF_DEPTH;
-        else
-        {
-            depth = MAX_DEPTH-1;
-            depth = min(depth, depth(l)+1);
-            depth = min(depth, depth(r)+1);
-            depth = min(depth, depth(u)+1);
-            depth = min(depth, depth(d)+1);
-            depth = min(depth, depth(f)+1);
-            depth = min(depth, depth(ba)+1);
-        }
-
-        out_voxel.b = c.b/2;
-        if(out_voxel.r == 3) out_voxel.b = 1000;
-        // out_voxel.b = 0;
-    }
+    int depth = MAX_DEPTH-1;
+    bool filledness = mat(c) != 0 && transient(c)==0;
+    if(((mat(u) != 0 && transient(u) == 0) != filledness) ||
+       ((mat(d) != 0 && transient(d) == 0) != filledness) ||
+       ((mat(r) != 0 && transient(r) == 0) != filledness) ||
+       ((mat(l) != 0 && transient(l) == 0) != filledness) ||
+       ((mat(f) != 0 && transient(f) == 0) != filledness) ||
+       ((mat(b) != 0 && transient(b) == 0) != filledness)) depth = 0;
     else
     {
-        depth = 0;
-        depth = max(depth, depth(l)-1);
-        depth = max(depth, depth(r)-1);
-        depth = max(depth, depth(u)-1);
-        depth = max(depth, depth(d)-1);
-        depth = max(depth, depth(f)-1);
-        depth = max(depth, depth(ba)-1);
+        depth = min(depth, depth(u)+1);
+        depth = min(depth, depth(d)+1);
+        depth = min(depth, depth(r)+1);
+        depth = min(depth, depth(l)+1);
+        depth = min(depth, depth(f)+1);
+        depth = min(depth, depth(b)+1);
     }
 
     out_voxel.g = uint(depth);

@@ -18,6 +18,16 @@ float get_metalicity(uint material_id)
     return texelFetch(material_visual_properties, ivec2(2,material_id), 0).g;
 }
 
+float opacity(uint material_id)
+{
+    return texelFetch(material_visual_properties, ivec2(2,material_id), 0).b;
+}
+
+float refractive_index(uint material_id)
+{
+    return texelFetch(material_visual_properties, ivec2(3,material_id), 0).r;
+}
+
 float D(uint material_id, float nh)
 {
     //Trowbridge-Reitz

@@ -527,21 +527,24 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     w->joints[j].torques = {0,0,0};
     // }
 
-    simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->gew.active_genome->forms_gpu, w->gew.active_genome->n_forms);
-    simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
+    if(!is_down('M', input))
+    {
+        simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->gew.active_genome->forms_gpu, w->gew.active_genome->n_forms);
+        simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
 
-    // w->bodies_cpu[5].contact_locked[0] = true;
-    // w->bodies_cpu[5].contact_points[0] = {256+128, 256+128, 50};
-    // w->bodies_cpu[5].contact_pos[0] = {5,0,0};
-    // w->bodies_cpu[5].contact_normals[0] = {1,0,0};
-    // w->bodies_cpu[5].contact_depths[0] = 0;
-    // w->bodies_cpu[5].contact_forces[0] = {0,0,0};
-    // w->bodies_cpu[7].contact_forces[0] = {0,0,0};
-    // w->bodies_cpu[5].deltax_dot_integral[0] = {0,0,0};
+        // w->bodies_cpu[5].contact_locked[0] = true;
+        // w->bodies_cpu[5].contact_points[0] = {256+128, 256+128, 50};
+        // w->bodies_cpu[5].contact_pos[0] = {5,0,0};
+        // w->bodies_cpu[5].contact_normals[0] = {1,0,0};
+        // w->bodies_cpu[5].contact_depths[0] = 0;
+        // w->bodies_cpu[5].contact_forces[0] = {0,0,0};
+        // w->bodies_cpu[7].contact_forces[0] = {0,0,0};
+        // w->bodies_cpu[5].deltax_dot_integral[0] = {0,0,0};
 
-    simulate_joints(w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->brains, w->n_brains, rd);
+        simulate_joints(w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->brains, w->n_brains, rd);
 
-    integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
+        integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
+    }
 
     if(player_in_head == 2) player->x = lerp(player->x, w->bodies_gpu[13].x+10.0*camera_z+2*camera_y, 0.3);
     if(player_in_head == 1) player->x = w->bodies_gpu[13].x-5*camera_z;
@@ -599,7 +602,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         int brush_size = 50;
         real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
         pos = clamp_per_axis(pos, 0, chunk_size-brush_size-1);
-        set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,0,255,current_material==4?15:0});
+        set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,1<<5,0,current_material==4?15:0});
     }
 
     if(is_down(M3, input) && !w->edit_mode)
@@ -625,7 +628,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
         real_3 pos = player->x-placement_dist*camera_z;
         pos = clamp_per_axis(pos, 0, chunk_size-11);
-        set_chunk_region(manager, w, w->c, pos, {10,10,10}, {2});
+        set_chunk_region(manager, w, w->c, pos, {10,10,10}, {6, 0, 255, 0});
     }
 
     if(is_down(M5, input))

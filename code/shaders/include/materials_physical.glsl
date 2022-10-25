@@ -18,13 +18,18 @@
 #define        flow(vox) (vox.a>>4)
 #endif
 
+#define signed_depth(vox) (mat(vox) == 0 ? 1+depth(vox) : -depth(vox))
+#define opaque_signed_depth(vox) (opacity(mat(vox)) == 0 ? 1+depth(vox) : -depth(vox))
+
+#define permaterial(vox) (mat(vox)*(1-transient(vox)))
+
 #define MAX_DEPTH 32
 #define SURF_DEPTH 16
 
-#define phase_solid  0
-#define phase_sand   1
-#define phase_liquid 2
-#define phase_gas    3
+#define phase_gas    0
+#define phase_solid  1
+#define phase_sand   2
+#define phase_liquid 3
 
 #define trig_none     0
 #define trig_always   1
@@ -112,8 +117,8 @@ vec3 unnormalized_gradient(usampler3D materials, ivec3 p)
     //     );
 
     vec3 gradient = vec3(
-        depth(texelFetch(materials, p+ivec3(-1,0,0), 0))-depth(texelFetch(materials, p+ivec3(+1,0,0), 0)),
-        depth(texelFetch(materials, p+ivec3(0,-1,0), 0))-depth(texelFetch(materials, p+ivec3(0,+1,0), 0)),
-        depth(texelFetch(materials, p+ivec3(0,0,-1), 0))-depth(texelFetch(materials, p+ivec3(0,0,+1), 0))+0.001);
+        signed_depth(texelFetch(materials, p+ivec3(+1,0,0), 0))-signed_depth(texelFetch(materials, p+ivec3(-1,0,0), 0)),
+        signed_depth(texelFetch(materials, p+ivec3(0,+1,0), 0))-signed_depth(texelFetch(materials, p+ivec3(0,-1,0), 0)),
+        signed_depth(texelFetch(materials, p+ivec3(0,0,+1), 0))-signed_depth(texelFetch(materials, p+ivec3(0,0,-1), 0))+0.001);
     return gradient;
 }

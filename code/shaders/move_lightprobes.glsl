@@ -41,17 +41,14 @@ void main()
                          (lightprobe_spacing/2)+lightprobe_spacing*(j/sq(lightprobes_per_axis)));
 
     ivec4 voxel = texelFetch(materials, ix, 0);
-    if(depth(voxel) > SURF_DEPTH-4)
+    if(signed_depth(voxel) < 4)
     {
-        vec3 gradient = vec3(
-            depth(texelFetch(materials, ix+ivec3(-1,0,0), 0))-depth(texelFetch(materials, ix+ivec3(+1,0,0), 0)),
-            depth(texelFetch(materials, ix+ivec3(0,-1,0), 0))-depth(texelFetch(materials, ix+ivec3(0,+1,0), 0)),
-            depth(texelFetch(materials, ix+ivec3(0,0,-1), 0))-depth(texelFetch(materials, ix+ivec3(0,0,+1), 0))+0.001);
+        vec3 gradient = unnormalized_gradient(materials, ix);
         gradient = normalize(gradient);
 
-        x += 0.1*gradient*(5+depth(voxel)-SURF_DEPTH);
+        x += 0.1*gradient*(5-signed_depth(voxel));
     }
-    else if(depth(voxel) < SURF_DEPTH-5)
+    else if(signed_depth(voxel) > 5)
     {
         x = mix(x, center_x, 0.1);
     }
