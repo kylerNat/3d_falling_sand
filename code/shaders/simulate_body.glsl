@@ -2,77 +2,20 @@
 
 /////////////////////////////////////////////////////////////////
 
-#shader GL_VERTEX_SHADER
+#shader GL_COMPUTE_SHADER
 #include "include/header.glsl"
 
-layout(location = 0) in vec3 x;
+#define localgroup_size 8
+#define subgroup_size 1
+layout(local_size_x = localgroup_size, local_size_y = localgroup_size, local_size_z = localgroup_size) in;
 
-layout(location = 0) uniform int layer;
-layout(location = 6) uniform int n_bodies;
-
-#include "include/body_data.glsl"
-#define FORM_DATA_BINDING 1
-#include "include/form_data.glsl"
-#define PARTICLE_DATA_BINDING 2
-#include "include/particle_data.glsl"
-
-flat out int bi;
-flat out ivec3 origin;
-
-void main()
-{
-    bi = gl_InstanceID;
-
-    // get_body_data(b);
-    body_materials_origin = ivec3(bodies[bi].materials_origin_x,
-                                  bodies[bi].materials_origin_y,
-                                  bodies[bi].materials_origin_z);
-    body_size = ivec3(bodies[bi].size_x,
-                      bodies[bi].size_y,
-                      bodies[bi].size_z);
-
-    float scale = 2.0/256.0;
-
-    gl_Position = vec4(0.0/0.0, 0.0/0.0, 0, 1);
-
-    const int padding = 1;
-
-    origin = body_materials_origin;
-
-    if(body_materials_origin.z-padding <= layer && layer < body_materials_origin.z+body_size.z+padding)
-    {
-        gl_Position.xy = scale*(body_materials_origin.xy-padding+(body_size.xy+2*padding)*x.xy)-1.0;
-    }
-
-    // if(bi == 0 && layer == 0 && gl_VertexID == 0)
-    // {
-    //     int dead_index = atomicAdd(n_dead_particles, -1)-1;
-    //     //this assumes particle creation and destruction never happen simutaneously
-    //     uint p = dead_particles[dead_index];
-    //     particles[p].voxel_data = 3|(2<<(6+8))|(8<<(2+16))|(15<<24);
-    //     particles[p].x = bodies[bi].x_x;
-    //     particles[p].y = bodies[bi].x_y;
-    //     particles[p].z = bodies[bi].x_z;
-    //     particles[p].x_dot = bodies[bi].x_dot_x;
-    //     particles[p].y_dot = bodies[bi].x_dot_y;
-    //     particles[p].z_dot = bodies[bi].x_dot_z+5;
-    //     particles[p].alive = true;
-    // }
-}
-
-/////////////////////////////////////////////////////////////////
-
-#shader GL_FRAGMENT_SHADER
-#include "include/header.glsl"
-
-layout(location = 0) out uvec4 out_voxel;
-
-layout(location = 0) uniform int layer;
-layout(location = 1) uniform int frame_number;
-layout(location = 2) uniform sampler2D material_physical_properties;
-layout(location = 3) uniform usampler3D materials;
-layout(location = 4) uniform usampler3D body_materials;
+layout(location = 0) uniform int frame_number;
+layout(location = 1) uniform sampler2D material_physical_properties;
+layout(location = 2) uniform usampler3D materials;
+layout(location = 3) uniform usampler3D body_materials;
+layout(location = 4, rgba8ui) uniform uimage3D body_materials_out;
 layout(location = 5) uniform usampler3D form_materials;
+layout(location = 6) uniform int n_bodies;
 
 #define MATERIAL_PHYSICAL_PROPERTIES
 #include "include/materials_physical.glsl"
@@ -83,9 +26,19 @@ layout(location = 5) uniform usampler3D form_materials;
 #define PARTICLE_DATA_BINDING 2
 #include "include/particle_data.glsl"
 
+struct body_chunk
+{
+    uint body_id;
+    uint origin_x;
+    uint origin_y;
+    uint origin_z;
+};
 
-flat in int bi;
-flat in ivec3 origin;
+layout(std430, binding = 3) buffer body_chunk_data
+{
+    uint n_body_chunks;
+    body_chunk body_chunks[];
+};
 
 vec4 qmult(vec4 a, vec4 b)
 {
@@ -117,11 +70,32 @@ float float_noise(uint seed)
 
 void main()
 {
-    ivec3 pos;
-    pos.xy = ivec2(gl_FragCoord.xy);
-    pos.z = layer;
+    uint body_chunk_id = gl_WorkGroupID.x;
+    int bi = int(body_chunks[body_chunk_id].body_id);
+    uvec3 origin = uvec3(body_chunks[body_chunk_id].origin_x, body_chunks[body_chunk_id].origin_y, body_chunks[body_chunk_id].origin_z);
 
     get_body_data(bi);
+
+    ivec3 pos = ivec3(origin+gl_LocalInvocationID);
+    if(any(greaterThan(pos, body_materials_origin+body_size))) return;
+
+    const int padding = 1;
+
+    // if(bi == 0 && layer == 0 && gl_VertexID == 0)
+    // {
+    //     int dead_index = atomicAdd(n_dead_particles, -1)-1;
+    //     //this assumes particle creation and destruction never happen simutaneously
+    //     uint p = dead_particles[dead_index];
+    //     particles[p].voxel_data = 3|(2<<(6+8))|(8<<(2+16))|(15<<24);
+    //     particles[p].x = bodies[bi].x_x;
+    //     particles[p].y = bodies[bi].x_y;
+    //     particles[p].z = bodies[bi].x_z;
+    //     particles[p].x_dot = bodies[bi].x_dot_x;
+    //     particles[p].y_dot = bodies[bi].x_dot_y;
+    //     particles[p].z_dot = bodies[bi].x_dot_z+5;
+    //     particles[p].alive = true;
+    // }
+
     if(body_form_id != 0) get_form_data(body_form_id-1);
 
     //+,0,-,0
@@ -145,7 +119,7 @@ void main()
     int spawned_cell = 0;
 
     uint temp = temp(c);
-    uint volt = volt(c);
+    uint volt = 0;
     uint trig = 0;
 
     uint mid = mat(c); //material id
@@ -232,11 +206,11 @@ void main()
     else if(mid == 0 && all(greaterThan(pos-origin, ivec3(0))) && all(lessThan(pos-origin, ivec3(32-1))))
     {
         uvec4 growing_cell = uvec4(0);
-        if(trig(l) != 0)       growing_cell = l;
-        else if(trig(r) != 0)  growing_cell = r;
-        else if(trig(u) != 0)  growing_cell = u;
-        else if(trig(d) != 0)  growing_cell = d;
-        else if(trig(f) != 0)  growing_cell = f;
+        if(trig(l) != 0)      growing_cell = l;
+        else if(trig(r) != 0) growing_cell = r;
+        else if(trig(u) != 0) growing_cell = u;
+        else if(trig(d) != 0) growing_cell = d;
+        else if(trig(f) != 0) growing_cell = f;
         else if(trig(b) != 0) growing_cell = b;
 
         uint growing_mat = mat(growing_cell); //material id
@@ -258,7 +232,7 @@ void main()
     }
 
     // c.r = 1;
-    out_voxel = c;
+    uvec4 out_voxel = c;
 
     int depth = MAX_DEPTH-1;
     bool filledness = mat(c) != 0 && transient(c)==0;
@@ -284,4 +258,6 @@ void main()
     out_voxel.b = temp;
 
     out_voxel.a = volt | (trig << 4);
+
+    imageStore(body_materials_out, pos, out_voxel);
 }

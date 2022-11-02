@@ -38,6 +38,21 @@ struct cell_type
 
 //a form is the analogue of a body that exists in editor space
 
+struct form_joint
+{
+    int type;
+    int form_id[2];
+    int_3 pos[2];
+    int axis[2];
+};
+
+struct form_endpoint
+{
+    int type;
+    int form_id;
+    int_3 pos;
+};
+
 #pragma pack(push, 1)
 struct gpu_form_data
 {
@@ -58,13 +73,11 @@ struct cpu_form_data
 {
     gpu_form_data* gpu_data;
 
+    real_3 x_dot;
+    real_3 omega;
+
     uint8* materials;
     int storage_level;
-
-    int parent_form_id;
-    int joint_type;
-    int_3 joint_pos[2];
-    int joint_axis[2];
 };
 
 struct genome
@@ -72,6 +85,12 @@ struct genome
     cpu_form_data* forms_cpu; //0th element is the root
     gpu_form_data* forms_gpu;
     int n_forms;
+
+    form_joint* joints;
+    int n_joints;
+
+    form_endpoint* endpoints;
+    int n_endpoints;
 
     cell_type* cell_types;
     int n_cell_types;
@@ -286,77 +305,180 @@ void compile_genome(genome* gn, genode* genodes)
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, N_PHYSICAL_PROPERTIES, N_MAX_MATERIALS, GL_RED, GL_FLOAT, material_physicals);
 }
 
-void drag_form(gpu_form_data* form_gpu, real_3 grab_point, real_3 target_x)
+void drag_form(cpu_form_data* form_cpu, gpu_form_data* form_gpu, real_3 grab_point, real_3 target_x)
 {
-    real_3 form_r = apply_rotation(form_gpu->orientation,
-                                   grab_point
-                                   +(real_3){0.5, 0.5, 0.5}-form_gpu->x_cm);
+    real_3 r = apply_rotation(form_gpu->orientation,
+                              grab_point
+                              +(real_3){0.5, 0.5, 0.5}-form_gpu->x_cm);
+    real_3 x = form_gpu->x+r;
+    real_3 displacement = target_x-x;
 
-    real_3 dir = normalize_or_zero(form_gpu->x-target_x);
+    real I = 1;
+    real m = 1;
 
-    form_gpu->x = norm(form_r)*dir+target_x;
+    real_3x3 r_dual = {
+        0   ,+r.z,-r.y,
+        -r.z, 0  ,+r.x,
+        +r.y,-r.x, 0
+    };
+    real_3x3 K = real_identity_3(1.0)/m - r_dual*(1.0/I)*r_dual;
+    real_3x3 invK = inverse(K);
 
-    // log_output("grab_point: ", grab_point, "\n");
-    // log_output("x_cm: ", form_gpu->x_cm, "\n");
-    // log_output("r: ", form_r, "\n");
+    real_3 pseudo_force = 0.05*invK*displacement;
 
-    real_3 old_dir = normalize_or_zero(form_r);
+    form_gpu->x += (1.0/m)*pseudo_force;
+    real_3 pseudo_omega = (1.0/I)*cross(r, pseudo_force);
+    form_gpu->orientation = axis_to_quaternion(pseudo_omega)*form_gpu->orientation;
 
-    quaternion rotation = get_rotation_between(old_dir, dir);
+    // real_3 force = 0.1*pseudo_force;
+    // form_cpu->x_dot += (1.0/m)*force;
+    // form_cpu->omega += (1.0/I)*cross(r, force);
 
-    form_gpu->orientation = rotation*form_gpu->orientation;
+    // form_gpu->x = norm(form_r)*dir+target_x;
+
+    // // log_output("grab_point: ", grab_point, "\n");
+    // // log_output("x_cm: ", form_gpu->x_cm, "\n");
+    // // log_output("r: ", form_r, "\n");
+
+    // real_3 old_dir = normalize_or_zero(form_r);
+
+    // quaternion rotation = get_rotation_between(old_dir, dir);
+
+    // form_gpu->orientation = rotation*form_gpu->orientation;
 }
 
 void solve_form_joints(genome* g)
 {
+    real_3 centroid = {};
     for(int f = 0; f < g->n_forms; f++)
     {
         cpu_form_data* form_cpu = &g->forms_cpu[f];
         gpu_form_data* form_gpu = &g->forms_gpu[f];
 
+        centroid += form_gpu->x;
+    }
+    centroid /= g->n_forms;
+
+    for(int f = 0; f < g->n_forms; f++)
+    {
+        cpu_form_data* form_cpu = &g->forms_cpu[f];
+        gpu_form_data* form_gpu = &g->forms_gpu[f];
+
+        for(int f2 = f+1; f2 < g->n_forms; f2++)
+        {
+            cpu_form_data* form_cpu2 = &g->forms_cpu[f2];
+            gpu_form_data* form_gpu2 = &g->forms_gpu[f2];
+
+            real_3 r = (form_gpu->x-form_gpu2->x);
+            real_3 deltax = 0.01*r/pow(normsq(r), 1.5);
+
+            // form_gpu->x  += deltax;
+            // form_gpu2->x -= deltax;
+
+            form_cpu->x_dot  += deltax;
+            form_cpu2->x_dot -= deltax;
+        }
+
+        if(f == 0) form_cpu->x_dot.z += 0.2;
+        else form_cpu->x_dot.z -= 0.005;
+        // form_gpu->x += 0.01*(form_gpu->x-centroid);
+
         real_3 base_x = {};
         real_3 grab_pos = form_gpu->x_cm;
 
-        if(form_cpu->joint_type != joint_root)
-        {
-            cpu_form_data* parent_cpu = &g->forms_cpu[form_cpu->parent_form_id];
-            gpu_form_data* parent_gpu = &g->forms_gpu[form_cpu->parent_form_id];
-
-            real_3 parent_r = apply_rotation(parent_gpu->orientation,
-                                             real_cast(form_cpu->joint_pos[0])
-                                             +(real_3){0.5, 0.5, 0.5}-parent_gpu->x_cm);
-            base_x = parent_gpu->x + parent_r;
-
-            form_gpu->x += 0.2*(form_gpu->x-parent_gpu->x);
-            // form_gpu->x.z -= 0.2;
-
-            grab_pos = real_cast(form_cpu->joint_pos[1]);
-
-            drag_form(form_gpu, grab_pos, base_x);
-        }
-
         real center_threshold = 0.5;
 
-        if(abs(form_gpu->x.y) < center_threshold)
-        {
-            real_3 axis = form_gpu->x-base_x;
-            real_3 forward_dir = apply_rotation(form_gpu->orientation, (real_3){0,1,0});
-            real_3 centered_dir = {1,0,0};
-            if(normsq(axis) > 0.0001)
-            {
-                forward_dir = normalize_or_zero(rej(forward_dir, axis));
-                centered_dir = normalize_or_zero(rej(centered_dir, axis));
-            }
+        // if(abs(form_gpu->x.y) < center_threshold)
+        // {
+        //     real_3 axis = form_gpu->x-base_x;
+        //     real_3 forward_dir = apply_rotation(form_gpu->orientation, (real_3){0,1,0});
+        //     real_3 centered_dir = {1,0,0};
+        //     if(normsq(axis) > 0.0001)
+        //     {
+        //         forward_dir = normalize_or_zero(rej(forward_dir, axis));
+        //         centered_dir = normalize_or_zero(rej(centered_dir, axis));
+        //     }
 
-            quaternion rotation = get_rotation_between(forward_dir, centered_dir);
-            real t = abs(form_gpu->x.y);
-            rotation = (quaternion){1.0-t,0,0,0} + t*rotation;
-            rotation = normalize(rotation);
-            assert(rotation.r == rotation.r && rotation.i == rotation.i && rotation.j == rotation.j && rotation.k == rotation.k);
-            form_gpu->orientation = rotation*form_gpu->orientation;
-        }
+        //     quaternion rotation = get_rotation_between(forward_dir, centered_dir);
+        //     real t = abs(form_gpu->x.y);
+        //     rotation = (quaternion){1.0-t,0,0,0} + t*rotation;
+        //     rotation = normalize(rotation);
+        //     assert(rotation.r == rotation.r && rotation.i == rotation.i && rotation.j == rotation.j && rotation.k == rotation.k);
+        //     form_gpu->orientation = rotation*form_gpu->orientation;
+        // }
+
+        form_cpu->x_dot *= 0.8;
+        form_cpu->omega *= 0.8;
+
+        form_gpu->x += form_cpu->x_dot;
+        form_gpu->orientation = axis_to_quaternion(form_cpu->omega)*form_gpu->orientation;
 
         form_gpu->orientation = normalize(form_gpu->orientation);
+    }
+
+    for(int k = 0; k < 40; k++)
+    {
+        real_3 foot_centroid;
+        int n_feet = 0;
+        for(int e = 0; e < g->n_endpoints; e++)
+        {
+            form_endpoint* ep = &g->endpoints[e];
+            int f = ep->form_id;
+            cpu_form_data* form_cpu = &g->forms_cpu[f];
+            gpu_form_data* form_gpu = &g->forms_gpu[f];
+
+            if(ep->type == endpoint_foot)
+            {
+                real_3 foot_r = apply_rotation(form_gpu->orientation,
+                                               real_cast(ep->pos)
+                                               +(real_3){0.5, 0.5, 0.5}-form_gpu->x_cm);
+                real_3 foot_x = form_gpu->x+foot_r;
+                foot_centroid += foot_x;
+                n_feet++;
+            }
+        }
+        foot_centroid /= n_feet;
+
+        for(int e = 0; e < g->n_endpoints; e++)
+        {
+            form_endpoint* ep = &g->endpoints[e];
+            int f = ep->form_id;
+            cpu_form_data* form_cpu = &g->forms_cpu[f];
+            gpu_form_data* form_gpu = &g->forms_gpu[f];
+
+            if(ep->type == endpoint_foot)
+            {
+                real_3 foot_r = apply_rotation(form_gpu->orientation,
+                                               real_cast(ep->pos)
+                                               +(real_3){0.5, 0.5, 0.5}-form_gpu->x_cm);
+                real_3 new_foot_x = form_gpu->x+foot_r;
+                new_foot_x = lerp(new_foot_x, ((real_3){1.01f*(new_foot_x.x-foot_centroid.x),1.00f*(new_foot_x.y-foot_centroid.y),0}), 0.5);
+                drag_form(form_cpu, form_gpu, real_cast(ep->pos), new_foot_x);
+            }
+        }
+
+        for(int j = 0; j < g->n_joints; j++)
+        {
+            form_joint* joint = &g->joints[j];
+
+            int f[] = {joint->form_id[0], joint->form_id[1]};
+            cpu_form_data* forms_cpu[] = {&g->forms_cpu[f[0]],&g->forms_cpu[f[1]]};
+            gpu_form_data* forms_gpu[] = {&g->forms_gpu[f[0]],&g->forms_gpu[f[1]]};
+            real_3 joint_r[2];
+            real_3 joint_x[2];
+            for(int i = 0; i < 2; i++)
+            {
+                joint_r[i] = apply_rotation(forms_gpu[i]->orientation, real_cast(joint->pos[i])+(real_3){0.5,0.5,0.5}-forms_gpu[i]->x_cm);
+                joint_x[i] = forms_gpu[i]->x+joint_r[i];
+            }
+            for(int i = 0; i < 2; i++)
+            {
+                // if(f[i] == 0) continue;
+                // forms_gpu[i]->x += 0.02*(forms_gpu[i]->x-forms_gpu[1-i]->x);
+                // forms_gpu[i]->x += 0.0001*(forms_gpu[i]->x);
+                drag_form(forms_cpu[i], forms_gpu[i], real_cast(joint->pos[i]), lerp(joint_x[i], joint_x[1-i], 0.5));
+            }
+        }
     }
 };
 
@@ -711,7 +833,7 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
             gew->cursor_dist += 0.01*input->mouse_wheel;
             real_3 cursor_x = gew->camera_pos+gew->cursor_dist*ray_dir;
             real_3 grab_point = real_cast(gew->active_cell)+(real_3){0.5,0.5,0.5};
-            drag_form(form_gpu, grab_point, cursor_x);
+            drag_form(form_cpu, form_gpu, grab_point, cursor_x);
         }
     }
 

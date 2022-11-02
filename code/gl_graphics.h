@@ -99,7 +99,7 @@ GLuint occupied_regions_texture;
 
 #define N_MAX_BODIES 4096
 GLuint body_buffer;
-
+GLuint body_chunks_buffer;
 
 #define N_MAX_FORMS 4096
 GLuint form_buffer;
@@ -373,6 +373,11 @@ void gl_init_general_buffers(memory_manager* manager)
     glGenBuffers(1, &body_buffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, N_MAX_BODIES*sizeof(gpu_body_data), 0, GL_DYNAMIC_STORAGE_BIT);
+
+    glGenBuffers(1, &body_chunks_buffer);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_chunks_buffer);
+    int body_chunks_wide = body_texture_size/body_chunk_size;
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, body_chunks_wide*body_chunks_wide*body_chunks_wide, 0, GL_DYNAMIC_STORAGE_BIT);
 
     glGenBuffers(1, &form_buffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, form_buffer);
@@ -1821,15 +1826,13 @@ void simulate_particles()
     glDispatchCompute(N_MAX_PARTICLES/1024,1,1);
 }
 
-void simulate_bodies(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_bodies, gpu_form_data* forms_gpu, int n_forms)
+void simulate_bodies(memory_manager* manager, cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_bodies, gpu_form_data* forms_gpu, int n_forms)
 {
     glUseProgram(simulate_body_program);
 
     int texture_i = 0;
     int image_i = 0;
     int uniform_i = 0;
-
-    int layer_number_uniform = uniform_i++;
 
     static int frame_number = 0;
     glUniform1i(uniform_i++, frame_number++);
@@ -1860,6 +1863,9 @@ void simulate_bodies(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
+    glUniform1i(uniform_i++, image_i);
+    glBindImageTexture(image_i++, body_materials_textures[1-current_body_materials_texture], 0, true, 0, GL_WRITE_ONLY, GL_RGBA8UI);
+
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
     glBindTexture(GL_TEXTURE_3D, form_materials_texture);
@@ -1882,42 +1888,30 @@ void simulate_bodies(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particle_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particle_buffer);
 
-    size_t offset = 0;
-    int layout_location = 0;
-
-    GLuint vertex_buffer = gl_general_buffers[0];
-    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
-    real vb[] = {-0,-0,0,
-        -0,+1,0,
-        +1,+1,0,
-        +1,-0,0};
-    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
-    add_contiguous_attribute(3, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
-
-    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
-    glViewport(0, 0, body_texture_size, body_texture_size);
-
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_BLEND);
-
-    GLenum buffers[] = {GL_COLOR_ATTACHMENT0};
-    glDrawBuffers(len(buffers), buffers);
-
-    //TODO: loop with each set of genomes loaded
-    for(int l = 0; l < body_texture_size; l++)
+    uint* body_chunks = (uint*) reserve_block(manager, n_bodies*8*4*sizeof(uint));
+    uint n_body_chunks = 0;
+    for(int b = 0; b < n_bodies; b++)
     {
-        glUniform1i(layer_number_uniform, l);
-
-        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                  body_materials_textures[1-current_body_materials_texture], 0, l);
-
-        glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, n_bodies);
+        for(int x = 0; x < bodies_gpu[b].size.x; x+=body_chunk_size)
+            for(int y = 0; y < bodies_gpu[b].size.y; y+=body_chunk_size)
+                for(int z = 0; z < bodies_gpu[b].size.z; z+=body_chunk_size)
+                {
+                    body_chunks[4*n_body_chunks+1] = b;
+                    body_chunks[4*n_body_chunks+2] = bodies_gpu[b].materials_origin.x+x;
+                    body_chunks[4*n_body_chunks+3] = bodies_gpu[b].materials_origin.y+y;
+                    body_chunks[4*n_body_chunks+4] = bodies_gpu[b].materials_origin.z+z;
+                    n_body_chunks++;
+                }
     }
+    body_chunks[0] = n_body_chunks;
 
-    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 0, 0, 0);
+    unreserve_block(manager);
 
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_chunks_buffer);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (1+4*n_body_chunks)*sizeof(uint), body_chunks);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, body_chunks_buffer);
+
+    glDispatchCompute(n_body_chunks,1,1);
 
     current_body_materials_texture = 1-current_body_materials_texture;
 }
@@ -2046,7 +2040,7 @@ void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, g
             bodies_cpu[b].contact_depths[i] = norm(contact_normals[b+n_bodies*i])-32;
             bodies_cpu[b].contact_normals[i] = normalize_or_zero(contact_normals[b+n_bodies*i]);
             bodies_cpu[b].contact_materials[i] = contact_materials[3*b+i];
-            draw_circle(rd, contact_points[b+n_bodies*i], 0.3, {bodies_cpu[b].contact_depths[i] > 1,bodies_cpu[b].contact_depths[i] <= 1,0,1});
+            // draw_circle(rd, contact_points[b+n_bodies*i], 0.3, {bodies_cpu[b].contact_depths[i] > 1,bodies_cpu[b].contact_depths[i] <= 1,0,1});
             // draw_circle(rd, contact_points[b+n_bodies*i]+0.1*contact_normals[b+n_bodies*i], 0.2, {1,0,0.5*contact_materials[3*b+i],1});
         }
     }

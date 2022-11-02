@@ -626,6 +626,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .forms_cpu = (cpu_form_data*) permalloc(manager, 1024*sizeof(cpu_form_data)),
         .forms_gpu = (gpu_form_data*) permalloc(manager, 1024*sizeof(gpu_form_data)),
         .n_forms = 0,
+        .joints = (form_joint*) permalloc(manager, 1024*sizeof(form_joint)),
+        .n_joints = 0,
+        .endpoints = (form_endpoint*) permalloc(manager, 1024*sizeof(form_endpoint)),
+        .n_endpoints = 0,
         .cell_types = (cell_type*) permalloc_clear(manager, 128*sizeof(cell_type)),
         .n_cell_types = 3,
     };
@@ -715,6 +719,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
                 // if(y == chunk_size/2 && abs(x-chunk_size/2) <= 2*(i) && x%2 == 0) material = 3;
                 if(y == chunk_size*3/4 && x == chunk_size*3/4+20 && z < 50) material = 3;
+
+                // if(material == 0) material = 2;
 
                 // if(material == 0) material = 2*((randui(&w.seed)%10000)==0); //"rain"
                 c->materials[x+chunk_size*y+chunk_size*chunk_size*z] = material;
@@ -1058,23 +1064,23 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .max_torque = 0.2,
     };
 
-    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
-    //     .type = joint_ball,
-    //     .child_body_id = limb_start_id+4,
-    //     .pos = {{shoulder_length-1,0,0}, {0,0,0}},
-    //     .axis = {1,1},
-    //     .max_speed = 0.5,
-    //     .max_torque = 0.2,
-    // };
+    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+        .type = joint_ball,
+        .child_body_id = limb_start_id+4,
+        .pos = {offsets[body_id-limb_start_id]+(int_3){shoulder_length-1,0,0}, offsets[4]+(int_3){0,0,0}},
+        .axis = {1,1},
+        .max_speed = 0.5,
+        .max_torque = 0.2,
+    };
 
-    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
-    //     .type = joint_ball,
-    //     .child_body_id = limb_start_id+6,
-    //     .pos = {{shoulder_length-1,body_width-1,0}, {0,0,0}},
-    //     .axis = {1,1},
-    //     .max_speed = 0.5,
-    //     .max_torque = 0.2,
-    // };
+    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+        .type = joint_ball,
+        .child_body_id = limb_start_id+6,
+        .pos = {offsets[body_id-limb_start_id]+(int_3){shoulder_length-1,body_width-1,0}, offsets[6]+(int_3){0,0,0}},
+        .axis = {1,1},
+        .max_speed = 0.5,
+        .max_torque = 0.2,
+    };
 
     brain* br = &w.brains[w.n_brains++];
     *br = {
@@ -1108,18 +1114,14 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     //     .body_id = 9,
     //     .pos = {limb_length-1,0,0},
     //     .foot_phase = 0.0,
-
     //     .root_anchor = {shoulder_length-1,0,0},
     //     .root_dist = 2*limb_length,
-
     // };
-
     // br->endpoints[br->n_endpoints++] = {
     //     .type = endpoint_foot,
     //     .body_id = 11,
     //     .pos = {limb_length-1,0,0},
     //     .foot_phase = 0.5,
-
     //     .root_anchor = {shoulder_length-1,body_width-1,0},
     //     .root_dist = 2*limb_length,
     // };
@@ -1135,8 +1137,6 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         load_body_to_gpu(&w.bodies_cpu[b], &w.bodies_gpu[b]);
     }
-
-    gn->forms_cpu[0].joint_type = joint_root;
 
     for(int b = head_id; b >= limb_start_id; b--)
     {
@@ -1157,15 +1157,24 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         {
             child_joint* joint = &w.bodies_cpu[b].joints[c];
             int child_form_id = head_id-joint->child_body_id;
-            gn->forms_cpu[child_form_id].parent_form_id = f;
-            gn->forms_cpu[child_form_id].joint_type = joint->type;
-            gn->forms_cpu[child_form_id].joint_pos[0] = joint->pos[0];
-            gn->forms_cpu[child_form_id].joint_pos[1] = joint->pos[1];
-            gn->forms_cpu[child_form_id].joint_axis[0] = joint->axis[0];
-            gn->forms_cpu[child_form_id].joint_axis[1] = joint->axis[1];
+            gn->joints[gn->n_joints].form_id[0] = f;
+            gn->joints[gn->n_joints].form_id[1] = child_form_id;
+            gn->joints[gn->n_joints].pos[0] = joint->pos[0];
+            gn->joints[gn->n_joints].pos[1] = joint->pos[1];
+            gn->joints[gn->n_joints].axis[0] = joint->axis[0];
+            gn->joints[gn->n_joints].axis[1] = joint->axis[1];
+            gn->n_joints++;
         }
 
         load_form_to_gpu(&gn->forms_cpu[f], &gn->forms_gpu[f]);
+    }
+
+    for(int e = 0; e < br->n_endpoints; e++)
+    {
+        gn->endpoints[gn->n_endpoints].type = br->endpoints[e].type;
+        gn->endpoints[gn->n_endpoints].form_id = head_id-br->endpoints[e].body_id;
+        gn->endpoints[gn->n_endpoints].pos = br->endpoints[e].pos;
+        gn->n_endpoints++;
     }
 
     // CreateDirectory(w.tim.savedir, 0);

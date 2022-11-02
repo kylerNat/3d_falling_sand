@@ -60,7 +60,7 @@ void find_collision_points(out vec3 world_collision_points[N_MAX_COLLISION_POINT
                 uvec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
 
                 // if(body_voxel.g == 0 && body_voxel.r > 0)
-                if(depth(body_voxel) == 0)
+                if(signed_depth(body_voxel) == 0)
                 {
                     ivec3 wvc = ivec3(world_coord); //world_voxel_coord
                     uvec4 world_voxel = texelFetch(materials, wvc, 0);
@@ -92,7 +92,7 @@ void find_collision_points(out vec3 world_collision_points[N_MAX_COLLISION_POINT
                     //         }
                 }
 
-                test_x += depth(body_voxel);
+                test_x += max(abs(signed_depth(body_voxel))-1, 0);
             }
 }
 

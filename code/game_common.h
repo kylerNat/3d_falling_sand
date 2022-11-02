@@ -51,20 +51,6 @@ enum storage_mode
     sm_gpu,
 };
 
-enum special_voxel_type
-{
-    vox_player_brain,
-    vox_brain,
-    vox_neck,
-    vox_heart,
-    vox_hip,
-    vox_knee,
-    vox_foot,
-    vox_shoulder,
-    vox_elbow,
-    vox_hand,
-};
-
 enum joint_type
 {
     joint_root,
@@ -308,6 +294,8 @@ struct brain
     real walk_phase;
     real_3 target_accel;
     real_3 stabilize_accel;
+    real_3 kick;
+    int kick_frames;
     bool is_moving;
 };
 
@@ -350,7 +338,7 @@ voxel_data get_voxel_data(int_3 x);
 // int get_body_material();
 
 //figure out stuff like which feet to raise or lower
-void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* brains, int n_brains, render_data* rd)
+void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, cpu_form_data* forms_cpu, gpu_form_data* forms_gpu, brain* brains, int n_brains, render_data* rd)
 {
     for(int brain_id = 0; brain_id < n_brains; brain_id++)
     {
@@ -415,13 +403,14 @@ void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* br
                                 // ep->foot_phase += 0.1f;
                                 // ep->coyote_time = 0;
                                 ep->is_grabbing = false;
+                                ep->foot_phase = -0.0f;
                                 break;
                             }
 
                             if(body_cpu->contact_depths[i] <= 1)
                             {
                                 // ep->coyote_time = MAX_COYOTE_TIME;
-                                ep->foot_phase = -1.0f;
+                                // ep->foot_phase = -0.0f;
                                 break;
                             }
                         }
@@ -438,12 +427,21 @@ void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* br
                         //         break;
                         //     }
                         // }
-
-                        real k = 0.005;
-                        br->stabilize_accel.z += k*16;
-                        br->stabilize_accel -= k*(root_gpu->x-foot_x);
-                        br->stabilize_accel -= 0.01f*root_gpu->x_dot;
+                        br->stabilize_accel -= 0.005f*root_gpu->x_dot;
                     }
+
+                    // int f = body_gpu->form_id-1;
+                    // gpu_form_data* form_gpu = &forms_gpu[f];
+
+                    // int fr = root_gpu->form_id-1;
+                    // gpu_form_data* root_form_gpu = &forms_gpu[fr];
+
+                    // real_3 form_r = apply_rotation(form_gpu->orientation, real_cast(ep->pos)+(real_3){0.5,0.5,0.5}-body_gpu->x_cm);
+                    // real_3 form_foot_x = form_r+form_gpu->x;
+                    // real_3 target_foot_displacement = root_gpu->x + form_foot_x - root_form_gpu->x - foot_x;
+
+                    // br->stabilize_accel -= 0.002f*target_foot_displacement;
+                    br->stabilize_accel.z += 0.008f;
 
                     // if(ep->foot_phase > 0.0f)
                     // {
@@ -471,6 +469,7 @@ void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* br
                 }
                 else
                 {
+                    ep->foot_phase = 0;
                     ep->coyote_time -= 1.0f;
 
                     // real forwardness = dot(root_r, br->target_accel)/ep->root_dist;
@@ -481,7 +480,7 @@ void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* br
                         most_forwardness = forwardness;
                     }
 
-                    if(ep->foot_phase < -0.0f)
+                    // if(ep->foot_phase < -0.9f)
                         for(int i = 0; i < 3; i++)
                             if(body_cpu->contact_depths[i] <= 1)
                             {
@@ -491,22 +490,12 @@ void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* br
                                 // ep->grab_point = foot_x;
                                 ep->grab_normal = body_cpu->contact_normals[i];
 
-                                ep->foot_phase = -1.0f;
+                                // ep->foot_phase = -1.0f;
                                 // body_cpu->contact_locked[i] = !br->is_moving;
                                 break;
                             }
                 }
             }
-
-            // rd->log_pos
-            //     += sprintf(rd->debug_log+rd->log_pos,
-            //                "foot %i state: %s, phase = %.2f, coyote = %.2f, depth = %.2f, %s\n",
-            //                ep->body_id,
-            //                ep->is_grabbing ? "grab" : "free",
-            //                ep->foot_phase, ep->coyote_time,
-            //                body_cpu->contact_depths[0],
-            //                body_cpu->contact_locked[0] ? "locked" : "unlock"
-            //         );
         }
 
         if(n_feet_down > 0)
@@ -525,32 +514,47 @@ void plan_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* br
                 // if(most_extended_foot->foot_phase > 0.0f)
                 {
                     most_extended_foot->is_grabbing = false;
-                    // most_extended_foot->foot_phase = 1.0f;
+                    most_extended_foot->foot_phase = 1.0f;
 
                     cpu_body_data* body_cpu = &bodies_cpu[most_extended_foot->body_id];
+                    gpu_body_data* body_gpu = &bodies_gpu[most_extended_foot->body_id];
+
+                    gpu_body_data* root_gpu = &bodies_gpu[body_cpu->root];
+
                     for(int i = 0; i < 3; i++)
+                    {
                         body_cpu->contact_locked[i] = false;
+                        body_cpu->contact_depths[i] = 16.0;
+                    }
+
+                    // real_3 impulse = {};
+                    // impulse += 100.0f*br->target_accel;
+                    // impulse.z += 1.0f;
+                    // body_gpu->x_dot += impulse;
+                    // real_3 r = apply_rotation(body_gpu->orientation, real_cast(most_extended_foot->pos)+(real_3){0.5,0.5,0.5}-body_gpu->x_cm);
+                    // body_gpu->omega += body_gpu->invI*body_gpu->m*cross(r, impulse);
+                    // root_gpu->x_dot -= (body_gpu->m/root_gpu->m)*impulse;
                 }
             }
         }
-        else
-        {
-            if(most_forward_foot)
-            {
-                // most_forward_foot->foot_phase = lerp(most_forward_foot->foot_phase, -1, 0.01);
-                most_forward_foot->foot_phase -= 0.1*(n_feet-n_feet_down);
-                most_forward_foot->foot_phase = clamp(most_forward_foot->foot_phase, -1.0f, 1.0f);
+        // else
+        // {
+        //     if(most_forward_foot)
+        //     {
+        //         // most_forward_foot->foot_phase = lerp(most_forward_foot->foot_phase, -1, 0.01);
+        //         most_forward_foot->foot_phase -= 0.1*(n_feet-n_feet_down);
+        //         most_forward_foot->foot_phase = clamp(most_forward_foot->foot_phase, -1.0f, 1.0f);
 
-                gpu_body_data* body_gpu = &bodies_gpu[most_forward_foot->body_id];
-                real_3 r = apply_rotation(body_gpu->orientation, real_cast(most_forward_foot->pos)+(real_3){0.5,0.5,0.5}-body_gpu->x_cm);
-                real_3 foot_x = r+body_gpu->x;
-                draw_circle(rd, foot_x, 0.3, {1.0,0.8,0.8,1});
-            }
-        }
+        //         gpu_body_data* body_gpu = &bodies_gpu[most_forward_foot->body_id];
+        //         real_3 r = apply_rotation(body_gpu->orientation, real_cast(most_forward_foot->pos)+(real_3){0.5,0.5,0.5}-body_gpu->x_cm);
+        //         real_3 foot_x = r+body_gpu->x;
+        //         // draw_circle(rd, foot_x, 0.3, {1.0,0.8,0.8,1});
+        //     }
+        // }
     }
 }
 
-void iterate_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain* brains, int n_brains, render_data* rd)
+void iterate_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, cpu_form_data* forms_cpu, gpu_form_data* forms_gpu, brain* brains, int n_brains, render_data* rd)
 {
     for(int brain_id = 0; brain_id < n_brains; brain_id++)
     {
@@ -591,15 +595,26 @@ void iterate_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain*
 
                 real_3 root_r = foot_x - anchor_x;
 
-                real COF = 1.2; //TODO: actually get this from the collision data
-
                 if(ep->coyote_time > 0) //the foot is on the ground
                 {
-                    real_3 foot_force = -1.0f*br->target_accel-br->stabilize_accel;
+                    real_3 foot_force = -1.0f*br->target_accel;
+                    // if(dot(foot_force, body_cpu->contact_normals[0]) > 0)
+                    //     foot_force = rej(foot_force, body_cpu->contact_normals[0]);
+                    quaternion ground_orientation = get_rotation_between(body_cpu->contact_normals[0], {0,0,1});
+                    if(abs(ground_orientation.r) > cos(pi/6+0.001))
+                    {
+                        foot_force.z = 0;
+                        foot_force = apply_rotation(ground_orientation, foot_force);
+                        foot_force.z += -br->target_accel.z;
+                    }
+                    foot_force += -br->stabilize_accel;
+
+                    draw_circle(rd, root_gpu->x, 0.1, {1,1,0,1});
+                    draw_circle(rd, root_gpu->x+100*foot_force, 0.1, {1,1,1,1});
+
                     real min_normal_force = 1.0f;
                     real normal_force = max(-dot(foot_force, ep->grab_normal), -min_normal_force);
                     real_3 tangent_force = rej(foot_force, ep->grab_normal);
-                    real max_tangent_force = COF*abs(normal_force);
 
                     // rd->log_pos
                     //     += sprintf(rd->debug_log+rd->log_pos, "normal_force = %f, tangent_force = %f\n",
@@ -647,12 +662,20 @@ void iterate_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain*
                     //     // force += (1.0f/N_SOLVER_ITERATIONS)*0.001f*(grab_x-foot_x);
                     //     force += (1.0f/N_SOLVER_ITERATIONS)*(real_3){0,0,-0.012};
                     // }
-                    draw_circle(rd, grab_x, 0.3f, {0,1,1,1});
+                    // draw_circle(rd, grab_x, 0.3f, {0,1,1,1});
                 }
                 if(!ep->is_grabbing) //the foot is swinging forward
                 {
-                    real_3 forward_force = 0.05f*(br->target_accel);
+                    real_3 forward_force = 1.0f*(br->target_accel);
                     // real_3 forward_force = 0.02f*(br->target_accel)-0.001*(foot_x_dot-root_gpu->x_dot);
+
+                    // quaternion ground_orientation = get_rotation_between(body_cpu->contact_normals[0], {0,0,1});
+                    // if(abs(ground_orientation.r) > cos(pi/6+0.001))
+                    // {
+                    //     forward_force.z = 0;
+                    //     forward_force = apply_rotation(ground_orientation, forward_force);
+                    //     forward_force.z += br->target_accel.z;
+                    // }
 
                     real_3 ground_force = {}; //force to move toward/away from walls
                     real ground_distance = 0;
@@ -662,21 +685,40 @@ void iterate_brains(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, brain*
                     //     ground_distance += body_cpu->contact_depths[i];
                     // }
                     ground_force = body_cpu->contact_normals[0];
-                    ground_force *= 0.05f*(1.0f/3.0f)*ep->foot_phase;
+                    ground_force *= -0.01;
                     // ground_force = -0.05f*(1.0f/3.0f)*body_cpu->contact_normals[0];
                     ground_distance *= (1.0f/3.0f);
+
+                    forward_force *= ep->foot_phase;
+
+                    forward_force = rej(forward_force, body_cpu->contact_normals[0]);
 
                     // log_output("depth: ", ground_distance, "\n");
 
                     // real mix_factor = clamp(1.0f-0.1f*ground_distance, 0.0f, 1.0f);
-                    real mix_factor = clamp(sq(ep->foot_phase) , 0.0f, 1.0f);
+                    real mix_factor = clamp(sq(ep->foot_phase), 0.0f, 1.0f);
                     // if(body_cpu->contact_depths[0] > ep->root_dist/2) mix_factor = 0;
-                    force = (1.0f/N_SOLVER_ITERATIONS)*lerp(forward_force, ground_force, mix_factor);
+                    // force = (1.0f/N_SOLVER_ITERATIONS)*lerp(forward_force, ground_force, mix_factor);
+                    force = (1.0f/N_SOLVER_ITERATIONS)*(forward_force+ground_force);
                     // force = (1.0f/N_SOLVER_ITERATIONS)*ground_force;
 
-                    draw_circle(rd, foot_x, 0.3f, {mix_factor, 0.5f+0.5f*ep->foot_phase, 1.0f-mix_factor, 1});
+                    // draw_circle(rd, foot_x, 0.3f, {mix_factor, 0.5f+0.5f*ep->foot_phase, 1.0f-mix_factor, 1});
                     // draw_circle(rd, foot_x+100*force, 0.2f, {1, 1, 1, 1});
                 }
+
+                force += (1.0/N_SOLVER_ITERATIONS)*br->kick;
+
+                int f = body_gpu->form_id-1;
+                gpu_form_data* form_gpu = &forms_gpu[f];
+
+                int fr = root_gpu->form_id-1;
+                gpu_form_data* root_form_gpu = &forms_gpu[fr];
+
+                real_3 form_r = apply_rotation(form_gpu->orientation, real_cast(ep->pos)+(real_3){0.5,0.5,0.5}-body_gpu->x_cm);
+                real_3 form_foot_x = form_r+form_gpu->x;
+                real_3 target_foot_displacement = root_gpu->x + form_foot_x - root_form_gpu->x - foot_x;
+
+                force += (0.002f/N_SOLVER_ITERATIONS)*target_foot_displacement;
             }
 
             // if(ep->is_grabbing)
@@ -793,7 +835,7 @@ void shift_body_group(int b, int exclude, cpu_body_data* bodies_cpu, gpu_body_da
         }
 }
 
-void recurse_joints(int root, int b, child_joint* joint, cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, real dist_to_root, int_3 root_joint_pos, bool use_integral)
+void recurse_joints(int root, int b, child_joint* joint, cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, cpu_form_data* forms_cpu, gpu_form_data* forms_gpu, real dist_to_root, int_3 root_joint_pos, bool use_integral)
 {
     int body_ids[2] = {b, joint->child_body_id};
 
@@ -810,6 +852,49 @@ void recurse_joints(int root, int b, child_joint* joint, cpu_body_data* bodies_c
     cpu_body_data* child_cpu = &bodies_cpu[joint->child_body_id];
 
     assert(child_gpu->omega.x == child_gpu->omega.x);
+
+    if(child_gpu->form_id)
+    {
+        int f = child_gpu->form_id-1;
+        cpu_form_data* child_form_cpu = &forms_cpu[f];
+        gpu_form_data* child_form_gpu = &forms_gpu[f];
+
+        int fp = parent_gpu->form_id-1;
+        cpu_form_data* parent_form_cpu = &forms_cpu[fp];
+        gpu_form_data* parent_form_gpu = &forms_gpu[fp];
+
+        //targets in parent coordinates
+        quaternion target_rel_orientation = conjugate(parent_form_gpu->orientation)*child_form_gpu->orientation;
+        real_3 target_rel_x = apply_rotation(conjugate(parent_form_gpu->orientation), child_form_gpu->x - parent_form_gpu->x);
+
+        //apply small force to bring body to target
+        quaternion current_rel_orientation = conjugate(parent_gpu->orientation)*child_gpu->orientation;
+        real_3 current_rel_x = apply_rotation(conjugate(parent_gpu->orientation), child_gpu->x - parent_gpu->x);
+
+        // real_3 force = (0.3/N_SOLVER_ITERATIONS)*apply_rotation(parent_gpu->orientation, target_rel_x - current_rel_x);
+
+        // force += (1.0/N_SOLVER_ITERATIONS)*(parent_gpu->x_dot-child_gpu->x_dot);
+
+        // real reduced_mass = 1.0/(1.0/parent_gpu->m+1.0/child_gpu->m);
+        // force *= reduced_mass;
+
+        // // force = proj(force, parent_gpu->x-child_gpu->x);
+
+        // // parent_gpu->x_dot -= force/parent_gpu->m;
+        // // child_gpu->x_dot += force/child_gpu->m;
+
+        // real_3 torque = cross(apply_rotation(parent_gpu->orientation, real_cast(joint->pos[0])+(real_3){0.5,0.5,0.5}-parent_gpu->x_cm), force);
+
+        real_3 torque = 2.0*apply_rotation(parent_gpu->orientation, (target_rel_orientation*conjugate(current_rel_orientation)).ijk);
+        torque += 5.0*(parent_gpu->omega-child_gpu->omega);
+        torque *= (1.0/N_SOLVER_ITERATIONS);
+
+        real_3x3 reduced_I = inverse(parent_gpu->invI+child_gpu->invI);
+        torque = reduced_I*torque;
+
+        parent_gpu->omega -= parent_gpu->invI*torque;
+        child_gpu->omega += child_gpu->invI*torque;
+    }
 
     switch(joint->type)
     {
@@ -835,7 +920,7 @@ void recurse_joints(int root, int b, child_joint* joint, cpu_body_data* bodies_c
                     -r.z, 0  ,+r.x,
                     +r.y,-r.x, 0
                 };
-                K += real_identity_3(1.0)/body->m - r_dual*body->invI*r_dual;
+                K += real_identity_3(1.0/body->m) - r_dual*body->invI*r_dual;
             }
 
             real_3x3 invK = inverse(K);
@@ -1004,7 +1089,7 @@ void recurse_joints(int root, int b, child_joint* joint, cpu_body_data* bodies_c
     for(int c = 0; c < child_cpu->n_children; c++)
     {
         child_joint* cc_joint = &child_cpu->joints[c];
-        recurse_joints(root, joint->child_body_id, cc_joint, bodies_cpu, bodies_gpu,
+        recurse_joints(root, joint->child_body_id, cc_joint, bodies_cpu, bodies_gpu, forms_cpu, forms_gpu,
                        dist_to_root+norm(real_cast(joint->pos[0]))+norm(real_cast(joint->pos[1])),
                        root_joint_pos, use_integral);
     }
@@ -1081,7 +1166,7 @@ void warm_start_joints(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int
     }
 }
 
-void iterate_joints(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_bodies, bool use_integral)
+void iterate_joints(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, cpu_form_data* forms_cpu, gpu_form_data* forms_gpu, int n_bodies, bool use_integral)
 {
     for(int b = 0; b < n_bodies; b++)
     {
@@ -1093,7 +1178,7 @@ void iterate_joints(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_
         for(int c = 0; c < body_cpu->n_children; c++)
         {
             child_joint* joint = &body_cpu->joints[c];
-            recurse_joints(b, b, joint, bodies_cpu, bodies_gpu, 0, joint->pos[0], use_integral);
+            recurse_joints(b, b, joint, bodies_cpu, bodies_gpu, forms_cpu, forms_gpu, 0, joint->pos[0], use_integral);
         }
     }
 }
@@ -1101,7 +1186,7 @@ void iterate_joints(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_
 void iterate_contact_points(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_bodies, render_data* rd)
 {
     real COR = 0.2;
-    real COF = 10.2;
+    real COF = 100.2;
 
     static int frame_number = 0;
     frame_number++;
@@ -1246,9 +1331,9 @@ void iterate_gravity(int iterations, gpu_body_data* bodies_gpu, int n_bodies)
     }
 }
 
-void simulate_joints(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_bodies, brain* brains, int n_brains, render_data* rd)
+void simulate_joints(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, cpu_form_data* forms_cpu, gpu_form_data* forms_gpu, int n_bodies, brain* brains, int n_brains, render_data* rd)
 {
-    plan_brains(bodies_cpu, bodies_gpu, brains, n_brains, rd);
+    plan_brains(bodies_cpu, bodies_gpu, forms_cpu, forms_gpu, brains, n_brains, rd);
     for(int b = 0; b < n_bodies; b++)
     {
         cpu_body_data* body_cpu = &bodies_cpu[b];
@@ -1262,9 +1347,9 @@ void simulate_joints(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n
     for(int i = 0; i < N_SOLVER_ITERATIONS; i++)
     {
         iterate_gravity(N_SOLVER_ITERATIONS, bodies_gpu, n_bodies);
-        iterate_brains(bodies_cpu, bodies_gpu, brains, n_brains, rd);
+        iterate_brains(bodies_cpu, bodies_gpu, forms_cpu, forms_gpu, brains, n_brains, rd);
         iterate_contact_points(bodies_cpu, bodies_gpu, n_bodies, rd);
-        iterate_joints(bodies_cpu, bodies_gpu, n_bodies, i < N_SOLVER_ITERATIONS-2);
+        iterate_joints(bodies_cpu, bodies_gpu, forms_cpu, forms_gpu, n_bodies, i < N_SOLVER_ITERATIONS-2);
     }
 }
 

@@ -74,7 +74,7 @@ void main()
     uvec4 voxel;
     vec3 hit_pos;
 
-    float reflectance = 1;
+    float transmission = 1;
 
     ivec2 d = ivec2(0);
     for(d.y = 0; d.y <= 1; d.y++)
@@ -104,7 +104,7 @@ void main()
             {
                 total_dist = face_dist;
                 vec4 transmitted_color = texelFetch(prepass_color, prepass_coord+d, 0);
-                reflectance = 1-transmitted_color.a;
+                transmission = transmitted_color.a;
                 frag_color.rgb = transmitted_color.rgb;
                 voxel = texelFetch(prepass_voxel, prepass_coord+d, 0);
                 normal = apply_rotation(orientation, -ray_sign*max_dir);
@@ -161,6 +161,7 @@ void main()
         frag_color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)
             *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
     }
+    frag_color.rgb *= transmission;
 
     frag_color.rgb = clamp(frag_color.rgb, 0, 1);
     // frag_color.rgb = normal;

@@ -83,10 +83,13 @@ void main()
     //                 -        cos(screen_pos.x)*cos(screen_pos.y)*screen_dist *camera_axes[2]);
     ray_dir = normalize(ray_dir);
 
+    vec3 pos = camera_pos;
+
+    uint medium = texelFetch(materials, ivec3(pos), 0).r;
+
     voxel_data = uvec4(0,0,0,0);
     vec3 reflectivity = vec3(1,1,1);
 
-    vec3 pos = camera_pos;
     vec3 ray_sign = sign(ray_dir);
 
     vec3 invabs_ray_dir = ray_sign/ray_dir;
@@ -114,7 +117,6 @@ void main()
     vec3 hit_dir;
     vec3 normal;
     uvec4 voxel;
-    uint medium  = texelFetch(materials, ivec3(pos), 0).r;
     bool hit = cast_ray(materials, ray_dir, pos, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
     // bool hit = coarse_cast_ray(ray_dir, pos, hit_pos, hit_dist, hit_cell, hit_dir, normal);
     // voxel = texelFetch(materials, hit_cell, 0);
@@ -181,6 +183,8 @@ void main()
     total_dist += hit_dist;
     if(hit)
     {
+        float initial_transmission = exp(-opacity(mat(medium))*hit_dist);
+
         voxel_data = voxel;
         gl_FragDepth = 1.0f/total_dist;
 
@@ -192,9 +196,9 @@ void main()
             float c = dot(ray_dir, normal);
             float r = refractive_index(medium)/refractive_index(mat(voxel));
             float square = 1.0-sq(r)*(1.0-sq(c));
-            if(square > 0) ray_dir = r*ray_dir-(r*c+sqrt(square))*normal;
+            if(square > 0) ray_dir = r*ray_dir+(-r*c+sign(c)*sqrt(square))*normal;
             else ray_dir = ray_dir - 2*c*normal; //total internal reflection
-            ray_dir = normalize(ray_dir);
+            // ray_dir = normalize(ray_dir);
             medium = mat(voxel);
             bool hit = cast_ray(materials, ray_dir, ray_pos, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
 
@@ -227,5 +231,6 @@ void main()
                 *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
             voxel_color *= transmission;
         }
+        voxel_color.a = initial_transmission; //pretty hacky, pretty sure I should restructure rendering stuff later
     }
 }

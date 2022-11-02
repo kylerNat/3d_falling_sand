@@ -90,19 +90,24 @@ float conductivity(uint material_id)
     return texelFetch(material_physical_properties, ivec2(7,material_id), 0).r;
 }
 
+float work_function(uint material_id)
+{
+    return texelFetch(material_physical_properties, ivec2(8,material_id), 0).r;
+}
+
 int growth_time(uint material_id)
 {
-    return int(texelFetch(material_physical_properties, ivec2(8,material_id), 0).r);
+    return int(texelFetch(material_physical_properties, ivec2(9,material_id), 0).r);
 }
 
 float n_triggers(uint material_id)
 {
-    return texelFetch(material_physical_properties, ivec2(9,material_id), 0).r;
+    return texelFetch(material_physical_properties, ivec2(10,material_id), 0).r;
 }
 
 uint trigger_info(uint material_id, uint trigger_id)
 {
-    return uint(texelFetch(material_physical_properties, ivec2(10+trigger_id,material_id), 0).r);
+    return uint(texelFetch(material_physical_properties, ivec2(11+trigger_id,material_id), 0).r);
 }
 
 #endif

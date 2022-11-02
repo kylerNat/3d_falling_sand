@@ -47,7 +47,7 @@ struct material_physical_info
 material_visual_info material_visuals[N_MAX_MATERIALS] = {
     {.opacity = 0, .refractive_index = 1}, //air
     {.base_color = {0.96, 0.84, 0.69}, .roughness = 1.0f, .metalicity = 0.0f, .opacity = 1}, //sand
-    {.base_color = {0.2, 0.2, 0.8}, /*.emission = {0.05, 0.05, 0.1},*/ .roughness = 1.0f, .metalicity = 0.0f, .opacity = 0.2, .refractive_index=1.33}, //water
+    {.base_color = {0.2, 0.2, 0.8}, /*.emission = {0.05, 0.05, 0.1},*/ .roughness = 1.0f, .metalicity = 0.0f, .opacity = 0.01, .refractive_index=1.33}, //water
     {.base_color = {1.0, 0.5, 0.5}, .roughness = 0.8f, .metalicity = 1.0f, .opacity = 1}, //coperish
     {.base_color = {0.8, 0.2, 0.8}, .roughness = 0.3f, .metalicity = 0.0f, .opacity = 1}, //purply
     {.base_color = {0.0, 0.0, 0.0}, .emission = {1,1,1}, .roughness = 1.0f, .metalicity = 0.0f, .opacity = 1}, //light

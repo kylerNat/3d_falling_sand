@@ -99,7 +99,7 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
                 c = u;
             else if(mat(ul) != 0 && mat(l) != 0 && mat(u) == 0 && phase(ul) >= phase_sand && flow(ul) == flow && transient(ul)==0)
                 c = ul;
-            else if(mat(l) != 0 && mat(dl) != 0 && mat(d) != 0 && phase(l) == phase_liquid && flow(l) == flow && transient(l)==0)
+            else if(mat(l) != 0 && mat(dl) != 0 && mat(d) != 0 && (phase(d) >= phase_liquid || phase(dl) >= phase_liquid) && phase(l) == phase_liquid && flow(l) == flow && transient(l)==0)
                 c = l;
             else if(mat(d) != 0 && phase(d) == phase_gas && transient(d)==0)
                 c = d;
@@ -142,10 +142,9 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
         { //if the cell is not empty and not solid check if it fell or flew
             bool fall_allowed = (pos.z > 0 && (mat(d) == 0 || (mat(dr) == 0 && mat(r) == 0 && flow(dr) == flow)) && phase(c) >= phase_sand);
             bool flow_allowed = (pos.z > 0 && mat(r) == 0
-                                 && mat(dr) != 0 && mat(d) != 0
                                  && (mat(ur) == 0 || phase(ur) < phase_sand || flow(ur) != flow)
                                  && (mat(u) == 0 || phase(u) < phase_sand)
-                                 && phase(c) == phase_liquid && flow(r) == flow);
+                                 && (phase(dr) >= phase_liquid || phase(d) >= phase_liquid) && phase(c) == phase_liquid && flow(r) == flow);
 
             //TODO: check for other higher priority motions, in addition to uu falling
             bool float_allowed = (pos.z < 511 && (mat(u) == 0 || (mat(ur) == 0 && mat(r) == 0 && flow(ur) == flow)) && phase(c) == phase_gas && (mat(uu) == 0 || (phase(uu) <= phase_solid)));
@@ -159,7 +158,7 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
             if(fall_allowed || flow_allowed || float_allowed || gas_flow_allowed) c = uvec4(0);
             else
             {
-                flow = rand(rand(rand(frame_number)))%4;
+                // flow = rand(rand(rand(frame_number)))%4;
                 for(int f = 0; f < 4; f++)
                 {
                     uint fl = (f+flow)%4;

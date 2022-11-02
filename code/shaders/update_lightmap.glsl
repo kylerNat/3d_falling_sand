@@ -69,7 +69,8 @@ void main()
         ivec3 origin = ivec3(0);
         ivec3 size = ivec3(512);
         uvec4 voxel;
-        bool hit = cast_ray(materials, ray_dir, probe_x, size, origin, 0, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 24);
+        uint medium = texelFetch(materials, ivec3(probe_x), 0).r;
+        bool hit = cast_ray(materials, ray_dir, probe_x, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 24);
 
         vec3 color = vec3(0);
         vec2 depth = vec2(0);
@@ -77,8 +78,55 @@ void main()
         if(hit)
         {
             uvec4 voxel = texelFetch(materials, hit_cell, 0);
-
             uint material_id = voxel.r;
+
+            vec4 transmission = vec4(1);
+            vec4 transparent_color = vec4(0);
+            for(int i = 0; i < 5; i++)
+            {
+                if(opacity(mat(voxel)) >= 1) break;
+                vec3 ray_pos = hit_pos;
+                if(ivec3(ray_pos) != hit_cell) ray_pos += 0.001*ray_dir;
+                float c = dot(ray_dir, normal);
+                float r = refractive_index(medium)/refractive_index(mat(voxel));
+                float square = 1.0-sq(r)*(1.0-sq(c));
+                if(square > 0) ray_dir = r*ray_dir+(-r*c+sign(c)*sqrt(square))*normal;
+                else ray_dir = ray_dir - 2*c*normal; //total internal reflection
+                // ray_dir = normalize(ray_dir);
+                medium = mat(voxel);
+                bool hit = cast_ray(materials, ray_dir, ray_pos, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 24);
+
+                if(hit)
+                {
+                    transmission *= exp(-opacity(mat(medium))*hit_dist);
+                }
+                else
+                {
+                    break;
+                }
+
+                if(dot(transmission, transmission) < 0.001) break;
+
+                uint material_id = voxel.r;
+                float roughness = get_roughness(material_id);
+                vec3 emission = get_emission(material_id);
+
+                // transparent_color.rgb += -(emission)*dot(normal, ray_dir);
+                transparent_color.rgb += emission;
+
+                //TODO: actual blackbody color
+                transparent_color.rgb += vec3(1,0.05,0.1)*clamp((1.0/127.0)*(float(temp(voxel))-128), 0.0, 1.0);
+
+                transparent_color.rgb += vec3(0.7,0.3,1.0)*clamp((1.0/15.0)*(float(volt(voxel))), 0.0, 1.0);
+
+                vec3 reflection_dir = normal;
+                vec2 sample_depth;
+                transparent_color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)
+                    *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
+                transparent_color *= transmission;
+            }
+
+            color += transparent_color.rgb;
 
             float roughness = get_roughness(material_id);
             vec3 emission = get_emission(material_id);

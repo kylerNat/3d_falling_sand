@@ -408,71 +408,6 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         // w->bodies_gpu[b].x_dot.z += -0.1;
     }
 
-    // static float supported_weight = 0.0;
-    // static float leg_phase = 0.0;
-    // {
-    //     real multiplier = 30;
-    //     real target_height = 14;
-    //     // multiplier *= -(1.0*(w->bodies_gpu[13].x.z-0.5*w->bodies_gpu[5].x.z-0.5*w->bodies_gpu[7].x.z-target_height));
-    //     if(is_down('T', input) || (player_in_head && is_down(M2, input))) multiplier = 100;
-    //     bool striding = fmod(leg_phase, 0.5) > 0.1;
-    //     if(leg_phase > 0.5)
-    //     {
-    //         w->bodies_cpu[5].contact_locked[0] = striding;
-    //         w->bodies_cpu[7].contact_locked[0] = false;
-    //         if(striding)
-    //         {
-    //             w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
-    //             w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*1.0/w->bodies_gpu[5].m;
-    //         }
-    //         w->bodies_gpu[5].x_dot.z  -= 0.001*multiplier*0.02/w->bodies_gpu[5].m;
-    //         w->bodies_gpu[7].x_dot.z  -= -0.001*multiplier*0.02/w->bodies_gpu[7].m;
-    //     }
-    //     else
-    //     {
-    //         w->bodies_cpu[7].contact_locked[0] = striding;
-    //         w->bodies_cpu[5].contact_locked[0] = false;
-    //         if(striding)
-    //         {
-    //             w->bodies_gpu[13].x_dot.z += 0.001*multiplier/w->bodies_gpu[13].m;
-    //             w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*1.0/w->bodies_gpu[7].m;
-    //         }
-    //         w->bodies_gpu[7].x_dot.z  -= 0.001*multiplier*0.02/w->bodies_gpu[7].m;
-    //         w->bodies_gpu[5].x_dot.z  -= -0.001*multiplier*0.02/w->bodies_gpu[5].m;
-    //     }
-
-    //     if(is_down('R', input) || (player_in_head && (walk_dir.x != 0 || walk_dir.y != 0)))
-    //     {
-    //         real_3 pos = player->x-placement_dist*camera_z;
-    //         real_3 target_dir = pos-w->bodies_gpu[13].x;
-    //         target_dir.z = 0;
-    //         if(player_in_head && (walk_dir.x != 0 || walk_dir.y != 0)) target_dir = walk_dir;
-    //         target_dir = normalize(target_dir);
-
-    //         real walk_accel = 0.01;
-    //         w->bodies_gpu[13].x_dot += (walk_accel/w->bodies_gpu[13].m)*target_dir;
-    //         if(fmod(leg_phase+0.8,1.0) > 0.5)
-    //         {
-    //             w->bodies_gpu[5].x_dot -= (walk_accel*1.1/w->bodies_gpu[5].m)*target_dir;
-    //             w->bodies_gpu[7].x_dot -= -(walk_accel*0.1/w->bodies_gpu[7].m)*target_dir;
-    //         }
-    //         else
-    //         {
-    //             w->bodies_gpu[7].x_dot -= (walk_accel*1.1/w->bodies_gpu[7].m)*target_dir;
-    //             w->bodies_gpu[5].x_dot -= -(walk_accel*0.1/w->bodies_gpu[5].m)*target_dir;
-    //         }
-
-    //         // w->bodies_gpu[7].omega  *= 0.0;
-    //         // w->bodies_gpu[5].omega  *= 0.0;
-    //         w->bodies_gpu[12].omega += 0.2*cross(apply_rotation(w->bodies_gpu[12].orientation, (real_3){0,0,1}), target_dir);
-    //         w->bodies_gpu[13].omega += 0.2*cross(apply_rotation(w->bodies_gpu[13].orientation, (real_3){1,0,0}), target_dir);
-    //     }
-
-    //     // w->bodies_gpu[13].x_dot.z *= 0.8;
-    // }
-    // leg_phase += 0.03;
-    // leg_phase = fmod(leg_phase, 1.0);
-
     player_in_head = (player_in_head + is_pressed('V', input))%3;
 
     {
@@ -494,14 +429,14 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
                 target_dir = walk_dir;
             }
 
-            br->target_accel.z += 0.05;
-            br->target_accel += 0.05*target_dir;
-            br->target_accel -= 0.02*w->bodies_gpu[13].x_dot;
+            // br->target_accel.z += 0.02;
+            br->target_accel += 0.02*target_dir;
+            // br->target_accel -= 0.02*w->bodies_gpu[13].x_dot;
         }
         else
         {
             // br->target_accel -= 0.02*w->bodies_gpu[13].x_dot;
-            br->target_accel.z += 0.02;
+            // br->target_accel.z += 0.01;
             // br->target_accel.z -= 0.01*(w->bodies_gpu[13].x.z-(w->bodies_gpu[5].x.z+16));
         }
         if(is_down('T', input)
@@ -513,11 +448,24 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
             // br->target_accel += 0.05*w->bodies_cpu[13].contact_normals[0];
         }
 
-        if(is_down('Y', input)
-           || (player_in_head && is_down(' ', input)))
+        // if(is_down('Y', input)
+        //    || (player_in_head && is_down(' ', input)))
+        // {
+        //     br->is_moving = true;
+        //     if(w->bodies_cpu[13].contact_depths[0] > 5)
+        //     br->target_accel.z -= 0.1;
+        // }
+
+        br->kick = {};
+        if(player_in_head && is_down(' ', input))
         {
-            br->is_moving = true;
-            br->target_accel.z -= 0.1;
+            if(br->kick_frames++ < 5)
+                br->kick += -0.05*camera_z;
+            // br->kick += 0.1*walk_dir;
+        }
+        else
+        {
+            br->kick_frames = 0;
         }
     }
 
@@ -527,9 +475,13 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     w->joints[j].torques = {0,0,0};
     // }
 
-    if(!is_down('M', input))
+    static bool step_mode = false;
+
+    step_mode = step_mode!=is_pressed(VK_OEM_PERIOD, input);
+
+    if(step_mode ? is_pressed('M', input) : !is_down('M', input))
     {
-        simulate_bodies(w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->gew.active_genome->forms_gpu, w->gew.active_genome->n_forms);
+        simulate_bodies(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->gew.active_genome->forms_gpu, w->gew.active_genome->n_forms);
         simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
 
         // w->bodies_cpu[5].contact_locked[0] = true;
@@ -541,12 +493,39 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         // w->bodies_cpu[7].contact_forces[0] = {0,0,0};
         // w->bodies_cpu[5].deltax_dot_integral[0] = {0,0,0};
 
-        simulate_joints(w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->brains, w->n_brains, rd);
+        simulate_joints(w->bodies_cpu, w->bodies_gpu, w->gew.active_genome->forms_cpu, w->gew.active_genome->forms_gpu, w->n_bodies, w->brains, w->n_brains, rd);
 
         integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
     }
 
-    if(player_in_head == 2) player->x = lerp(player->x, w->bodies_gpu[13].x+10.0*camera_z+2*camera_y, 0.3);
+    for(int b = 0; b < w->n_bodies; b++)
+    {
+        for(int i = 0; i < 3; i++)
+            draw_circle(rd, w->bodies_cpu[b].contact_points[i], 0.3, {w->bodies_cpu[b].contact_depths[i] > 1,w->bodies_cpu[b].contact_depths[i] <= 1,0,1});
+    }
+
+    // for(int brain_id = 0; brain_id < w->n_brains; brain_id++)
+    // {
+    //     brain* br = &w->brains[brain_id];
+
+    //     for(int e = 0; e < br->n_endpoints; e++)
+    //     {
+    //         endpoint* ep = &br->endpoints[e];
+    //         gpu_body_data* body_gpu = &w->bodies_gpu[ep->body_id];
+    //         cpu_body_data* body_cpu = &w->bodies_cpu[ep->body_id];
+    //         rd->log_pos
+    //             += sprintf(rd->debug_log+rd->log_pos,
+    //                        "foot %i state: %s, phase = %.2f, coyote = %.2f, depth = %.2f, %s\n",
+    //                        ep->body_id,
+    //                        ep->is_grabbing ? "grab" : "free",
+    //                        ep->foot_phase, ep->coyote_time,
+    //                        body_cpu->contact_depths[0],
+    //                        body_cpu->contact_locked[0] ? "locked" : "unlock"
+    //                 );
+    //     }
+    // }
+
+    if(player_in_head == 2) player->x = lerp(player->x, w->bodies_gpu[13].x+10.0*camera_z+2*camera_y, 0.8);
     if(player_in_head == 1) player->x = w->bodies_gpu[13].x-5*camera_z;
 
     // if(is_pressed('V', input))
