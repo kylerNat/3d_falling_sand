@@ -7,6 +7,7 @@ enum ui_type
 {
     ui_none,
     ui_gene,
+    ui_gizmo,
     ui_form,
     ui_form_voxel,
     ui_window,
@@ -36,6 +37,11 @@ struct user_input
 #define M5 0x06
 #define M_WHEEL_DOWN 0x0A
 #define M_WHEEL_UP 0x0B
+
+#define LARROW 0x25
+#define UARROW 0x26
+#define RARROW 0x27
+#define DARROW 0x28
 
 #define is_down(key_code, input) (((input)->buttons[(key_code)/8]>>((key_code)%8))&1)
 #define is_pressed(key_code, input) ((((input)->buttons[(key_code)/8] & ~(input)->prev_buttons[(key_code)/8])>>((key_code)%8))&1)

@@ -525,13 +525,8 @@ int update_window(window_t* wnd)
                     case RIM_TYPEKEYBOARD:
                     {
                         RAWKEYBOARD& kb = raw.data.keyboard;
-                        if(kb.VKey == 'G')
-                        {
-                            wnd->input.mouse = {(2.0*cursor_point.x-(window_rect.left+window_rect.right))/window_height,
-                                                (-2.0*cursor_point.y+(window_rect.bottom+window_rect.top))/window_height};
-                        }
-                        if(kb.Flags == RI_KEY_BREAK) set_key_up(kb.VKey, wnd->input);
-                        if(kb.Flags == RI_KEY_MAKE) set_key_down(kb.VKey, wnd->input);
+                        if(kb.Flags&RI_KEY_BREAK) set_key_up(kb.VKey, wnd->input);
+                        else                    set_key_down(kb.VKey, wnd->input);
                         break;
                     }
                 }
@@ -615,7 +610,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             .camera_pos = {0,0,-10},
 
             .genodes = (genode*) permalloc_clear(manager, 1024*sizeof(genode)),
-            .n_genodes = 0,},
+            .n_genodes = 0,
+
+            .gizmo_x = {.r = 5, .color = {1,0,0,1},},
+            .gizmo_y = {.r = 5, .color = {0,1,0,1},},
+            .gizmo_z = {.r = 5, .color = {0,0,1,1},},
+        },
 
         .c = (chunk*) permalloc(manager, 8*sizeof(chunk)),
         .chunk_lookup = {},
@@ -1108,23 +1108,23 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .root_dist = 2*limb_length+body_length-3,
     };
 
-    // //hand feet
-    // br->endpoints[br->n_endpoints++] = {
-    //     .type = endpoint_foot,
-    //     .body_id = 9,
-    //     .pos = {limb_length-1,0,0},
-    //     .foot_phase = 0.0,
-    //     .root_anchor = {shoulder_length-1,0,0},
-    //     .root_dist = 2*limb_length,
-    // };
-    // br->endpoints[br->n_endpoints++] = {
-    //     .type = endpoint_foot,
-    //     .body_id = 11,
-    //     .pos = {limb_length-1,0,0},
-    //     .foot_phase = 0.5,
-    //     .root_anchor = {shoulder_length-1,body_width-1,0},
-    //     .root_dist = 2*limb_length,
-    // };
+    //hand feet
+    br->endpoints[br->n_endpoints++] = {
+        .type = endpoint_foot,
+        .body_id = 9,
+        .pos = {limb_length-1,0,0},
+        .foot_phase = 0.0,
+        .root_anchor = {shoulder_length-1,0,0},
+        .root_dist = 2*limb_length,
+    };
+    br->endpoints[br->n_endpoints++] = {
+        .type = endpoint_foot,
+        .body_id = 11,
+        .pos = {limb_length-1,0,0},
+        .foot_phase = 0.5,
+        .root_anchor = {shoulder_length-1,body_width-1,0},
+        .root_dist = 2*limb_length,
+    };
 
     for(int b = 0; b < w.n_bodies; b++)
     {
@@ -1148,8 +1148,14 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         gn->forms_gpu[f].cell_material_id = w.bodies_gpu[b].cell_material_id;
 
-        gn->forms_gpu[f].x = {0,-f,1+f};
+        gn->forms_gpu[f].x = {0,0,0};
         gn->forms_gpu[f].orientation = {1,0,0,0};
+
+        if(b < limb_start_id+8)
+        {
+            gn->forms_cpu[f].theta = 2;
+            gn->forms_cpu[f].phi = 0;
+        }
 
         w.bodies_gpu[b].form_id = f+1;
 
@@ -1189,16 +1195,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .n_line_points = (uint*) permalloc(manager, 1000*sizeof(uint)),
         .n_lines = 0,
 
-        .sheets = (sheet_render_info*) permalloc(manager, 10000*sizeof(sheet_render_info)),
-        .n_sheets = 0,
-
-        .spherical_functions = (spherical_function_render_info*) permalloc(manager, 10000*sizeof(spherical_function_render_info)),
-        .n_spherical_functions = 0,
-
-        .blobs = (blob_render_info*) permalloc(manager, 10000*sizeof(blob_render_info)),
-        .n_blobs = 0,
-
         .debug_log = (char*) permalloc_clear(manager, 4096),
+
+        .text_data = (char*) permalloc_clear(manager, 65536),
+        .next_text = rd.text_data,
+        .texts = (text_render_info*) permalloc_clear(manager, sizeof(text_render_info)*4096),
+        .n_texts = 0,
     };
 
     render_data ui = {
@@ -1210,9 +1212,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .n_line_points = (uint*) permalloc(manager, 1000*sizeof(uint)),
         .n_lines = 0,
 
-        .spherical_functions = (spherical_function_render_info*) permalloc(manager, 1000*sizeof(spherical_function_render_info)),
-        .n_spherical_functions = 0,
         .debug_log = (char*) permalloc_clear(manager, 4096),
+
+        .text_data = (char*) permalloc_clear(manager, 65536),
+        .next_text = ui.text_data,
+        .texts = (text_render_info*) permalloc_clear(manager, sizeof(text_render_info)*4096),
+        .n_texts = 0,
     };
 
     audio_data ad;
@@ -1347,9 +1352,6 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         QueryPerformanceCounter(&wnd.this_time);
         {
             while(Deltat > dt) Deltat -= dt;
-            rd.n_sheets = 0;
-            rd.n_spherical_functions = 0;
-            rd.n_blobs = 0;
             rd.n_circles = 0;
             rd.n_circles = 0;
             rd.n_total_line_points = 0;
@@ -1357,15 +1359,17 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             rd.n_line_points[0] = 0;
             rd.log_pos = 0;
             rd.debug_log[0] = 0;
+            rd.next_text = rd.text_data;
+            rd.n_texts = 0;
 
-            ui.n_sheets = 0;
-            ui.n_spherical_functions = 0;
             ui.n_circles = 0;
             ui.n_total_line_points = 0;
             ui.n_lines = 0;
             ui.n_line_points[0] = 0;
             ui.log_pos = 0;
             ui.debug_log[0] = 0;
+            ui.next_text = ui.text_data;
+            ui.n_texts = 0;
 
             update_sounds(&ad);
 
@@ -1507,6 +1511,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         if(show_fps) draw_text(frame_time_text, -(1.0*window_width/window_height)+0.1, 0.9, {1,1,1,1}, font);
         draw_debug_text(rd.debug_log, -1080/5+10, -720/5+80);
         draw_debug_text(ui.debug_log, -1080/5+10, -720/5+80);
+
+        for(int i = 0; i < ui.n_texts; i++)
+            draw_text(ui.texts[i].text, ui.texts[i].x.x, ui.texts[i].x.y, ui.texts[i].color, font);
     }
     return 0;
 }

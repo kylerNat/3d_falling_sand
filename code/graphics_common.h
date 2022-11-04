@@ -42,14 +42,6 @@ struct spherical_function_render_info
     real* coefficients;
 };
 
-struct blob_render_info
-{
-    real_3 x;
-    int width;
-    uint16* heights;
-    uint16* bottoms;
-};
-
 struct sheet_render_info
 {
     real_3 x;
@@ -57,14 +49,11 @@ struct sheet_render_info
     uint16* heights;
 };
 
-struct tile_render_info
+struct text_render_info
 {
-    int x_offset;
-    int y_offset;
-    uint16* top;
-    uint16* bottom;
-    int_2* flow;
-    uint8_4* properties;
+    char* text;
+    real_3 x;
+    real_4 color;
 };
 
 //TODO: probably should put this somewhere else? I eventually want to be able to handle multiple windows for local multiplayer and stuff
@@ -85,17 +74,13 @@ struct render_data
     uint* n_line_points; //list of the number of points in each line
     uint n_lines;
 
-    sheet_render_info* sheets;
-    uint n_sheets;
-
-    spherical_function_render_info* spherical_functions;
-    uint n_spherical_functions;
-
-    blob_render_info* blobs;
-    uint n_blobs;
-
     char* debug_log;
     size_t log_pos;
+
+    char* text_data;
+    char* next_text;
+    text_render_info* texts;
+    int n_texts;
 };
 
 void draw_circle(render_data* rd, real_3 x, real radius, real_4 color)
@@ -122,5 +107,17 @@ void draw_line(render_data* rd)
     rd->n_lines++;
     rd->n_line_points[rd->n_lines] = 0;
 }
+
+void draw_text(render_data* rd, char* text, real_3 x, real_4 color)
+{
+    memcpy(rd->next_text, text, strlen(text)+1);
+    rd->texts[rd->n_texts++] = {
+        rd->next_text,
+        x,
+        color,
+    };
+    rd->next_text += strlen(text)+1;
+}
+
 
 #endif //GRAPHICS_COMMON

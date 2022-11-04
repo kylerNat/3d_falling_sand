@@ -73,12 +73,110 @@ struct cpu_form_data
 {
     gpu_form_data* gpu_data;
 
-    real_3 x_dot;
-    real_3 omega;
+    union
+    {
+        struct
+        {
+            int8 m;
+            int8 n;
+            int8 theta;
+            int8 phi;
+        };
+        struct
+        {
+            int8_2 mn;
+            int8_2 thetaphi;
+        };
+        uint32 int_orientation;
+    };
 
     uint8* materials;
     int storage_level;
 };
+
+#define rot_xz {1,5}
+#define rot_zx {4,5}
+#define rot_xy {2,3}
+#define rot_yx {1,3}
+
+/*
+  0 - 012
+  1 - 021
+  2 - 120
+  3 - 102
+  4 - 201
+  5 - 210
+ */
+#define perm3(n) {(n)/2,((n)/2+1+(n)%2)%3,(6-(2*((n)/2)+1+(n)%2))%3}
+
+int8_2 compose_rotation(int8_2 a, int8_2 b)
+{
+    int perm_a[3] = perm3(a.y);
+    int perm_b[3] = perm3(b.y);
+
+    int perm[3];
+    for(int i = 0; i < 3; i++) perm[i] = perm_b[perm_a[i]];
+
+    int cvp_bm = 0;
+    for(int i = 0; i < 3; i++) cvp_bm |= (((b.x>>perm_a[i])%2)!=((a.x>>i)%2))<<i;
+
+    int8_2 ab = {cvp_bm, perm[0]*2+(perm[1]==(perm[0]+2)%3)};
+    return ab;
+}
+
+quaternion convert_orientation(uint32 int_orientation)
+{
+    quaternion orientation = {1,0,0,0};
+
+    union
+    {
+        struct
+        {
+            int8 m;
+            int8 n;
+            int8 theta;
+            int8 phi;
+        };
+        uint32 o;
+    };
+    o = int_orientation;
+
+    int perm[3] = perm3(n);
+
+    //NOTE: these are actually reflections*inversions,
+    //but as long as it is a proper rotation there should be an even number of inversions total
+    if(perm[0] != 0)
+    {
+        quaternion reflection = {0,-1,0,0};
+        reflection[perm[0]+1] = +1;
+        reflection = normalize(reflection);
+        orientation = reflection*orientation;
+    }
+
+    //perm[0] -> nra: 0->1|2, 1->2, 2->1
+    int nra = 1+(perm[0]%2); //non-reflected axis
+    if(perm[nra] != nra)
+    {
+        quaternion reflection = {0,0,-1,1};
+        reflection = normalize(reflection);
+        orientation = reflection*orientation;
+    }
+
+    for(int i = 0; i < 3; i++)
+    {
+        if((m>>i)&1)
+        {
+            quaternion reflection = {0,0,0,0};
+            reflection[i+1] = 1;
+            orientation = reflection*orientation;
+        }
+    }
+
+    real inc = pi/4.0; //angular increment
+    orientation = axis_to_quaternion((real_3){0,theta*inc,0})*orientation;
+    orientation = axis_to_quaternion((real_3){0,0,phi*inc})*orientation;
+    return orientation;
+}
 
 struct genome
 {
@@ -229,6 +327,80 @@ bool do_genode(render_data* ui, user_input* input, genode* gn)
     return ((genode*) input->active_ui_element.element == gn);
 }
 
+struct rotation_gizmo
+{
+    real_3 x;
+    real r;
+    real_3 normal;
+    real_4 color;
+    real_3 last_dir;
+    real angle;
+    int initial_angle;
+};
+
+real_3 project_to_camera(real_3 x, real_3 camera_pos, real_3x3 camera_axes)
+{
+    float fov = pi*120.0/180.0;
+    float screen_dist = 1.0/tan(fov/2);
+
+    real_3 r = x-camera_pos;
+    real_3 screen_pos = {dot(r, camera_axes[0]), dot(r, camera_axes[1]), 0};
+    screen_pos *= -(screen_dist/dot(r, camera_axes[2]));
+    return screen_pos;
+}
+
+bool do_rotation_gizmo(render_data* ui, user_input* input, rotation_gizmo* gizmo, real_3 mouse_pos, real_3 mouse_ray, real_3x3 camera_axes)
+{
+    draw_circle(ui, project_to_camera(gizmo->x, mouse_pos, camera_axes), 0.01, gizmo->color);
+    const int subdivs = 32;
+    for(int i = 0; i < subdivs; i++)
+    {
+        real_3 x_hat = normalize(cross(gizmo->normal, {1,1,1}));
+        real_3 y_hat = cross(gizmo->normal, x_hat);
+        real theta = 2.0*pi*i/subdivs;
+        real_3 a = gizmo->r*(cos(theta)*x_hat+sin(theta)*y_hat);
+        draw_circle(ui, project_to_camera(gizmo->x+a, mouse_pos, camera_axes), 0.01, gizmo->color);
+    }
+
+    real dist = dot((gizmo->x-mouse_pos), gizmo->normal)/(dot(mouse_ray, gizmo->normal));
+    if(dist < 0) return false;
+
+    real_3 mouse_intersection = mouse_pos + mouse_ray*dist;
+    real_3 r = mouse_intersection-gizmo->x;
+    real norm_r = norm(r);
+    real_3 rdir = r/norm_r;
+    if(0.95*gizmo->r < norm_r && norm_r < 1.05*gizmo->r && input->active_ui_element.type == ui_none)
+    {
+        if(is_down(M1, input))
+        {
+            input->active_ui_element = {ui_gizmo, gizmo};
+            gizmo->last_dir = rdir;
+            gizmo->angle = 0;
+        }
+
+        draw_circle(ui, project_to_camera(gizmo->x+gizmo->r*rdir, mouse_pos, camera_axes), 0.015, gizmo->color);
+    }
+
+    real angle = asin(dot(cross(gizmo->last_dir, rdir), gizmo->normal));
+
+    if(input->active_ui_element.element == gizmo)
+    {
+        if(!is_down(M1, input))
+        {
+            input->active_ui_element = {};
+            return false;
+        }
+
+        gizmo->angle += angle;
+
+        draw_circle(ui, project_to_camera(gizmo->x+gizmo->r*rdir, mouse_pos, camera_axes), 0.02, gizmo->color);
+
+        gizmo->last_dir = rdir;
+        return true;
+    }
+    return false;
+}
+
 struct genedit_window
 {
     bool open;
@@ -252,6 +424,12 @@ struct genedit_window
     int active_form;
     int_3 active_cell;
     int_3 active_dir;
+
+    int selected_form;
+
+    rotation_gizmo gizmo_x;
+    rotation_gizmo gizmo_y;
+    rotation_gizmo gizmo_z;
 
     real_3 extrude_counter;
 
@@ -305,48 +483,6 @@ void compile_genome(genome* gn, genode* genodes)
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, N_PHYSICAL_PROPERTIES, N_MAX_MATERIALS, GL_RED, GL_FLOAT, material_physicals);
 }
 
-void drag_form(cpu_form_data* form_cpu, gpu_form_data* form_gpu, real_3 grab_point, real_3 target_x)
-{
-    real_3 r = apply_rotation(form_gpu->orientation,
-                              grab_point
-                              +(real_3){0.5, 0.5, 0.5}-form_gpu->x_cm);
-    real_3 x = form_gpu->x+r;
-    real_3 displacement = target_x-x;
-
-    real I = 1;
-    real m = 1;
-
-    real_3x3 r_dual = {
-        0   ,+r.z,-r.y,
-        -r.z, 0  ,+r.x,
-        +r.y,-r.x, 0
-    };
-    real_3x3 K = real_identity_3(1.0)/m - r_dual*(1.0/I)*r_dual;
-    real_3x3 invK = inverse(K);
-
-    real_3 pseudo_force = 0.05*invK*displacement;
-
-    form_gpu->x += (1.0/m)*pseudo_force;
-    real_3 pseudo_omega = (1.0/I)*cross(r, pseudo_force);
-    form_gpu->orientation = axis_to_quaternion(pseudo_omega)*form_gpu->orientation;
-
-    // real_3 force = 0.1*pseudo_force;
-    // form_cpu->x_dot += (1.0/m)*force;
-    // form_cpu->omega += (1.0/I)*cross(r, force);
-
-    // form_gpu->x = norm(form_r)*dir+target_x;
-
-    // // log_output("grab_point: ", grab_point, "\n");
-    // // log_output("x_cm: ", form_gpu->x_cm, "\n");
-    // // log_output("r: ", form_r, "\n");
-
-    // real_3 old_dir = normalize_or_zero(form_r);
-
-    // quaternion rotation = get_rotation_between(old_dir, dir);
-
-    // form_gpu->orientation = rotation*form_gpu->orientation;
-}
-
 void solve_form_joints(genome* g)
 {
     real_3 centroid = {};
@@ -356,128 +492,31 @@ void solve_form_joints(genome* g)
         gpu_form_data* form_gpu = &g->forms_gpu[f];
 
         centroid += form_gpu->x;
+
+        form_gpu->orientation = convert_orientation(form_cpu->int_orientation);
     }
     centroid /= g->n_forms;
 
-    for(int f = 0; f < g->n_forms; f++)
+    for(int j = 0; j < g->n_joints; j++)
     {
-        cpu_form_data* form_cpu = &g->forms_cpu[f];
-        gpu_form_data* form_gpu = &g->forms_gpu[f];
+        form_joint* joint = &g->joints[j];
 
-        for(int f2 = f+1; f2 < g->n_forms; f2++)
+        int f[] = {joint->form_id[0], joint->form_id[1]};
+        cpu_form_data* forms_cpu[] = {&g->forms_cpu[f[0]],&g->forms_cpu[f[1]]};
+        gpu_form_data* forms_gpu[] = {&g->forms_gpu[f[0]],&g->forms_gpu[f[1]]};
+        real_3 joint_r[2];
+        real_3 joint_x[2];
+        for(int i = 0; i < 2; i++)
         {
-            cpu_form_data* form_cpu2 = &g->forms_cpu[f2];
-            gpu_form_data* form_gpu2 = &g->forms_gpu[f2];
-
-            real_3 r = (form_gpu->x-form_gpu2->x);
-            real_3 deltax = 0.01*r/pow(normsq(r), 1.5);
-
-            // form_gpu->x  += deltax;
-            // form_gpu2->x -= deltax;
-
-            form_cpu->x_dot  += deltax;
-            form_cpu2->x_dot -= deltax;
+            joint_r[i] = apply_rotation(forms_gpu[i]->orientation, real_cast(joint->pos[i])+(real_3){0.5,0.5,0.5}-forms_gpu[i]->x_cm);
+            joint_x[i] = forms_gpu[i]->x+joint_r[i];
         }
 
-        if(f == 0) form_cpu->x_dot.z += 0.2;
-        else form_cpu->x_dot.z -= 0.005;
-        // form_gpu->x += 0.01*(form_gpu->x-centroid);
+        real_3 joint_center = 0.5*(joint_x[0]+joint_x[1]);
 
-        real_3 base_x = {};
-        real_3 grab_pos = form_gpu->x_cm;
-
-        real center_threshold = 0.5;
-
-        // if(abs(form_gpu->x.y) < center_threshold)
-        // {
-        //     real_3 axis = form_gpu->x-base_x;
-        //     real_3 forward_dir = apply_rotation(form_gpu->orientation, (real_3){0,1,0});
-        //     real_3 centered_dir = {1,0,0};
-        //     if(normsq(axis) > 0.0001)
-        //     {
-        //         forward_dir = normalize_or_zero(rej(forward_dir, axis));
-        //         centered_dir = normalize_or_zero(rej(centered_dir, axis));
-        //     }
-
-        //     quaternion rotation = get_rotation_between(forward_dir, centered_dir);
-        //     real t = abs(form_gpu->x.y);
-        //     rotation = (quaternion){1.0-t,0,0,0} + t*rotation;
-        //     rotation = normalize(rotation);
-        //     assert(rotation.r == rotation.r && rotation.i == rotation.i && rotation.j == rotation.j && rotation.k == rotation.k);
-        //     form_gpu->orientation = rotation*form_gpu->orientation;
-        // }
-
-        form_cpu->x_dot *= 0.8;
-        form_cpu->omega *= 0.8;
-
-        form_gpu->x += form_cpu->x_dot;
-        form_gpu->orientation = axis_to_quaternion(form_cpu->omega)*form_gpu->orientation;
-
-        form_gpu->orientation = normalize(form_gpu->orientation);
-    }
-
-    for(int k = 0; k < 40; k++)
-    {
-        real_3 foot_centroid;
-        int n_feet = 0;
-        for(int e = 0; e < g->n_endpoints; e++)
+        for(int i = 0; i < 2; i++)
         {
-            form_endpoint* ep = &g->endpoints[e];
-            int f = ep->form_id;
-            cpu_form_data* form_cpu = &g->forms_cpu[f];
-            gpu_form_data* form_gpu = &g->forms_gpu[f];
-
-            if(ep->type == endpoint_foot)
-            {
-                real_3 foot_r = apply_rotation(form_gpu->orientation,
-                                               real_cast(ep->pos)
-                                               +(real_3){0.5, 0.5, 0.5}-form_gpu->x_cm);
-                real_3 foot_x = form_gpu->x+foot_r;
-                foot_centroid += foot_x;
-                n_feet++;
-            }
-        }
-        foot_centroid /= n_feet;
-
-        for(int e = 0; e < g->n_endpoints; e++)
-        {
-            form_endpoint* ep = &g->endpoints[e];
-            int f = ep->form_id;
-            cpu_form_data* form_cpu = &g->forms_cpu[f];
-            gpu_form_data* form_gpu = &g->forms_gpu[f];
-
-            if(ep->type == endpoint_foot)
-            {
-                real_3 foot_r = apply_rotation(form_gpu->orientation,
-                                               real_cast(ep->pos)
-                                               +(real_3){0.5, 0.5, 0.5}-form_gpu->x_cm);
-                real_3 new_foot_x = form_gpu->x+foot_r;
-                new_foot_x = lerp(new_foot_x, ((real_3){1.01f*(new_foot_x.x-foot_centroid.x),1.00f*(new_foot_x.y-foot_centroid.y),0}), 0.5);
-                drag_form(form_cpu, form_gpu, real_cast(ep->pos), new_foot_x);
-            }
-        }
-
-        for(int j = 0; j < g->n_joints; j++)
-        {
-            form_joint* joint = &g->joints[j];
-
-            int f[] = {joint->form_id[0], joint->form_id[1]};
-            cpu_form_data* forms_cpu[] = {&g->forms_cpu[f[0]],&g->forms_cpu[f[1]]};
-            gpu_form_data* forms_gpu[] = {&g->forms_gpu[f[0]],&g->forms_gpu[f[1]]};
-            real_3 joint_r[2];
-            real_3 joint_x[2];
-            for(int i = 0; i < 2; i++)
-            {
-                joint_r[i] = apply_rotation(forms_gpu[i]->orientation, real_cast(joint->pos[i])+(real_3){0.5,0.5,0.5}-forms_gpu[i]->x_cm);
-                joint_x[i] = forms_gpu[i]->x+joint_r[i];
-            }
-            for(int i = 0; i < 2; i++)
-            {
-                // if(f[i] == 0) continue;
-                // forms_gpu[i]->x += 0.02*(forms_gpu[i]->x-forms_gpu[1-i]->x);
-                // forms_gpu[i]->x += 0.0001*(forms_gpu[i]->x);
-                drag_form(forms_cpu[i], forms_gpu[i], real_cast(joint->pos[i]), lerp(joint_x[i], joint_x[1-i], 0.5));
-            }
+            forms_gpu[i]->x += joint_center-joint_x[i];
         }
     }
 };
@@ -505,16 +544,20 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
         x.x += i*genode_spacing;
         real_4 genode_color = {0.1*i,1,1-0.1*i,1};
         draw_circle(ui, {x.x, x.y, 0}, genode_radius, genode_color);
-        if(is_pressed(M1, input) && normsq(x-input->mouse) < sq(genode_radius))
+        if(normsq(x-input->mouse) < sq(genode_radius))
         {
-            genode* new_genode = &gew->genodes[gew->n_genodes++];
-            *new_genode = {
-                .gene_id = i,
-                .x = input->mouse,
-                .theta = 0,
-            };
+            if(is_pressed(M1, input))
+            {
+                genode* new_genode = &gew->genodes[gew->n_genodes++];
+                *new_genode = {
+                    .gene_id = i,
+                    .x = input->mouse,
+                    .theta = 0,
+                };
 
-            input->active_ui_element = {ui_gene, new_genode};
+                input->active_ui_element = {ui_gene, new_genode};
+            }
+            draw_text(ui, g->name, {input->mouse.x, input->mouse.y, 0}, {0,0,0,1});
         }
     }
 
@@ -630,7 +673,7 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
 
 
     ray_hit hit = {};
-    cpu_form_data* hit_form_cpu;
+    cpu_form_data* hit_form_cpu = 0;
     for(int f = 0; f < gew->active_genome->n_forms; f++)
     {
         gpu_form_data* form_gpu = &gew->active_genome->forms_gpu[f];
@@ -658,11 +701,22 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
         }
     }
 
-    ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "ray cast: %s, (%d, %d, %d), %f, f=%d\n",
+    ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "ray cast: %s, (%d, %d, %d), (%d, %d), %f, f=%d\n",
                            hit.hit ? "hit" : "no hit",
                            hit.pos.x, hit.pos.y, hit.pos.z,
+                           hit_form_cpu ? hit_form_cpu->m : 0, hit_form_cpu ? hit_form_cpu->n : 0,
                            hit.dist,
                            (int)(hit_form_cpu-gew->active_genome->forms_cpu));
+    if(hit.hit)
+    {
+        real_3x3 rot = {};
+        int perm[3] = perm3(hit_form_cpu->n);
+        for(int i = 0; i < 3; i++) rot[perm[i]][i] = ((hit_form_cpu->m>>i)&1) ? -1 : 1;
+        ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "(%.0f,%.0f,%.0f\n %.0f,%.0f,%.0f\n %.0f,%.0f,%.0f)\n",
+                               rot[0][0], rot[1][0], rot[2][0],
+                               rot[0][1], rot[1][1], rot[2][1],
+                               rot[0][2], rot[1][2], rot[2][2]);
+    }
     if(input->active_ui_element.type == 0)
     {
         if(hit.hit)
@@ -672,14 +726,13 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
             gew->active_dir = hit.dir;
             gew->cursor_dist = hit.dist;
 
-            if(is_pressed('G', input))
-                input->active_ui_element = {ui_form, hit_form_cpu};
             if(is_pressed(M1, input))
             {
                 input->active_ui_element = {ui_form_voxel, hit_form_cpu};
                 gew->extrude_counter = {};
                 gew->drag_key = M1;
                 gew->active_material = 128;
+                gew->selected_form = gew->active_form;
             }
             if(is_pressed(M2, input))
             {
@@ -813,27 +866,94 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
         }
     }
 
-    if(input->active_ui_element.type == ui_form)
+    // if(input->active_ui_element.type == ui_form)
+    // {
+    //     if(!is_down('G', input)) input->active_ui_element = {};
+    //     else
+    //     {
+    //         int f = gew->active_form;
+
+    //         gpu_form_data* form_gpu = &gew->active_genome->forms_gpu[f];
+    //         cpu_form_data* form_cpu = &gew->active_genome->forms_cpu[f];
+
+    //         float fov = pi*120.0/180.0;
+    //         float screen_dist = 1.0/tan(fov/2);
+    //         real_3 ray_dir = (+input->mouse.x*gew->camera_axes[0]
+    //                           +input->mouse.y*gew->camera_axes[1]
+    //                           -screen_dist   *gew->camera_axes[2]);
+    //         ray_dir = normalize(ray_dir);
+
+    //         gew->cursor_dist += 0.01*input->mouse_wheel;
+    //         real_3 cursor_x = gew->camera_pos+gew->cursor_dist*ray_dir;
+    //         real_3 grab_point = real_cast(gew->active_cell)+(real_3){0.5,0.5,0.5};
+    //         drag_form(form_cpu, form_gpu, grab_point, cursor_x);
+    //     }
+    // }
+
     {
-        if(!is_down('G', input)) input->active_ui_element = {};
+        gpu_form_data* form_gpu = &gew->active_genome->forms_gpu[gew->selected_form];
+        cpu_form_data* form_cpu = &gew->active_genome->forms_cpu[gew->selected_form];
+
+        float fov = pi*120.0/180.0;
+        float screen_dist = 1.0/tan(fov/2);
+        real_3 ray_dir = (+input->mouse.x*gew->camera_axes[0]
+                          +input->mouse.y*gew->camera_axes[1]
+                          -screen_dist   *gew->camera_axes[2]);
+        ray_dir = normalize(ray_dir);
+        real_3 ray_pos = gew->camera_pos;
+
+        bool clicked = false;
+
+        if(form_cpu->theta%2 == 0)
+        {
+            gew->gizmo_x.x = form_gpu->x;
+            gew->gizmo_x.normal = {cos((pi/4.0)*form_cpu->phi),sin((pi/4.0)*form_cpu->phi),0};
+            clicked = do_rotation_gizmo(ui, input, &gew->gizmo_x, ray_pos, ray_dir, gew->camera_axes);
+            if(clicked)
+            {
+                int added_angle = (gew->gizmo_x.angle)/(pi/4.0);
+                form_cpu->theta = gew->gizmo_x.initial_angle+added_angle;
+
+                ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "angle: %f, %d\n", gew->gizmo_x.angle*180.0/pi, added_angle);
+            }
+            else
+            {
+                gew->gizmo_x.initial_angle = form_cpu->theta;
+            }
+        }
+        else if(input->active_ui_element.element == gew->gizmo_x)
+        {
+            input->active_ui_element = {};
+        }
+
+        gew->gizmo_y.x = form_gpu->x;
+        gew->gizmo_y.normal = {-sin((pi/4.0)*form_cpu->phi),cos((pi/4.0)*form_cpu->phi),0};
+        clicked = do_rotation_gizmo(ui, input, &gew->gizmo_y, ray_pos, ray_dir, gew->camera_axes);
+        if(clicked)
+        {
+            int added_angle = (gew->gizmo_y.angle)/(pi/4.0);
+            form_cpu->theta = gew->gizmo_y.initial_angle+added_angle;
+
+            ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "angle: %f, %d\n", gew->gizmo_y.angle*180.0/pi, added_angle);
+        }
         else
         {
-            int f = gew->active_form;
+            gew->gizmo_y.initial_angle = form_cpu->theta;
+        }
 
-            gpu_form_data* form_gpu = &gew->active_genome->forms_gpu[f];
-            cpu_form_data* form_cpu = &gew->active_genome->forms_cpu[f];
+        gew->gizmo_z.x = form_gpu->x;
+        gew->gizmo_z.normal = {0,0,1};
+        clicked = do_rotation_gizmo(ui, input, &gew->gizmo_z, ray_pos, ray_dir, gew->camera_axes);
+        if(clicked)
+        {
+            int added_angle = (gew->gizmo_z.angle)/(pi/4.0);
+            form_cpu->phi = gew->gizmo_z.initial_angle+added_angle;
 
-            float fov = pi*120.0/180.0;
-            float screen_dist = 1.0/tan(fov/2);
-            real_3 ray_dir = (+input->mouse.x*gew->camera_axes[0]
-                              +input->mouse.y*gew->camera_axes[1]
-                              -screen_dist   *gew->camera_axes[2]);
-            ray_dir = normalize(ray_dir);
-
-            gew->cursor_dist += 0.01*input->mouse_wheel;
-            real_3 cursor_x = gew->camera_pos+gew->cursor_dist*ray_dir;
-            real_3 grab_point = real_cast(gew->active_cell)+(real_3){0.5,0.5,0.5};
-            drag_form(form_cpu, form_gpu, grab_point, cursor_x);
+            ui->log_pos += sprintf(ui->debug_log+ui->log_pos, "angle: %f, %d\n", gew->gizmo_z.angle*180.0/pi, added_angle);
+        }
+        else
+        {
+            gew->gizmo_z.initial_angle = form_cpu->phi;
         }
     }
 
