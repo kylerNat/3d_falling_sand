@@ -129,7 +129,9 @@ void main()
 
     for(int b = 0; b < n_bodies; b++)
     {
-        vec3 body_x_cm = vec3(bodies[b].x_cm_x, bodies[b].x_cm_y, bodies[b].x_cm_z);
+        if(bodies[b].substantial == 0) continue;
+        ivec3 body_x_origin = ivec3(bodies[b].x_origin_x, bodies[b].x_origin_y, bodies[b].x_origin_z);
+        vec3 body_x_cm = vec3(bodies[b].x_cm_x, bodies[b].x_cm_y, bodies[b].x_cm_z)+vec3(body_x_origin);
         vec3 body_x = vec3(bodies[b].x_x, bodies[b].x_y, bodies[b].x_z);
         vec4 body_orientation = vec4(bodies[b].orientation_r, bodies[b].orientation_x, bodies[b].orientation_y, bodies[b].orientation_z);
         ivec3 body_size = ivec3(bodies[b].size_x,
@@ -141,15 +143,16 @@ void main()
 
         //ray info in the bodies frame
         vec3 body_pos = apply_rotation(conjugate(body_orientation), pos-body_x) + body_x_cm;
+        ivec3 ibody_pos = ivec3(floor(body_pos));
         vec3 body_ray_dir = apply_rotation(conjugate(body_orientation), ray_dir);
 
         float body_jump_dist = 0.0;
-        if(body_pos.x < 0 && body_ray_dir.x > 0)      body_jump_dist = max(body_jump_dist, -epsilon+(-body_pos.x)/(body_ray_dir.x));
-        if(body_pos.x > body_size.x && body_ray_dir.x < 0) body_jump_dist = max(body_jump_dist, -epsilon+(body_size.x-body_pos.x)/(body_ray_dir.x));
-        if(body_pos.y < 0 && body_ray_dir.y > 0)      body_jump_dist = max(body_jump_dist, -epsilon+(-body_pos.y)/(body_ray_dir.y));
-        if(body_pos.y > body_size.y && body_ray_dir.y < 0) body_jump_dist = max(body_jump_dist, -epsilon+(body_size.y-body_pos.y)/(body_ray_dir.y));
-        if(body_pos.z < 0 && body_ray_dir.z > 0)      body_jump_dist = max(body_jump_dist, -epsilon+(-body_pos.z)/(body_ray_dir.z));
-        if(body_pos.z > body_size.z && body_ray_dir.z < 0) body_jump_dist = max(body_jump_dist, -epsilon+(body_size.z-body_pos.z)/(body_ray_dir.z));
+        if(ibody_pos.x < 0            && body_ray_dir.x > 0) body_jump_dist = max(body_jump_dist, epsilon+(-body_pos.x)/(body_ray_dir.x));
+        if(ibody_pos.x >= body_size.x && body_ray_dir.x < 0) body_jump_dist = max(body_jump_dist, epsilon+(body_size.x-body_pos.x)/(body_ray_dir.x));
+        if(ibody_pos.y < 0            && body_ray_dir.y > 0) body_jump_dist = max(body_jump_dist, epsilon+(-body_pos.y)/(body_ray_dir.y));
+        if(ibody_pos.y >= body_size.y && body_ray_dir.y < 0) body_jump_dist = max(body_jump_dist, epsilon+(body_size.y-body_pos.y)/(body_ray_dir.y));
+        if(ibody_pos.z < 0            && body_ray_dir.z > 0) body_jump_dist = max(body_jump_dist, epsilon+(-body_pos.z)/(body_ray_dir.z));
+        if(ibody_pos.z >= body_size.z && body_ray_dir.z < 0) body_jump_dist = max(body_jump_dist, epsilon+(body_size.z-body_pos.z)/(body_ray_dir.z));
 
         body_pos += body_jump_dist*body_ray_dir;
 

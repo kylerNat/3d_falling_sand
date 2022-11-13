@@ -6,6 +6,7 @@ struct body
 {
     int materials_origin_x; int materials_origin_y; int materials_origin_z;
     int size_x; int size_y; int size_z;
+    int x_origin_x; int x_origin_y; int x_origin_z;
     float x_cm_x; float x_cm_y; float x_cm_z;
     float x_x; float x_y; float x_z;
     float x_dot_x; float x_dot_y; float x_dot_z;
@@ -22,12 +23,18 @@ struct body
     float invI_xy; float invI_yy; float invI_zy;
     float invI_xz; float invI_yz; float invI_zz;
 
+    int form_origin_x; int form_origin_y; int form_origin_z;
+    int form_lower_x; int form_lower_y; int form_lower_z;
+    int form_upper_x; int form_upper_y; int form_upper_z;
+
     int cell_material_id;
-    int form_id;
+    int is_mutating;
+    int substantial;
 };
 
 ivec3 body_materials_origin;
 ivec3 body_size;
+ivec3 body_x_origin;
 vec3  body_x_cm;
 vec3  body_x;
 vec3  body_x_dot;
@@ -38,8 +45,13 @@ float body_m;
 mat3 body_I;
 mat3 body_invI;
 
+ivec3 body_form_origin;
+ivec3 body_form_lower;
+ivec3 body_form_upper;
+
 int body_cell_material_id;
-int body_form_id;
+int body_is_mutating;
+int body_substantial;
 
 layout(std430, binding = BODY_DATA_BINDING) buffer body_data
 {
@@ -55,7 +67,8 @@ void get_body_data(int b)
                       bodies[b].size_y,
                       bodies[b].size_z);
 
-    body_x_cm = vec3(bodies[b].x_cm_x, bodies[b].x_cm_y, bodies[b].x_cm_z);
+    body_x_origin = ivec3(bodies[b].x_origin_x, bodies[b].x_origin_y, bodies[b].x_origin_z);
+    body_x_cm = vec3(bodies[b].x_cm_x, bodies[b].x_cm_y, bodies[b].x_cm_z)+vec3(body_x_origin);
     body_x = vec3(bodies[b].x_x, bodies[b].x_y, bodies[b].x_z);
     body_x_dot = vec3(bodies[b].x_dot_x, bodies[b].x_dot_y, bodies[b].x_dot_z);
     body_orientation = vec4(bodies[b].orientation_r, bodies[b].orientation_x, bodies[b].orientation_y, bodies[b].orientation_z);
@@ -69,6 +82,11 @@ void get_body_data(int b)
                      bodies[b].invI_xy, bodies[b].invI_yy, bodies[b].invI_zy,
                      bodies[b].invI_xz, bodies[b].invI_yz, bodies[b].invI_zz);
 
+    body_form_origin = ivec3(bodies[b].form_origin_x, bodies[b].form_origin_y, bodies[b].form_origin_z);
+    body_form_lower = ivec3(bodies[b].form_lower_x, bodies[b].form_lower_y, bodies[b].form_lower_z);
+    body_form_upper = ivec3(bodies[b].form_upper_x, bodies[b].form_upper_y, bodies[b].form_upper_z);
+
     body_cell_material_id = bodies[b].cell_material_id;
-    body_form_id = bodies[b].form_id;
+    body_is_mutating = bodies[b].is_mutating;
+    body_substantial = bodies[b].substantial;
 }

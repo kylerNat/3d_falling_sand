@@ -563,11 +563,23 @@ int update_window(window_t* wnd)
 int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nCmdShow)
 {
+    log_output("sizeof(cpu_body_data) = ", sizeof(cpu_body_data), "\n");
+    log_output("sizeof(gpu_body_data) = ", sizeof(gpu_body_data), "\n");
+
+    log_output("sizeof(cpu_form_data) = ", sizeof(cpu_form_data), "\n");
+    log_output("sizeof(gpu_form_data) = ", sizeof(gpu_form_data), "\n");
+
     memory_block* block = allocate_new_block(block_size);
     memory_manager* manager = (memory_manager*) (block->memory + block->used);
     block->used += sizeof(memory_manager);
     manager->first = block;
     manager->current = manager->first;
+
+    manager->first_region = (memory_region*) platform_big_alloc(max_dynamic_size),
+    manager->first_region->prev = 0;
+    manager->first_region->next = 0;
+    manager->first_region->size = max_dynamic_size-sizeof(memory_region);
+    manager->first_region->free = true;
 
     window_t wnd = create_window(manager, "3D Sand", "3dsand", 1280, 720, 10, 10, hinstance);
     // fullscreen(wnd);
@@ -577,21 +589,33 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     font_info font = init_font(manager, "C:/windows/fonts/arial.ttf", 24);
 
+    const int n_max_bodies = 1024*1024;
+    const int n_max_brains = 128*1024;
+    const int n_max_genomes = 128*1024;
     world w = {
         .seed = 128924,
         // .player = {.x = {211.1,200.1,32.1}, .x_dot = {0,0,0}},
         // .player = {.x = {289.1,175.1, 302.1}, .x_dot = {0,0,0}},
         .player = {.x = {chunk_size/2+45.1, chunk_size/2+25.1, 42.1}, .x_dot = {0,0,0}},
-        .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, 1024*sizeof(cpu_body_data)),
-        .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, 1024*sizeof(gpu_body_data)),
+
+        .body_table = (index_table_entry*) permalloc_clear(manager, sizeof(index_table_entry)*n_max_bodies),
+        .n_max_bodies = n_max_bodies,
+        .next_body_id = 1,
+        .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, 4096*sizeof(cpu_body_data)),
+        .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, 4096*sizeof(gpu_body_data)),
         .n_bodies = 0,
-        // .joints = (joint*) permalloc_clear(manager, 1024*sizeof(joint)),
-        // .n_joints = 0,
-        // .components = (body_component*) permalloc_clear(manager, 1024*sizeof(body_component)),
-        // .n_components = 0,
+        .joints = (body_joint*) permalloc_clear(manager, 4096*sizeof(body_joint)),
+        .n_joints = 0,
+
+        .brain_table = (index_table_entry*) permalloc_clear(manager, sizeof(index_table_entry)*n_max_brains),
+        .n_max_brains = n_max_brains,
+        .next_brain_id = 1,
         .brains = (brain*) permalloc_clear(manager, 1024*sizeof(brain)),
         .n_brains = 0,
 
+        .genome_table = (index_table_entry*) permalloc_clear(manager, sizeof(index_table_entry)*n_max_genomes),
+        .n_max_genomes = n_max_genomes,
+        .next_genome_id = 1,
         .genomes = (genome*) permalloc_clear(manager, 1024*sizeof(genome)),
         .n_genomes = 0,
 
@@ -617,26 +641,44 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             .gizmo_z = {.r = 5, .color = {0,0,1,1},},
         },
 
+        .form_space = {
+            .max_size = {form_texture_size, form_texture_size, form_texture_size},
+            .free_regions = (bounding_box*) permalloc(manager, sizeof(bounding_box)*10000),
+            .n_free_regions = 0,
+        },
+
+        .body_space = {
+            .max_size = {body_texture_size, body_texture_size, body_texture_size},
+            .free_regions = (bounding_box*) permalloc(manager, sizeof(bounding_box)*10000),
+            .n_free_regions = 0,
+        },
+
         .c = (chunk*) permalloc(manager, 8*sizeof(chunk)),
         .chunk_lookup = {},
     };
 
-    genome* gn = &w.genomes[w.n_genomes++];
-    *gn = {
-        .forms_cpu = (cpu_form_data*) permalloc(manager, 1024*sizeof(cpu_form_data)),
-        .forms_gpu = (gpu_form_data*) permalloc(manager, 1024*sizeof(gpu_form_data)),
-        .n_forms = 0,
-        .joints = (form_joint*) permalloc(manager, 1024*sizeof(form_joint)),
-        .n_joints = 0,
-        .endpoints = (form_endpoint*) permalloc(manager, 1024*sizeof(form_endpoint)),
-        .n_endpoints = 0,
-        .cell_types = (cell_type*) permalloc_clear(manager, 128*sizeof(cell_type)),
-        .n_cell_types = 3,
-    };
-    for(int i = 0; i < gn->n_cell_types; i++)
+    w.form_space.free_regions[w.form_space.n_free_regions++] = {{0,0,0}, {form_texture_size, form_texture_size, form_texture_size}};
+
+    w.body_space.free_regions[w.body_space.n_free_regions++] = {{0,0,0}, {body_texture_size, body_texture_size, body_texture_size}};
+
+    genome* g = create_genome(&w);
     {
-        gn->cell_types[i].visual = material_visuals+128+i;
-        gn->cell_types[i].physical = material_physicals+128+i;
+        g->form_id_updates = (int*) permalloc(manager, 1024*sizeof(int));
+        g->forms_cpu = (cpu_form_data*) permalloc(manager, 1024*sizeof(cpu_form_data));
+        g->forms_gpu = (gpu_form_data*) permalloc(manager, 1024*sizeof(gpu_form_data));
+        g->n_forms = 0;
+        g->joints = (form_joint*) permalloc(manager, 1024*sizeof(form_joint));
+        g->n_joints = 0;
+        g->endpoints = (form_endpoint*) permalloc(manager, 1024*sizeof(form_endpoint));
+        g->n_endpoints = 0;
+        g->cell_types = (cell_type*) permalloc_clear(manager, 128*sizeof(cell_type));
+        g->n_cell_types = 3;
+    }
+
+    for(int i = 0; i < g->n_cell_types; i++)
+    {
+        g->cell_types[i].visual = material_visuals+128+i;
+        g->cell_types[i].physical = material_physicals+128+i;
     }
 
     w.gew.active_genome = &w.genomes[0];
@@ -728,11 +770,14 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     load_chunk_to_gpu(c);
 
-    for(int b = 0; b < 4; b++)
+    for(int i = 0; i < 3; i++)
     {
+        int b = new_body_index(&w);
         w.bodies_gpu[b].size = {12,12,12};
         w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
+        w.bodies_gpu[b].x_origin = int_cast(0.5*real_cast(w.bodies_gpu[b].size));
+        w.bodies_gpu[b].x_cm -= real_cast(w.bodies_gpu[b].x_origin);
         w.bodies_gpu[b].x = {chunk_size*3/4-5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
         // w.bodies_gpu[b].omega = {0.0,-0.5,0.0};
@@ -741,6 +786,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         w.bodies_gpu[b].m = 1.0;
         w.bodies_cpu[b].I = real_identity_3(10.0);
+
+        w.bodies_gpu[b].substantial = true;
 
         real half_angle = 0.5*(pi/4);
         real_3 axis = {1,0,0};
@@ -775,7 +822,6 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
                     w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
                 }
-        w.n_bodies++;
     }
 
     int limb_length = 4;
@@ -789,151 +835,119 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     int_3 offsets[10];
     int body_material = 128;
 
-    int limb_start_id = w.n_bodies;
+    int limb_start_id = g->n_forms;
     int body_id;
     int head_id;
     for(int i = 0; i < 8; i++) //limbs
     {
-        int b = w.n_bodies;
-        int_3 size = {limb_length,limb_thickness,limb_thickness};
-        w.bodies_gpu[b].size = {4,4,4};
-        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
-        w.bodies_gpu[b].x_cm = real_cast((w.bodies_gpu[b].size-size)/2)+0.5*real_cast(size);
-        w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
-        w.bodies_gpu[b].x_dot = {0,0,0};
-        w.bodies_gpu[b].omega = {0.0,0.0,0.0};
-        w.bodies_gpu[b].orientation = {1,0,0,0};
+        cpu_form_data* form_cpu = &g->forms_cpu[g->n_forms  ];
+        gpu_form_data* form_gpu = &g->forms_gpu[g->n_forms++];
 
-        w.bodies_gpu[b].m = 0.0;
-        w.bodies_cpu[b].I = {};
+        form_gpu->x_origin = {0,0,0};
+        form_gpu->x = {};
+        form_gpu->orientation = {1,0,0,0};
 
-        w.bodies_cpu[b].root = limb_start_id+9;
+        form_gpu->cell_material_id = 0;
 
-        real half_angle = 0.5*(pi/4);
-        real_3 axis = {1,0,0};
-        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
-        // w.b->orientation = w.b->orientation*rotation;
+        form_cpu->gpu_data = form_gpu;
+        form_cpu->int_orientation = 0;
+        form_cpu->theta = 2;
+        if(i == 4 || i == 6)
+        {
+            form_cpu->theta = 1;
+            form_cpu->phi = (6+2*i)%8;
+        }
 
-        offsets[b-limb_start_id] = (w.bodies_gpu[b].size-size)/2;
-        int_3 offset = offsets[b-limb_start_id];
-        for(int z = offset.z; z < offset.z+size.z; z++)
-            for(int y = offset.y; y < offset.y+size.y; y++)
-                for(int x = offset.x; x < offset.x+size.x; x++)
+        form_cpu->storage_size = {limb_length,1,1};
+        int total_size = axes_product(form_cpu->storage_size);
+        form_cpu->materials = (uint8*) dynamic_alloc(manager->first_region, total_size);
+        memset(form_cpu->materials, 0, total_size);
+
+        for(int x = 0; x < form_cpu->storage_size.x; x++)
+            for(int y = 0; y < form_cpu->storage_size.y; y++)
+                for(int z = 0; z < form_cpu->storage_size.z; z++)
                 {
-                    int material = body_material;
-                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
-
-                    real m = 0.001;
-                    if(material == 0) m = 0;
-                    w.bodies_gpu[b].m += m;
-
-                    real_3 r = {x+0.5,y+0.5,z+0.5};
-                    r += -w.bodies_gpu[b].x_cm;
-                    w.bodies_cpu[b].I += real_identity_3(m*(0.4*sq(0.5)+normsq(r)));
-                    for(int i = 0; i < 3; i++)
-                        for(int j = 0; j < 3; j++)
-                            w.bodies_cpu[b].I[i][j] += -m*r[i]*r[j];
+                    int m = 128;
+                    form_cpu->materials[index_3D({x,y,z}, form_cpu->storage_size)] = m;
                 }
-        w.n_bodies++;
+
+        load_form_to_gpu(&w.form_space, form_cpu, form_gpu);
     }
 
+    head_id = g->n_forms;
     {
-        int b = w.n_bodies;
-        body_id = b;
-        int_3 size = {body_length,body_width,body_depth};
-        w.bodies_gpu[b].size = {8,8,8};
-        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
-        w.bodies_gpu[b].x_cm = real_cast((w.bodies_gpu[b].size-size)/2)+0.5*real_cast(size);
-        w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
-        w.bodies_gpu[b].x_dot = {0,0,0};
-        w.bodies_gpu[b].omega = {0.0,0.0,0.0};
-        w.bodies_gpu[b].orientation = {1,0,0,0};
+        cpu_form_data* form_cpu = &g->forms_cpu[g->n_forms  ];
+        gpu_form_data* form_gpu = &g->forms_gpu[g->n_forms++];
 
-        w.bodies_gpu[b].m = 0.0;
-        w.bodies_cpu[b].I = {};
+        form_cpu->is_root = true;
 
-        real half_angle = 0.5*(pi/4);
-        real_3 axis = {1,0,0};
-        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
-        // w.b->orientation = w.b->orientation*rotation;
+        form_gpu->x_origin = {0,0,0};
+        form_gpu->x = {};
+        form_gpu->orientation = {1,0,0,0};
 
-        offsets[b-limb_start_id] = (w.bodies_gpu[b].size-size)/2;
-        log_output("offset: ", offsets[b-limb_start_id], "\n");
-        int_3 offset = offsets[b-limb_start_id];
-        for(int z = offset.z; z < offset.z+size.z; z++)
-            for(int y = offset.y; y < offset.y+size.y; y++)
-                for(int x = offset.x; x < offset.x+size.x; x++)
+        form_gpu->cell_material_id = 0;
+
+        form_cpu->gpu_data = form_gpu;
+        form_cpu->int_orientation = 0;
+        form_cpu->theta = 0;
+
+        form_cpu->storage_size = {head_size,head_size,head_size};
+        form_cpu->storage_size.x = 4*((form_cpu->storage_size.x+3)/4);
+        int total_size = axes_product(form_cpu->storage_size);
+        form_cpu->materials = (uint8*) dynamic_alloc(manager->first_region, total_size);
+        memset(form_cpu->materials, 0, total_size);
+
+        for(int x = 0; x < head_size; x++)
+            for(int y = 0; y < head_size; y++)
+                for(int z = 0; z < head_size; z++)
+                {
+                    int m = 128;
+                    form_cpu->materials[index_3D({x,y,z}, form_cpu->storage_size)] = m;
+                }
+
+        load_form_to_gpu(&w.form_space, form_cpu, form_gpu);
+    }
+
+    body_id = g->n_forms;
+    {
+        cpu_form_data* form_cpu = &g->forms_cpu[g->n_forms  ];
+        gpu_form_data* form_gpu = &g->forms_gpu[g->n_forms++];
+
+        form_gpu->x_origin = {0,0,0};
+        form_gpu->x = {};
+        form_gpu->orientation = {1,0,0,0};
+
+        form_gpu->cell_material_id = 0;
+
+        form_cpu->gpu_data = form_gpu;
+        form_cpu->int_orientation = 0;
+        form_cpu->theta = -2;
+
+        form_cpu->storage_size = {body_length,body_width,body_depth};
+        form_cpu->storage_size.x = 4*((form_cpu->storage_size.x+3)/4);
+        int total_size = axes_product(form_cpu->storage_size);
+        form_cpu->materials = (uint8*) dynamic_alloc(manager->first_region, total_size);
+        memset(form_cpu->materials, 0, total_size);
+
+        for(int x = 0; x < body_length; x++)
+            for(int y = 0; y < body_width; y++)
+                for(int z = 0; z < body_depth; z++)
                 {
                     int material = 0;
-                    if(x-offset.x < shoulder_length || (z-offset.z == 0 && y-offset.y == body_width/2)) material = body_material;
-                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
-
-                    real m = 0.001;
-                    if(material == 0) m = 0;
-                    w.bodies_gpu[b].m += m;
-
-                    real_3 r = {x+0.5,y+0.5,z+0.5};
-                    r += -w.bodies_gpu[b].x_cm;
-                    w.bodies_cpu[b].I += real_identity_3(m*(0.4*sq(0.5)+normsq(r)));
-                    for(int i = 0; i < 3; i++)
-                        for(int j = 0; j < 3; j++)
-                            w.bodies_cpu[b].I[i][j] += -m*r[i]*r[j];
+                    if(x < shoulder_length || (z == 0 && y == body_width/2)) material = body_material;
+                    form_cpu->materials[index_3D({x,y,z}, form_cpu->storage_size)] = material;
                 }
-        w.n_bodies++;
+
+        load_form_to_gpu(&w.form_space, form_cpu, form_gpu);
     }
 
     {
-        int b = w.n_bodies;
-        head_id = b;
-        int_3 size = {head_size, head_size, head_size};
-        w.bodies_gpu[b].size = {8,8,8};
-        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
-        w.bodies_gpu[b].x_cm = real_cast((w.bodies_gpu[b].size-size)/2)+0.5*real_cast(size);
-        w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
-        w.bodies_gpu[b].x_dot = {0,0,0};
-        w.bodies_gpu[b].omega = {0.0,0.0,0.0};
-        w.bodies_gpu[b].orientation = {1,0,0,0};
-
-        w.bodies_gpu[b].m = 0.0;
-        w.bodies_cpu[b].I = {};
-
-        real half_angle = 0.5*(pi/4);
-        real_3 axis = {1,0,0};
-        quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
-        // w.b->orientation = w.b->orientation*rotation;
-
-        offsets[b-limb_start_id] = (w.bodies_gpu[b].size-size)/2;
-        log_output("offset: ", offsets[b-limb_start_id], "\n");
-        int_3 offset = offsets[b-limb_start_id];
-        for(int z = offset.z; z < offset.z+size.z; z++)
-            for(int y = offset.y; y < offset.y+size.y; y++)
-                for(int x = offset.x; x < offset.x+size.x; x++)
-                {
-                    // if(x >= head_size || y >= head_size || z >= head_size) continue;
-                    int material = body_material;
-                    // if(abs(x-w.bodies_gpu[b].size.x/2+0.5f) >= 0.5*head_size-1) material++;
-
-                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
-
-                    real m = 0.001;
-                    if(material == 0) m = 0;
-                    w.bodies_gpu[b].m += m;
-
-                    real_3 r = {x+0.5,y+0.5,z+0.5};
-                    r += -w.bodies_gpu[b].x_cm;
-                    w.bodies_cpu[b].I += real_identity_3(m*(0.4*sq(0.5)+normsq(r)));
-                    for(int i = 0; i < 3; i++)
-                        for(int j = 0; j < 3; j++)
-                            w.bodies_cpu[b].I[i][j] += -m*r[i]*r[j];
-                }
-        w.n_bodies++;
-    }
-
-    {
-        int b = w.n_bodies;
+        int b = new_body_index(&w);
         w.bodies_gpu[b].size = {20,10,5};
         w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
+        w.bodies_gpu[b].x_origin = int_cast(0.5*real_cast(w.bodies_gpu[b].size));
+        w.bodies_gpu[b].x_cm -= real_cast(w.bodies_gpu[b].x_origin);
         w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
@@ -941,6 +955,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         w.bodies_gpu[b].m = 0.0;
         w.bodies_cpu[b].I = {};
+
+        w.bodies_gpu[b].substantial = true;
 
         real half_angle = 0.5*(pi/4);
         real_3 axis = {1,0,0};
@@ -973,161 +989,155 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // log_output("\n");
         // log_output(w.bodies_gpu[b].m, "\n");
         // log_output("\n");
-        w.n_bodies++;
     }
 
-    w.bodies_cpu[0].is_root = true;
-    w.bodies_cpu[0].joints[w.bodies_cpu[0].n_children++] = {
-        .type = joint_hinge,
-        .child_body_id = 1,
-        .pos = {{4,4,0}, {4,4,0}},
-        .axis = {0,0},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
-    };
+    // w.bodies_cpu[0].is_root = true;
+    // w.bodies_cpu[0].joints[w.bodies_cpu[0].n_children++] = {
+    //     .type = joint_hinge,
+    //     .child_body_id = 1,
+    //     .pos = {{4,4,0}, {4,4,0}},
+    //     .axis = {0,0},
+    //     .max_speed = 0.5,
+    //     .max_torque = 0.2,
+    // };
 
-    w.bodies_cpu[head_id].is_root = true;
-    w.bodies_cpu[head_id].joints[w.bodies_cpu[head_id].n_children++] = {
+    g->joints[g->n_joints++] = {
         .type = joint_ball,
-        .child_body_id = body_id,
-        .pos = {offsets[head_id-limb_start_id]+(int_3){(head_size-1)/2,(head_size-1)/2,0},
-            offsets[body_id-limb_start_id]+(int_3){body_length-1,(body_width-1)/2,0}},
+        .form_id = {head_id, body_id},
+        .pos = {(int_3){(head_size-1)/2,(head_size-1)/2,0}, (int_3){body_length-1,(body_width-1)/2,0}},
         .axis = {2,0},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
     };
 
     for(int i = 0; i < 4; i++)
     {
-        w.bodies_cpu[limb_start_id+2*i].joints[w.bodies_cpu[limb_start_id+2*i].n_children++] = {
+        g->joints[g->n_joints++] = {
             .type = joint_ball,
-            .child_body_id = limb_start_id+2*i+1,
-            .pos = {offsets[2*i]+(int_3){0+limb_length-1,0,0},
-                offsets[2*i+1]+(int_3){0,0,0}},
+            .form_id = {limb_start_id+2*i, limb_start_id+2*i+1},
+            .pos = {(int_3){0+limb_length-1,0,0},(int_3){0,0,0}},
             .axis = {1,1},
-            .max_speed = 0.5,
-            .max_torque = 0.2,
         };
     }
 
-    // w.bodies_cpu[limb_start_id+5].joints[w.bodies_cpu[limb_start_id+5].n_children++] = {
-    //     .type = joint_ball,
-    //     .child_body_id = limb_start_id+0,
-    //     .pos = {{limb_length-1,0,0}, {0,0,0}},
-    //     .axis = {1,1},
-    //     .max_speed = 0.5,
-    //     .max_torque = 0.2,
-    // };
-
-    // w.bodies_cpu[limb_start_id+7].joints[w.bodies_cpu[limb_start_id+7].n_children++] = {
-    //     .type = joint_ball,
-    //     .child_body_id = limb_start_id+2,
-    //     .pos = {{limb_length-1,0,0}, {0,0,0}},
-    //     .axis = {1,1},
-    //     .max_speed = 0.5,
-    //     .max_torque = 0.2,
-    // };
-
-    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
-    //     .type = joint_ball,
-    //     .child_body_id = limb_start_id+4,
-    //     .pos = {{0,0,0}, {0,0,0}},
-    //     .axis = {1,1},
-    //     .max_speed = 0.5,
-    //     .max_torque = 0.2,
-    // };
-
-    // w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
-    //     .type = joint_ball,
-    //     .child_body_id = limb_start_id+6,
-    //     .pos = {{0,body_width-1,0}, {0,0,0}},
-    //     .axis = {1,1},
-    //     .max_speed = 0.5,
-    //     .max_torque = 0.2,
-    // };
-
-    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    g->joints[g->n_joints++] = {
         .type = joint_ball,
-        .child_body_id = limb_start_id+0,
-        .pos = {offsets[body_id-limb_start_id]+(int_3){0,0,0}, offsets[0]+(int_3){0,0,0}},
+        .form_id = {body_id, limb_start_id+0},
+        .pos = {(int_3){0,0,0}, (int_3){0,0,0}},
         .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
     };
 
-    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    g->joints[g->n_joints++] = {
         .type = joint_ball,
-        .child_body_id = limb_start_id+2,
-        .pos = {offsets[body_id-limb_start_id]+(int_3){0,body_width-1,0}, offsets[2]+(int_3){0,0,0}},
+        .form_id = {body_id, limb_start_id+2},
+        .pos = {(int_3){0,body_width-1,0}, (int_3){0,0,0}},
         .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
     };
 
-    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    g->joints[g->n_joints++] = {
         .type = joint_ball,
-        .child_body_id = limb_start_id+4,
-        .pos = {offsets[body_id-limb_start_id]+(int_3){shoulder_length-1,0,0}, offsets[4]+(int_3){0,0,0}},
+        .form_id = {body_id, limb_start_id+4},
+        .pos = {(int_3){shoulder_length-1,0,0}, (int_3){0,0,0}},
         .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
     };
 
-    w.bodies_cpu[body_id].joints[w.bodies_cpu[body_id].n_children++] = {
+    g->joints[g->n_joints++] = {
         .type = joint_ball,
-        .child_body_id = limb_start_id+6,
-        .pos = {offsets[body_id-limb_start_id]+(int_3){shoulder_length-1,body_width-1,0}, offsets[6]+(int_3){0,0,0}},
+        .form_id = {body_id, limb_start_id+6},
+        .pos = {(int_3){shoulder_length-1,body_width-1,0}, (int_3){0,0,0}},
         .axis = {1,1},
-        .max_speed = 0.5,
-        .max_torque = 0.2,
     };
 
-    brain* br = &w.brains[w.n_brains++];
-    *br = {
-        .endpoints = (endpoint*) permalloc(manager, sizeof(endpoint)*1024),
-        .n_endpoints = 0,
-    };
+    brain* br = create_brain(&w);
+    {
+        br->root_id = head_id;
+        br->body_ids = (int*) dynamic_alloc(manager->first_region, 256*sizeof(int));
+        br->n_max_bodies = 256;
+        br->endpoints = (endpoint*) permalloc(manager, 1024*sizeof(endpoint));
+        br->n_endpoints = 0;
+        br->genome_id = g->id;
+    }
 
-    br->endpoints[br->n_endpoints++] = {
+    creature_from_genome(manager, &w, g, br);
+    for(int bi = 0; bi < br->n_bodies; bi++)
+    {
+        int b = get_body_index(&w, br->body_ids[bi]);
+        cpu_body_data* body_cpu = &w.bodies_cpu[b];
+        gpu_body_data* body_gpu = &w.bodies_gpu[b];
+
+        // int_3 pos = body_cpu->texture_region.l;
+        // int_3 size = body_cpu->texture_region.u-body_cpu->texture_region.l;
+
+        int_3 pos = body_cpu->texture_region.l+body_gpu->x_origin;
+        int_3 size = body_cpu->texture_region.u-body_cpu->texture_region.l-(int_3){2,2,2};
+
+        uint8_4 materials_data = {128,0,0,0};
+
+        // glBindTexture(GL_TEXTURE_3D, form_materials_texture);
+        // glTexSubImage3D(GL_TEXTURE_3D, 0,
+        //                 pos.x, pos.y, pos.z,
+        //                 1, 1, 1,
+        //                 GL_RGBA_INTEGER, GL_UNSIGNED_BYTE,
+        //                 &materials_data);
+
+        glClearTexSubImage(body_materials_textures[current_body_materials_texture], 0, pos.x, pos.y, pos.z, size.x, size.y, size.z, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, &materials_data);
+
+        body_gpu->x_cm = 0.5*real_cast(size);
+
+        body_gpu->m = 0;
+        body_cpu->I = {};
+        for(int z = 0; z < size.z; z++)
+            for(int y = 0; y < size.y; y++)
+                for(int x = 0; x < size.x; x++)
+                {
+                    real m = 0.001;
+                    body_gpu->m += m;
+
+                    real_3 r = {x+0.5,y+0.5,z+0.5};
+                    r += -body_gpu->x_cm;
+                    body_cpu->I += real_identity_3(m*(0.4*sq(0.5)+normsq(r)));
+                    for(int i = 0; i < 3; i++)
+                        for(int j = 0; j < 3; j++)
+                            body_cpu->I[i][j] += -m*r[i]*r[j];
+                }
+
+        body_gpu->materials_origin = pos;
+        body_gpu->size = size;
+
+        body_gpu->substantial = true;
+    }
+
+    g->endpoints[g->n_endpoints++] = {
         .type = endpoint_foot,
-        .body_id = 5,
-        .pos = offsets[5-limb_start_id]+(int_3){limb_length-1,0,0},
-        .foot_phase = 0.0,
-
-        .root_anchor = offsets[head_id-limb_start_id]+(int_3){(head_size-1)/2,(head_size-1)/2,0},
-        .root_dist = 2*limb_length+body_length-3,
+        .form_id = limb_start_id+1,
+        .pos = (int_3){limb_length-1,0,0},
     };
 
-    br->endpoints[br->n_endpoints++] = {
+    g->endpoints[g->n_endpoints++] = {
         .type = endpoint_foot,
-        .body_id = 7,
-        .pos = offsets[7-limb_start_id]+(int_3){limb_length-1,0,0},
-        .foot_phase = 0.5,
-
-        .root_anchor = offsets[head_id-limb_start_id]+(int_3){(head_size-1)/2,(head_size-1)/2,0},
-        .root_dist = 2*limb_length+body_length-3,
+        .form_id = limb_start_id+3,
+        .pos = (int_3){limb_length-1,0,0},
     };
 
-    //hand feet
-    br->endpoints[br->n_endpoints++] = {
-        .type = endpoint_foot,
-        .body_id = 9,
-        .pos = {limb_length-1,0,0},
-        .foot_phase = 0.0,
-        .root_anchor = {shoulder_length-1,0,0},
-        .root_dist = 2*limb_length,
-    };
-    br->endpoints[br->n_endpoints++] = {
-        .type = endpoint_foot,
-        .body_id = 11,
-        .pos = {limb_length-1,0,0},
-        .foot_phase = 0.5,
-        .root_anchor = {shoulder_length-1,body_width-1,0},
-        .root_dist = 2*limb_length,
-    };
+    // //hand feet
+    // br->endpoints[br->n_endpoints++] = {
+    //     .type = endpoint_foot,
+    //     .body_id = 9,
+    //     .pos = {limb_length-1,0,0},
+    //     .foot_phase = 0.0,
+    //     .root_anchor = {shoulder_length-1,0,0},
+    //     .root_dist = 2*limb_length,
+    // };
+    // br->endpoints[br->n_endpoints++] = {
+    //     .type = endpoint_foot,
+    //     .body_id = 11,
+    //     .pos = {limb_length-1,0,0},
+    //     .foot_phase = 0.5,
+    //     .root_anchor = {shoulder_length-1,body_width-1,0},
+    //     .root_dist = 2*limb_length,
+    // };
 
     for(int b = 0; b < w.n_bodies; b++)
     {
+        w.bodies_gpu[b].x = {chunk_size/2+45.1*(1+b*1.0/w.n_bodies), chunk_size/2+45.1, 42.1};
         w.bodies_cpu[b].invI = inverse(w.bodies_cpu[b].I);
         update_inertia(&w.bodies_cpu[b], &w.bodies_gpu[b]);
 
@@ -1135,52 +1145,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.bodies_cpu[b].contact_depths[1] = 16.0f;
         w.bodies_cpu[b].contact_depths[2] = 16.0f;
 
-        load_body_to_gpu(&w.bodies_cpu[b], &w.bodies_gpu[b]);
-    }
-
-    for(int b = head_id; b >= limb_start_id; b--)
-    {
-        int f = gn->n_forms++;
-        gn->forms_cpu[f].gpu_data = &gn->forms_gpu[f];
-        gn->forms_cpu[f].materials = w.bodies_cpu[b].materials;
-        gn->forms_gpu[f].size = w.bodies_gpu[b].size;
-        gn->forms_gpu[f].x_cm = w.bodies_gpu[b].x_cm;
-
-        gn->forms_gpu[f].cell_material_id = w.bodies_gpu[b].cell_material_id;
-
-        gn->forms_gpu[f].x = {0,0,0};
-        gn->forms_gpu[f].orientation = {1,0,0,0};
-
-        if(b < limb_start_id+8)
-        {
-            gn->forms_cpu[f].theta = 2;
-            gn->forms_cpu[f].phi = 0;
-        }
-
-        w.bodies_gpu[b].form_id = f+1;
-
-        for(int c = 0; c < w.bodies_cpu[b].n_children; c++)
-        {
-            child_joint* joint = &w.bodies_cpu[b].joints[c];
-            int child_form_id = head_id-joint->child_body_id;
-            gn->joints[gn->n_joints].form_id[0] = f;
-            gn->joints[gn->n_joints].form_id[1] = child_form_id;
-            gn->joints[gn->n_joints].pos[0] = joint->pos[0];
-            gn->joints[gn->n_joints].pos[1] = joint->pos[1];
-            gn->joints[gn->n_joints].axis[0] = joint->axis[0];
-            gn->joints[gn->n_joints].axis[1] = joint->axis[1];
-            gn->n_joints++;
-        }
-
-        load_form_to_gpu(&gn->forms_cpu[f], &gn->forms_gpu[f]);
-    }
-
-    for(int e = 0; e < br->n_endpoints; e++)
-    {
-        gn->endpoints[gn->n_endpoints].type = br->endpoints[e].type;
-        gn->endpoints[gn->n_endpoints].form_id = head_id-br->endpoints[e].body_id;
-        gn->endpoints[gn->n_endpoints].pos = br->endpoints[e].pos;
-        gn->n_endpoints++;
+        load_body_to_gpu(&w.body_space, &w.bodies_cpu[b], &w.bodies_gpu[b]);
     }
 
     // CreateDirectory(w.tim.savedir, 0);

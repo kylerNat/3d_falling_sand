@@ -48,19 +48,15 @@ int8_2 load_chunk_to_gpu(chunk* c)
     return offset;
 }
 
-int n_bodies = 0;
-void load_body_to_gpu(cpu_body_data* bc, gpu_body_data* bg)
+void load_body_to_gpu(cuboid_space* body_space, cpu_body_data* bc, gpu_body_data* bg)
 {
-    // static bool has_loaded = false;
-    // if(has_loaded) return;
-    // has_loaded = true;
     if(bc->storage_level < sm_gpu)
     {
-        int padding = 2;
-        int size = 32+padding;
-        int bodies_per_row = (body_texture_size-2*padding)/size;
-        bg->materials_origin = {padding+size*(n_bodies%bodies_per_row),padding+size*((n_bodies/bodies_per_row)%bodies_per_row),padding+size*(n_bodies/sq(bodies_per_row))};
-        n_bodies++;
+        int pad = 1;
+        int_3 padding = (int_3){pad,pad,pad};
+        int_3 size = bg->size+2*padding;;
+        bc->texture_region = add_region(body_space, size);
+        bg->materials_origin = bc->texture_region.l+padding;
 
         glBindTexture(GL_TEXTURE_3D, body_materials_textures[current_body_materials_texture]);
         glTexSubImage3D(GL_TEXTURE_3D, 0,
@@ -71,5 +67,49 @@ void load_body_to_gpu(cpu_body_data* bc, gpu_body_data* bg)
         bc->storage_level = sm_gpu;
     }
 }
+
+void load_empty_body_to_gpu(cuboid_space* body_space, cpu_body_data* bc, gpu_body_data* bg, int_3 size)
+{
+    if(bc->storage_level < sm_gpu)
+    {
+        int pad = 1;
+        int_3 padding = (int_3){pad,pad,pad};
+        int_3 padded_size = size+2*padding;
+        bc->texture_region = add_region(body_space, padded_size);
+        bg->materials_origin = bc->texture_region.l+(int_3){pad,pad,pad};
+
+        bc->storage_level = sm_gpu;
+    }
+}
+
+void resize_body_storage(cuboid_space* body_space, cpu_body_data* body_cpu, gpu_body_data* body_gpu, int_3 offset, int_3 new_size)
+{
+    if(new_size == body_cpu->texture_region.u-body_cpu->texture_region.l) return;
+
+    bounding_box new_region = add_region(body_space, new_size);
+
+    assert(new_region.u != ((int_3){0,0,0}));
+
+    uint clear = 0;
+    glClearTexSubImage(body_materials_textures[current_body_materials_texture], 0, new_region.l.x, new_region.l.y, new_region.l.z, new_size.x, new_size.y, new_size.z, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, &clear);
+
+    int pad = 1;
+    int_3 padding = (int_3){pad,pad,pad};
+
+    int_3 dst_pos = new_region.l+offset;
+    int_3 old_size = body_cpu->texture_region.u-body_cpu->texture_region.l;
+    // old_size.x = 4*((old_size.x+3)/4);
+    glCopyImageSubData(body_materials_textures[current_body_materials_texture], GL_TEXTURE_3D, 0,
+                       body_cpu->texture_region.l.x,body_cpu->texture_region.l.y,body_cpu->texture_region.l.z,
+                       body_materials_textures[current_body_materials_texture], GL_TEXTURE_3D, 0,
+                       dst_pos.x, dst_pos.y, dst_pos.z,
+                       old_size.x, old_size.y, old_size.z);
+
+    body_gpu->materials_origin = dst_pos+padding;
+    body_gpu->size = new_size-2*padding;
+
+    free_region(body_space, body_cpu->texture_region);
+    body_cpu->texture_region = new_region;
+};
 
 #endif //CHUNK

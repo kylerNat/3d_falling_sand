@@ -14,12 +14,12 @@ bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, i
     int i = 0;
     hit_dist = 0;
 
-    ivec3 ipos = ivec3(pos);
+    ivec3 ipos = ivec3(floor(pos));
 
     for(;;)
     {
-        if(ipos.x < -1 || ipos.y < -1 || ipos.z < -1
-           || ipos.x > size.x || ipos.y > size.y || ipos.z > size.z)
+        if(ipos.x < 0 || ipos.y < 0 || ipos.z < 0
+           || ipos.x >= size.x || ipos.y >= size.y || ipos.z >= size.z)
         {
             return false;
         }
@@ -53,6 +53,11 @@ bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, i
                 //     texelFetch(materials, ioutside+ivec3(0,0,1),0).g-texelFetch(materials, ioutside+ivec3(0,0,-1),0).g+0.001f
                 //     );
                 // normal = normalize(gradient);
+                if(hit_dir == vec3(0,0,0))
+                {
+                    hit_dir = abs(pos-ipos+0.5);
+                    hit_dir = step(hit_dir.zxy, hit_dir.xyz)*step(hit_dir.yzx, hit_dir.xyz);
+                }
                 normal = normalize(-hit_dir*ray_sign);
 
                 hit_cell = ipos;

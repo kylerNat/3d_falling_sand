@@ -19,7 +19,7 @@
 #endif
 
 #define signed_depth(vox) (mat(vox) == 0 ? 1+depth(vox) : -depth(vox))
-#define opaque_signed_depth(vox) (opacity(mat(vox)) == 0 ? 1+depth(vox) : -depth(vox))
+#define opaque_signed_depth(vox) (opacity(mat(vox)) == 1 ? 1+depth(vox) : -depth(vox))
 
 #define permaterial(vox) (mat(vox)*(1-transient(vox)))
 

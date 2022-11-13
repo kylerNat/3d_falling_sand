@@ -7,202 +7,8 @@
 #include "game_common.h"
 #include "genetics.h"
 #include "memory.h"
-#include "chunk.h"
 
-real dt = 1.0/60.0; //simulate at 60 hz
-
-struct element_componenticle
-{
-    real_3 x;
-    real_3 x_dot;
-    real_3 background_x_dot;
-
-    real_3 old_x;
-    real_3 old_x_dot;
-};
-
-struct support_t
-{
-    real_3 x;
-    real d;
-};
-
-support_t point_hull_support(real_3 dir, element_componenticle* p, element_componenticle* hull, real_3 hull_x_dot, int hull_len)
-{
-    element_componenticle* best_h = hull;
-    real best_d = dot(dir, hull->x);
-    for(element_componenticle* h = hull+1; h < hull+hull_len; h++)
-    {
-        real test_d = dot(dir, h->x);
-        if(test_d > best_d) {
-            best_h = h;
-            best_d = test_d;
-        }
-    }
-
-    real_3 x = best_h->x - p->x;
-    real d = best_d - dot(dir, p->x);
-    real_3 rel_x_dot = hull_x_dot - p->x_dot;
-    real rel_x_dot_d = dot(dir, rel_x_dot);
-    if(rel_x_dot_d > 0) {
-        x += dt*rel_x_dot;
-        d += dt*rel_x_dot_d;
-    }
-
-    return {x, d};
-}
-
-bool is_colliding(element_componenticle* p, element_componenticle* hull, real_3 hull_x_dot, int hull_len)
-{
-    real_3 simplex[4];
-    support_t support;
-
-    real epsilon = 0.1;
-    #define do_support(i)                                       \
-        support = point_hull_support(dir, p, hull, hull_x_dot, hull_len); \
-        if(support.d <= epsilon) return false;                        \
-        simplex[i] = support.x;
-
-    //initialize first simplex point by searching in the direction from a random point to the origin
-    real_3 dir = p->x - hull[0].x;
-    do_support(0);
-
-    real_3 v[3];
-
-    real_3 face0;
-    real_3 face1;
-    real_3 face2;
-    //main gjk loop
-    {
-    gjk_point: {
-            dir = -simplex[0];
-            do_support(1);
-            //fall through to gjk_line
-        }
-    gjk_line: {
-            v[0] = simplex[0]-simplex[1];
-            dir = cross(v[0], cross(v[0], simplex[0]));
-            do_support(2);
-            //fall through to gjk_triangle
-        }
-    gjk_triangle: {
-            v[0] = simplex[0]-simplex[2];
-            v[1] = simplex[1]-simplex[2];
-            face2 = cross(v[0], v[1]); //normal of the triangle
-            face0 = cross(v[0], face2); //the normal of the 20 edge
-            face1 = cross(face2, v[1]); //the normal of the 21 edge
-            if(dot(face1, simplex[2]) < 0)
-            { //outside of the 21 side
-                simplex[0] = simplex[2];
-                if(dot(face0, simplex[2]) < 0)
-                { //in the corner region
-                    goto gjk_point;
-                }
-                goto gjk_line;
-            }
-            else if(dot(face0, simplex[2]) < 0)
-            { //outside of 20 side
-                simplex[1] = simplex[2];
-                goto gjk_line;
-            }
-            { //inside triangle
-                if(dot(face2, simplex[2]) > 0)
-                { //swap 0 and 1 to maintain CW winding order
-                    dir = -face2;
-                    simplex[3] = simplex[0];
-                    simplex[0] = simplex[1];
-                    simplex[1] = simplex[3];
-                }
-                else
-                    dir = face2;
-                do_support(3);
-                //fall through to gjk_tetrahedron
-            }
-        }
-    gjk_tetrahedron: {
-            v[0] = simplex[0]-simplex[3];
-            v[1] = simplex[1]-simplex[3];
-            v[2] = simplex[2]-simplex[3];
-
-            for(int i = 0; i < 3; i++)
-            {
-                int j = (i+1)%3;
-                int k = (i+2)%3;
-
-                face2 = cross(v[i], v[j]); //the normal of the 3ij edge
-
-                if(dot(face2, simplex[3]) < 0)
-                { //outside of face0
-                    face0 = cross(v[i], face2); //the normal of the 3i edge
-                    face1 = cross(face2, v[j]); //the normal of the 3j edge
-
-                    if(dot(face1, simplex[3]) < 0)
-                    { //outside of the 3j side
-                        simplex[0] = simplex[j];
-                        simplex[1] = simplex[3];
-                        goto gjk_line;
-                    }
-                    else if(dot(face0, simplex[3]) < 0)
-                    { //outside of 3i side
-                        simplex[0] = simplex[i];
-                        simplex[1] = simplex[3];
-                        goto gjk_line;
-                    }
-                    else
-                    { //inside the voronoi region of the 3ij face
-                        simplex[k] = simplex[3];
-                        dir = face2;
-                        do_support(3);
-                        goto gjk_tetrahedron;
-                    }
-                }
-            }
-            //inside tetrahedron, fall through to return true
-        }
-    }
-    return true;
-}
-
-#define value_type void*
-#define key_type int
-#define hashmapname int_pointer_hashmap
-#define NO_STRINGS
-#define _calloc(n, type_size) permalloc_clear(manager, n*type_size)
-#define extra_calloc_params memory_manager* manager,
-#include <utils/hashmap.h>
-
-struct entity
-{
-    real_3 x;
-    real_3 x_dot;
-};
-
-struct world
-{
-    uint32 seed;
-    entity player;
-
-    cpu_body_data * bodies_cpu;
-    gpu_body_data * bodies_gpu;
-    int n_bodies;
-
-    //TODO: turn everything into hashtables
-    joint* joints;
-    int n_joints;
-
-    brain* brains;
-    int n_brains;
-
-    genome* genomes;
-    int n_genomes;
-
-    genedit_window gew;
-
-    bool edit_mode;
-
-    chunk * c;
-    int8_2 chunk_lookup[2*2*2];
-};
+const real dt = 1.0/60.0;
 
 void set_chunk_voxel(world* w, chunk* c, real_3 pos, uint16 material)
 {
@@ -224,6 +30,96 @@ void set_chunk_voxel(world* w, chunk* c, real_3 pos, uint16 material)
                     1, 1, 1,
                     GL_RGB_INTEGER, GL_UNSIGNED_INT,
                     active_data);
+}
+
+int create_body_from_form(world* w, genome* g, brain* br, int form_id)
+{
+    cpu_form_data* form_cpu = &g->forms_cpu[form_id];
+    gpu_form_data* form_gpu = &g->forms_gpu[form_id];
+
+    int b = new_body_index(w);
+    cpu_body_data* body_cpu = &w->bodies_cpu[b];
+    gpu_body_data* body_gpu = &w->bodies_gpu[b];
+
+    body_cpu->brain_id = br->id;
+    body_cpu->genome_id = br->genome_id;
+    body_cpu->form_id = form_id;
+
+    body_cpu->is_root = form_cpu->is_root;
+    if(body_cpu->is_root) br->root_id = body_cpu->id;
+    body_cpu->root = br->root_id;
+
+    int pad = 1;
+    int_3 padding = (int_3){pad,pad,pad};
+    body_gpu->x_origin = form_gpu->x_origin;
+    body_gpu->orientation = {1,0,0,0};
+
+    //TODO: actually calculate these
+    body_gpu->m = 0.01;
+    body_cpu->I = real_identity_3(10.0);
+    body_cpu->invI = inverse(body_cpu->I);
+    update_inertia(body_cpu, body_gpu);
+
+    body_gpu->form_origin = form_gpu->materials_origin+form_gpu->x_origin;
+    body_gpu->form_lower = form_gpu->materials_origin+form_gpu->bounds.l;
+    body_gpu->form_upper = form_gpu->materials_origin+form_gpu->bounds.u;
+    int_3 form_size = body_gpu->form_upper-body_gpu->form_lower;
+
+    body_gpu->cell_material_id = form_gpu->cell_material_id;
+
+    body_gpu->substantial = true;
+
+    load_empty_body_to_gpu(&w->body_space, body_cpu, body_gpu, form_size);
+    return body_cpu->id;
+}
+
+void create_body_joint_from_form_joint(world* w, genome* g, brain* br, form_joint* joint)
+{
+
+    body_joint* new_joint = &w->joints[w->n_joints++];
+    *new_joint = {
+        .type = joint->type,
+    };
+    for(int i = 0; i < 2; i++)
+    {
+        new_joint->body_id[i] = br->body_ids[joint->form_id[i]];
+        new_joint->pos[i] = joint->pos[i];
+        new_joint->axis[i] = joint->axis[i];
+    }
+}
+
+void create_body_endpoint_from_form_endpoint(brain* br, form_endpoint* ep)
+{
+
+    endpoint* new_endpoint = &br->endpoints[br->n_endpoints++];
+    *new_endpoint = {
+        .type = ep->type,
+        .body_id = br->body_ids[ep->form_id],
+        .pos = ep->pos,
+    };
+}
+
+void creature_from_genome(memory_manager* manager, world* w, genome* g, brain* br)
+{
+    br->n_max_bodies = g->n_forms+4;
+    br->body_ids = (int*) dynamic_alloc(manager->first_region, sizeof(int)*br->n_max_bodies);
+
+    for(int f = 0; f < g->n_forms; f++)
+    {
+        br->body_ids[br->n_bodies++] = create_body_from_form(w, g, br, f);
+    }
+
+    for(int bi = 0; bi < br->n_bodies; bi++)
+    {
+        int b = get_body_index(w, br->body_ids[bi]);
+        assert(b >= 0);
+        w->bodies_cpu[b].root = br->root_id;
+    }
+
+    for(int j = 0; j < g->n_joints; j++)
+    {
+        create_body_joint_from_form_joint(w, g, br, &g->joints[j]);
+    }
 }
 
 void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, int_3 size, uint8_4 voxel)
@@ -281,7 +177,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     if(w->edit_mode)
     {
-        do_edit_window(ui, input, &w->gew);
+        do_edit_window(manager, ui, input, &w->gew, &w->form_space);
         real_4 cursor_color = {1,1,1,1};
         if(input->active_ui_element.type != ui_form_voxel)
             draw_circle(ui, {input->mouse.x, input->mouse.y, 0}, 0.01, cursor_color);
@@ -412,32 +308,36 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     {
         brain* br = &w->brains[0];
-        // br->target_accel = (real_3){0,0,-0.1*(-0.5+w->bodies_gpu[13].x_dot.z)}; //by default try to counteract gravity
+        // br->target_accel = (real_3){0,0,-0.1*(-0.5+w->bodies_gpu[12].x_dot.z)}; //by default try to counteract gravity
         br->target_accel = (real_3){0,0,0.00}; //by default try to counteract gravity
         // br->target_accel = (real_3){0,0,0}; //by default try to counteract gravity
+
+        if(player_in_head) br->look_dir = -camera_z;
 
         br->is_moving = is_down('R', input) || (player_in_head && (walk_dir.x != 0 || walk_dir.y != 0));
         if(br->is_moving)
         {
             real_3 pos = player->x-placement_dist*camera_z;
-            real_3 r = pos-w->bodies_gpu[13].x;
+            real_3 r = pos-w->bodies_gpu[12].x;
             // r.z = 0;
-            // r = rej(r, w->bodies_cpu[13].contact_normals[0]);
+            // r = rej(r, w->bodies_cpu[12].contact_normals[0]);
             real_3 target_dir = normalize(r);
             if(player_in_head)
             {
                 target_dir = walk_dir;
             }
 
-            // br->target_accel.z += 0.02;
+            if(!player_in_head) br->look_dir = target_dir;
+
+            br->target_accel.z += 0.02;
             br->target_accel += 0.02*target_dir;
-            // br->target_accel -= 0.02*w->bodies_gpu[13].x_dot;
+            // br->target_accel -= 0.02*w->bodies_gpu[12].x_dot;
         }
         else
         {
-            // br->target_accel -= 0.02*w->bodies_gpu[13].x_dot;
+            // br->target_accel -= 0.02*w->bodies_gpu[12].x_dot;
             // br->target_accel.z += 0.01;
-            // br->target_accel.z -= 0.01*(w->bodies_gpu[13].x.z-(w->bodies_gpu[5].x.z+16));
+            // br->target_accel.z -= 0.01*(w->bodies_gpu[12].x.z-(w->bodies_gpu[5].x.z+16));
         }
         if(is_down('T', input)
            || (player_in_head && is_down(M2, input)))
@@ -445,14 +345,14 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
             br->is_moving = true;
             br->target_accel.z += 0.1;
             //TODO: should be foot normals
-            // br->target_accel += 0.05*w->bodies_cpu[13].contact_normals[0];
+            // br->target_accel += 0.05*w->bodies_cpu[12].contact_normals[0];
         }
 
         // if(is_down('Y', input)
         //    || (player_in_head && is_down(' ', input)))
         // {
         //     br->is_moving = true;
-        //     if(w->bodies_cpu[13].contact_depths[0] > 5)
+        //     if(w->bodies_cpu[12].contact_depths[0] > 5)
         //     br->target_accel.z -= 0.1;
         // }
 
@@ -481,7 +381,112 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     if(step_mode ? is_pressed('M', input) : !is_down('M', input))
     {
+        for(int b = w->n_bodies-1; b >= 0; b--)
+        {
+            cpu_body_data* body_cpu = &w->bodies_cpu[b];
+            gpu_body_data* body_gpu = &w->bodies_gpu[b];
+
+            if(body_cpu->genome_id == 0) continue;
+
+            genome* g = get_genome(w, body_cpu->genome_id);
+            if(!g->is_mutating) continue;
+            brain* br = get_brain(w, body_cpu->brain_id);
+
+            int new_form_id = g->form_id_updates[body_cpu->form_id];
+            br->body_ids[new_form_id] = body_cpu->id;
+            if(new_form_id < 0)
+            {
+                for(int j = w->n_joints-1; j >= 0; j--)
+                {
+                    for(int i = 0; i < 2; i++)
+                    {
+                        int body_id = w->joints[j].body_id[i];
+                        if(body_id == body_cpu->id)
+                        {
+                            w->joints[j] = w->joints[--w->n_joints];
+                            break;
+                        }
+                    }
+                }
+                if(br->body_ids[body_cpu->form_id] == body_cpu->id)
+                    br->body_ids[body_cpu->form_id] = br->body_ids[--br->n_bodies];
+                delete_body(w, body_cpu->id);
+                continue;
+            }
+            body_cpu->form_id = new_form_id;
+
+            cpu_form_data* form_cpu = &g->forms_cpu[new_form_id];
+            gpu_form_data* form_gpu = &g->forms_gpu[new_form_id];
+
+            body_gpu->is_mutating = form_gpu->is_mutating;
+            if(form_gpu->is_mutating)
+            {
+                int padding = 1;
+                int_3 offset = (form_gpu->x_origin-body_gpu->x_origin);
+                int_3 new_size = form_gpu->bounds.u-form_gpu->bounds.l+(int_3){2*padding,2*padding,2*padding};
+                new_size.x = 4*((new_size.x+3)/4);
+                if(new_size != body_cpu->texture_region.u-body_cpu->texture_region.l)
+                {
+                    log_output("resizing body storage ", body_cpu->texture_region.l, ", ", body_cpu->texture_region.u, "\n");
+                    resize_body_storage(&w->body_space, body_cpu, body_gpu, offset, new_size);
+                    body_gpu->x_origin += offset;
+                    log_output("resized body storage ", body_cpu->texture_region.l, ", ", body_cpu->texture_region.u, "\n");
+                }
+                body_gpu->form_origin = form_gpu->materials_origin+form_gpu->x_origin;
+                body_gpu->form_lower = form_gpu->materials_origin+form_gpu->bounds.l;
+                body_gpu->form_upper = form_gpu->materials_origin+form_gpu->bounds.u;
+            }
+        }
+
+        for(int brain_index = 0; brain_index < w->n_brains; brain_index++)
+        {
+            brain* br = &w->brains[brain_index];
+            genome* g = get_genome(w, br->genome_id);
+
+            if(!g->is_mutating) continue;
+
+            int n_new_forms = g->n_forms - br->n_bodies;
+            for(int f = g->n_forms-n_new_forms; f < g->n_forms; f++)
+            {
+                if(br->n_bodies >= br->n_max_bodies)
+                {
+                    br->n_max_bodies = br->n_bodies+1 + 4;
+                    int* new_body_ids = (int*) dynamic_alloc(manager->first_region, sizeof(int)*br->n_max_bodies);
+                    memcpy(new_body_ids, br->body_ids, sizeof(int)*br->n_bodies);
+                    dynamic_free(br->body_ids);
+                    br->body_ids = new_body_ids;
+                }
+                int b = create_body_from_form(w, g, br, f);
+                br->body_ids[br->n_bodies++] = b;
+                w->bodies_gpu[b].size = g->forms_gpu[f].bounds.u-g->forms_gpu[f].bounds.l;
+            }
+
+            for(int j = 0; j < g->n_joints; j++)
+            {
+                if(g->joints[j].form_id[0] >= g->n_forms-n_new_forms
+                   || g->joints[j].form_id[1] >= g->n_forms-n_new_forms)
+                {
+                    create_body_joint_from_form_joint(w, g, br, &g->joints[j]);
+                    log_output("creating body joint\n");
+                }
+            }
+
+            br->n_endpoints = 0;
+            for(int e = 0; e < g->n_endpoints; e++)
+            {
+                create_body_endpoint_from_form_endpoint(br, &g->endpoints[e]);
+                // log_output("creating form endpoint: ", g->endpoints[e].type, ", ", g->endpoints[e].form_id, ", ", g->endpoints[e].pos, "\n");
+            }
+        }
+
+        for(int genome_index = 0; genome_index < w->n_genomes; genome_index++)
+        {
+            genome* g = &w->genomes[genome_index];
+            g->is_mutating = false;
+        }
+
         simulate_bodies(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, w->gew.active_genome->forms_gpu, w->gew.active_genome->n_forms);
+        sync_joint_voxels(manager, w);
         simulate_body_physics(manager, w->bodies_cpu, w->bodies_gpu, w->n_bodies, rd);
 
         // w->bodies_cpu[5].contact_locked[0] = true;
@@ -493,7 +498,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         // w->bodies_cpu[7].contact_forces[0] = {0,0,0};
         // w->bodies_cpu[5].deltax_dot_integral[0] = {0,0,0};
 
-        simulate_joints(w->bodies_cpu, w->bodies_gpu, w->gew.active_genome->forms_cpu, w->gew.active_genome->forms_gpu, w->n_bodies, w->brains, w->n_brains, rd);
+        simulate_joints(w, rd);
 
         integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
     }
@@ -502,6 +507,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     {
         for(int i = 0; i < 3; i++)
             draw_circle(rd, w->bodies_cpu[b].contact_points[i], 0.3, {w->bodies_cpu[b].contact_depths[i] > 1,w->bodies_cpu[b].contact_depths[i] <= 1,0,1});
+        draw_circle(rd, w->bodies_gpu[b].x, 0.3, {1,0,1,1});
     }
 
     // for(int brain_id = 0; brain_id < w->n_brains; brain_id++)
@@ -525,8 +531,13 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     }
     // }
 
-    if(player_in_head == 2) player->x = lerp(player->x, w->bodies_gpu[13].x+10.0*camera_z+2*camera_y, 0.8);
-    if(player_in_head == 1) player->x = w->bodies_gpu[13].x-5*camera_z;
+
+    {
+        brain* br = &w->brains[0];
+        int root_index = get_body_index(w, br->root_id);
+        if(player_in_head == 2) player->x = lerp(player->x, w->bodies_gpu[root_index].x+10.0*camera_z+2*camera_y, 0.8);
+        if(player_in_head == 1) player->x = w->bodies_gpu[root_index].x-5*camera_z;
+    }
 
     // if(is_pressed('V', input))
     // {

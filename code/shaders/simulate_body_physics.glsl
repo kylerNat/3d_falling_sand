@@ -113,7 +113,7 @@ void find_surface_points(out vec3 world_collision_points[N_MAX_COLLISION_POINTS]
                 uvec4 body_voxel = texelFetch(body_materials, body_materials_origin+body_coord, 0);
 
                 // if(body_voxel.g == 0 && body_voxel.r > 0)
-                if(depth(body_voxel) == 0)
+                if(signed_depth(body_voxel) == 0)
                 {
                     ivec3 wvc = ivec3(world_coord); //world_voxel_coord
 

@@ -86,7 +86,7 @@ void end_shader()
                         glGetShaderiv(%2$s, GL_COMPILE_STATUS, &error);
                         if(error == GL_FALSE)
                         {
-                            int info_log_len = -1;
+                            GLsizei info_log_len = -1;
                             char* info_log = (char*) free_memory;
                             glGetShaderInfoLog(%2$s, available_memory, &info_log_len, info_log);
                             log_output("info log is ", info_log_len, " characters long\n");

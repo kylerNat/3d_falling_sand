@@ -101,6 +101,8 @@ GLuint occupied_regions_texture;
 GLuint body_buffer;
 GLuint body_chunks_buffer;
 
+GLuint joint_buffer;
+
 #define N_MAX_FORMS 4096
 GLuint form_buffer;
 
@@ -378,6 +380,10 @@ void gl_init_general_buffers(memory_manager* manager)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_chunks_buffer);
     int body_chunks_wide = body_texture_size/body_chunk_size;
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, body_chunks_wide*body_chunks_wide*body_chunks_wide, 0, GL_DYNAMIC_STORAGE_BIT);
+
+    glGenBuffers(1, &joint_buffer);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, joint_buffer);
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, N_MAX_BODIES*sizeof(gpu_body_joint), 0, GL_DYNAMIC_STORAGE_BIT);
 
     glGenBuffers(1, &form_buffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, form_buffer);
@@ -988,25 +994,33 @@ void render_world(real_3x3 camera_axes, real_3 camera_pos)
     glEnable(GL_BLEND);
 }
 
-void load_form_to_gpu(cpu_form_data* fc, gpu_form_data* fg)
+void update_bounding_box(cpu_form_data* form_cpu, gpu_form_data* form_gpu)
 {
-    static int n_forms = 0;
-    if(fc->storage_level < sm_gpu)
-    {
-        int padding = 0;
-        int size = 32;
-        int forms_per_row = (form_texture_size-2*padding)/size;
-        fg->materials_origin = {padding+size*(n_forms%forms_per_row),padding+size*((n_forms/forms_per_row)%forms_per_row),padding+size*(n_forms/sq(forms_per_row))};
-        n_forms++;
+    bounding_box b = {form_cpu->storage_size, {0,0,0}};
+    for(int z = 0; z < form_cpu->storage_size.z; z++)
+        for(int y = 0; y < form_cpu->storage_size.y; y++)
+            for(int x = 0; x < form_cpu->storage_size.x; x++)
+            {
+                if(form_cpu->materials[index_3D({x,y,z}, form_cpu->storage_size)]) b = expand_to(b, {x,y,z});
+            }
 
-        glBindTexture(GL_TEXTURE_3D, form_materials_texture);
-        glTexSubImage3D(GL_TEXTURE_3D, 0,
-                        fg->materials_origin.x, fg->materials_origin.y, fg->materials_origin.z,
-                        fg->size.x, fg->size.y, fg->size.z,
-                        GL_RED_INTEGER, GL_UNSIGNED_BYTE,
-                        fc->materials);
-        fc->storage_level = sm_gpu;
-    }
+    form_gpu->bounds = b;
+}
+
+void load_form_to_gpu(cuboid_space* form_space, cpu_form_data* fc, gpu_form_data* fg)
+{
+    //TODO: defrag if this fails
+    bounding_box region = add_region(form_space, fc->storage_size);
+    assert((region.u != (int_3){0,0,0}));
+    fg->materials_origin = region.l;
+    update_bounding_box(fc, fg);
+
+    glBindTexture(GL_TEXTURE_3D, form_materials_texture);
+    glTexSubImage3D(GL_TEXTURE_3D, 0,
+                    fg->materials_origin.x, fg->materials_origin.y, fg->materials_origin.z,
+                    fc->storage_size.x, fc->storage_size.y, fc->storage_size.z,
+                    GL_RED_INTEGER, GL_UNSIGNED_BYTE,
+                    fc->materials);
 }
 
 void reload_form_to_gpu(cpu_form_data* fc, gpu_form_data* fg)
@@ -1014,9 +1028,52 @@ void reload_form_to_gpu(cpu_form_data* fc, gpu_form_data* fg)
     glBindTexture(GL_TEXTURE_3D, form_materials_texture);
     glTexSubImage3D(GL_TEXTURE_3D, 0,
                     fg->materials_origin.x, fg->materials_origin.y, fg->materials_origin.z,
-                    fg->size.x, fg->size.y, fg->size.z,
+                    fc->storage_size.x, fc->storage_size.y, fc->storage_size.z,
                     GL_RED_INTEGER, GL_UNSIGNED_BYTE,
                     fc->materials);
+}
+
+void resize_form_storage(memory_manager* manager, cuboid_space* form_space, cpu_form_data* fc, gpu_form_data* fg, int_3 offset, int_3 new_size)
+{
+    if(new_size == fc->storage_size) return;
+
+    size_t new_size_total = new_size.x*new_size.y*new_size.z;
+    uint8* new_materials = dynamic_alloc(manager->first_region, new_size_total);
+
+    memset(new_materials, 0, new_size_total);
+    for(int z = 0; z < fc->storage_size.z; z++)
+        for(int y = 0; y < fc->storage_size.y; y++)
+        {
+            int x = 0;
+            int nx = x+offset.x;
+            int ny = y+offset.y;
+            int nz = z+offset.z;
+            memcpy(new_materials+nx+new_size.x*(ny+new_size.y*nz), fc->materials+x+fc->storage_size.x*(y+fc->storage_size.y*z), fc->storage_size.x);
+        }
+
+    // for(int z = 0; z < new_size.z; z++)
+    //     for(int y = 0; y < new_size.y; y++)
+    //         for(int x = 0; x < new_size.x; x++)
+    //         {
+    //             new_materials[x+new_size.x*(y+new_size.y*z)] = 0;
+    //         }
+    // for(int z = 0; z < fc->storage_size.z; z++)
+    //     for(int y = 0; y < fc->storage_size.y; y++)
+    //         for(int x = 0; x < fc->storage_size.x; x++)
+    //         {
+    //             int nx = x+offset.x;
+    //             int ny = y+offset.y;
+    //             int nz = z+offset.z;
+    //             new_materials[nx+new_size.x*(ny+new_size.y*nz)] = fc->materials[x+fc->storage_size.x*(y+fc->storage_size.y*z)];
+    //             assert(nx+new_size.x*(ny+new_size.y*nz) < new_size_total);
+    //         }
+
+    dynamic_free(fc->materials);
+    fc->storage_size = new_size;
+    fc->materials = new_materials;
+
+    free_region(form_space, {fg->materials_origin, fg->materials_origin+fc->storage_size});
+    load_form_to_gpu(form_space, fc, fg);
 }
 
 void render_editor_voxels(real_3x3 camera_axes, real_3 camera_pos, genedit_window* gew)
@@ -1881,17 +1938,14 @@ void simulate_bodies(memory_manager* manager, cpu_body_data* bodies_cpu, gpu_bod
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(bodies_gpu[0])*n_bodies, bodies_gpu);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, body_buffer);
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, form_buffer);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(forms_gpu[0])*n_forms, forms_gpu);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, form_buffer);
-
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particle_buffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particle_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, particle_buffer);
 
     uint* body_chunks = (uint*) reserve_block(manager, n_bodies*8*4*sizeof(uint));
     uint n_body_chunks = 0;
     for(int b = 0; b < n_bodies; b++)
     {
+        if(!bodies_gpu[b].substantial) continue;
         for(int x = 0; x < bodies_gpu[b].size.x; x+=body_chunk_size)
             for(int y = 0; y < bodies_gpu[b].size.y; y+=body_chunk_size)
                 for(int z = 0; z < bodies_gpu[b].size.z; z+=body_chunk_size)
@@ -1909,11 +1963,63 @@ void simulate_bodies(memory_manager* manager, cpu_body_data* bodies_cpu, gpu_bod
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_chunks_buffer);
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (1+4*n_body_chunks)*sizeof(uint), body_chunks);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, body_chunks_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, body_chunks_buffer);
 
     glDispatchCompute(n_body_chunks,1,1);
 
+    // glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_out_buffer);
+    // glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(bodies_gpu[0])*n_bodies, bodies_gpu);
+
     current_body_materials_texture = 1-current_body_materials_texture;
+}
+
+void sync_joint_voxels(memory_manager* manager, world* w)
+{
+    glUseProgram(sync_joint_voxels_program);
+
+    int texture_i = 0;
+    int image_i = 0;
+    int uniform_i = 0;
+
+    static int frame_number = 0;
+    glUniform1i(uniform_i++, frame_number++);
+
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_2D, material_physical_properties_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+    glUniform1i(uniform_i++, image_i);
+    glBindImageTexture(image_i++, body_materials_textures[current_body_materials_texture], 0, true, 0, GL_READ_WRITE, GL_RGBA8UI);
+
+    glUniform1i(uniform_i++, w->n_joints);
+
+    gpu_body_joint* joint_data = (gpu_body_joint*) reserve_block(manager, sizeof(gpu_body_joint)*w->n_joints);
+    for(int j = 0; j < w->n_joints; j++)
+    {
+        joint_data[j] = {
+            .type = w->joints[j].type,
+        };
+        for(int i = 0; i < 2; i++)
+        {
+            int b = get_body_index(w, w->joints[j].body_id[i]);
+            joint_data[j].texture_pos[i] = w->joints[j].pos[i]+w->bodies_gpu[b].materials_origin+w->bodies_gpu[b].x_origin;
+            joint_data[j].axis[i] = w->joints[j].axis[i];
+        }
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, joint_buffer);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(joint_data[0])*w->n_joints, joint_data);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, joint_buffer);
+
+    unreserve_block(manager);
+
+    glDispatchCompute((w->n_joints+3)/4,1,1);
+
+    glBindImageTexture(0, 0, 0, true, 0, GL_READ_WRITE, GL_RGBA8UI);
 }
 
 void simulate_body_physics(memory_manager* manager, cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu, int n_bodies, render_data* rd)

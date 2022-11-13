@@ -4,6 +4,7 @@
 
 #shader GL_COMPUTE_SHADER
 #include "include/header.glsl"
+#include "include/maths.glsl"
 
 #define localgroup_size 8
 #define subgroup_size 1
@@ -21,9 +22,7 @@ layout(location = 6) uniform int n_bodies;
 #include "include/materials_physical.glsl"
 
 #include "include/body_data.glsl"
-#define FORM_DATA_BINDING 1
-#include "include/form_data.glsl"
-#define PARTICLE_DATA_BINDING 2
+#define PARTICLE_DATA_BINDING 1
 #include "include/particle_data.glsl"
 
 struct body_chunk
@@ -34,26 +33,11 @@ struct body_chunk
     uint origin_z;
 };
 
-layout(std430, binding = 3) buffer body_chunk_data
+layout(std430, binding = 2) buffer body_chunk_data
 {
     uint n_body_chunks;
     body_chunk body_chunks[];
 };
-
-vec4 qmult(vec4 a, vec4 b)
-{
-    return vec4(a.x*b.x-a.y*b.y-a.z*b.z-a.w*b.w,
-                a.x*b.y+a.y*b.x+a.z*b.w-a.w*b.z,
-                a.x*b.z+a.z*b.x+a.w*b.y-a.y*b.w,
-                a.x*b.w+a.w*b.x+a.y*b.z-a.z*b.y);
-}
-
-vec3 apply_rotation(vec4 q, vec3 p)
-{
-    vec4 p_quat = vec4(0, p.x, p.y, p.z);
-    vec4 q_out = qmult(qmult(q, p_quat), vec4(q.x, -q.y, -q.z, -q.w));
-    return q_out.yzw;
-}
 
 uint rand(uint seed)
 {
@@ -61,11 +45,6 @@ uint rand(uint seed)
     seed ^= seed>>17;
     seed ^= seed<<5;
     return seed;
-}
-
-float float_noise(uint seed)
-{
-    return float(int(seed))/1.0e10;
 }
 
 void main()
@@ -96,8 +75,6 @@ void main()
     //     particles[p].alive = true;
     // }
 
-    if(body_form_id != 0) get_form_data(body_form_id-1);
-
     //+,0,-,0
     //0,+,0,-
     // int rot = (frame_number+layer)%4;
@@ -113,8 +90,10 @@ void main()
     uvec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
     uvec4 b  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
 
-    ivec3 form_pos = pos-body_materials_origin+form_materials_origin;
-    uint form_voxel = texelFetch(form_materials, form_pos, 0).r;
+    ivec3 form_pos = pos-body_materials_origin-body_x_origin+body_form_origin;
+    uint form_voxel = 0;
+    if(all(greaterThanEqual(form_pos, body_form_lower)) && all(lessThan(form_pos, body_form_upper)))
+        form_voxel = texelFetch(form_materials, form_pos, 0).r;
 
     int spawned_cell = 0;
 
@@ -194,7 +173,7 @@ void main()
 
     //check if this cell is empty, on the surface, and is filled in the body map
     //then check for neighbors that are trying to grow
-    if(form_is_mutating==1 && mid != form_voxel)
+    if(body_is_mutating==1 && mid != form_voxel)
     {
         c = uvec4(0);
     }
