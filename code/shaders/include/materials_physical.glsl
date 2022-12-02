@@ -9,19 +9,20 @@
 #define        flow(vox) ((vox>>30))
 #else
 #define         mat(vox) (vox.r)
-#define       depth(vox) (int(vox.g&0x1F))
+#define       depth(vox) (int(vox.g&0x1F)) //in world
 #define       phase(vox) ((vox.g>>5)&0x3)
-#define   transient(vox) (vox.g>>7)
+#define   transient(vox) (vox.g>>7) //in world
+#define      corner(vox) (vox.g>>7) //in bodies
 #define        temp(vox) (vox.b)
 #define        volt(vox) (vox.a&0xF)
-#define        trig(vox) (vox.a>>4)
-#define        flow(vox) (vox.a>>4)
+#define        flow(vox) (vox.a>>4) //in world
+#define        trig(vox) (vox.a>>4) //in bodies
 #endif
 
-#define signed_depth(vox) (mat(vox) == 0 ? 1+depth(vox) : -depth(vox))
+#define signed_depth(vox) ((mat(vox) == 0) ? (1+depth(vox)) : (-depth(vox)))
 #define opaque_signed_depth(vox) (opacity(mat(vox)) == 1 ? 1+depth(vox) : -depth(vox))
 
-#define permaterial(vox) (mat(vox)*(1-transient(vox)))
+#define solidity(vox) ((mat(vox)==0?0:1|(phase(vox)==phase_solid||phase(vox)==phase_sand ? 2:0))*(1-transient(vox)))
 
 #define MAX_DEPTH 32
 #define SURF_DEPTH 16
@@ -48,6 +49,8 @@
 #define act_spray     7
 
 #define BASE_CELL_MAT 128
+
+#define room_temp 100
 
 #ifdef MATERIAL_PHYSICAL_PROPERTIES
 float density(uint material_id)

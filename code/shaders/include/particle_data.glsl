@@ -12,6 +12,9 @@ struct particle
     float y_dot;
     float z_dot;
 
+    bool is_visual;
+    bool die_on_collision;
+
     bool alive;
 };
 
@@ -20,6 +23,7 @@ struct particle
 layout(std430, binding = PARTICLE_DATA_BINDING) buffer particle_data
 {
     int n_dead_particles;
+    int n_alive_particles;
     particle particles[N_MAX_PARTICLES];
     uint dead_particles[N_MAX_PARTICLES];
 };

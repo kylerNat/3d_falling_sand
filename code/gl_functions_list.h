@@ -15,6 +15,7 @@ gl_load_operation(void, glBufferStorage, (GLenum target, GLsizei ptrsize, const 
 gl_load_operation(void, glBufferData, (GLenum target, GLsizei ptrsize, const GLvoid * data, GLenum usage));
 gl_load_operation(void, glBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid * data));
 gl_load_operation(void, glGetBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, GLvoid * data));
+gl_load_operation(void, glClearBufferSubData, (GLenum target, GLenum internalformat, GLintptr offset, GLsizeiptr size, GLenum format, GLenum type, const void * data));
 gl_load_operation(void, glBindBuffer, (GLenum target, GLuint buffer));
 gl_load_operation(void, glBindBufferBase, (GLenum target, GLuint index, GLuint buffer));
 gl_load_operation(void, glBindBufferRange, (GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size));

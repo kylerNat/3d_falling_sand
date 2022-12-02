@@ -70,7 +70,7 @@ void main()
         ivec3 size = ivec3(512);
         uvec4 voxel;
         uint medium = texelFetch(materials, ivec3(probe_x), 0).r;
-        bool hit = cast_ray(materials, ray_dir, probe_x, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 24);
+        bool hit = cast_ray(materials, ray_dir, probe_x, size, origin, medium, true, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 24);
 
         vec3 color = vec3(0);
         vec2 depth = vec2(0);
@@ -94,7 +94,7 @@ void main()
                 else ray_dir = ray_dir - 2*c*normal; //total internal reflection
                 // ray_dir = normalize(ray_dir);
                 medium = mat(voxel);
-                bool hit = cast_ray(materials, ray_dir, ray_pos, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 24);
+                bool hit = cast_ray(materials, ray_dir, ray_pos, size, origin, medium, true, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 24);
 
                 if(hit)
                 {

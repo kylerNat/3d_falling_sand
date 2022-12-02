@@ -117,7 +117,7 @@ void main()
     vec3 hit_dir;
     vec3 normal;
     uvec4 voxel;
-    bool hit = cast_ray(materials, ray_dir, pos, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
+    bool hit = cast_ray(materials, ray_dir, pos, size, origin, medium, true, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
     // bool hit = coarse_cast_ray(ray_dir, pos, hit_pos, hit_dist, hit_cell, hit_dir, normal);
     // voxel = texelFetch(materials, hit_cell, 0);
 
@@ -130,19 +130,18 @@ void main()
     for(int b = 0; b < n_bodies; b++)
     {
         if(bodies[b].substantial == 0) continue;
-        ivec3 body_x_origin = ivec3(bodies[b].x_origin_x, bodies[b].x_origin_y, bodies[b].x_origin_z);
-        vec3 body_x_cm = vec3(bodies[b].x_cm_x, bodies[b].x_cm_y, bodies[b].x_cm_z)+vec3(body_x_origin);
+        vec3 body_x_cm = vec3(bodies[b].x_cm_x, bodies[b].x_cm_y, bodies[b].x_cm_z);
         vec3 body_x = vec3(bodies[b].x_x, bodies[b].x_y, bodies[b].x_z);
         vec4 body_orientation = vec4(bodies[b].orientation_r, bodies[b].orientation_x, bodies[b].orientation_y, bodies[b].orientation_z);
-        ivec3 body_size = ivec3(bodies[b].size_x,
-                                bodies[b].size_y,
-                                bodies[b].size_z);
-        ivec3 body_origin = ivec3(bodies[b].materials_origin_x,
-                                  bodies[b].materials_origin_y,
-                                  bodies[b].materials_origin_z);
+        ivec3 body_texture_lower = ivec3(bodies[b].texture_lower_x, bodies[b].texture_lower_y, bodies[b].texture_lower_z);
+        ivec3 body_texture_upper = ivec3(bodies[b].texture_upper_x, bodies[b].texture_upper_y, bodies[b].texture_upper_z);
+        ivec3 body_lower = ivec3(bodies[b].lower_x, bodies[b].lower_y, bodies[b].lower_z);
+        ivec3 body_upper = ivec3(bodies[b].upper_x, bodies[b].upper_y, bodies[b].upper_z);
+        ivec3 body_size = body_upper-body_lower;
+        ivec3 body_origin = body_lower+body_texture_lower;
 
         //ray info in the bodies frame
-        vec3 body_pos = apply_rotation(conjugate(body_orientation), pos-body_x) + body_x_cm;
+        vec3 body_pos = apply_rotation(conjugate(body_orientation), pos-body_x) + body_x_cm - body_lower;
         ivec3 ibody_pos = ivec3(floor(body_pos));
         vec3 body_ray_dir = apply_rotation(conjugate(body_orientation), ray_dir);
 
@@ -162,20 +161,21 @@ void main()
         vec3 body_hit_dir;
         vec3 body_normal;
         uvec4 body_voxel;
-        bool body_hit = cast_ray(body_materials, body_ray_dir, body_pos, body_size, body_origin, 0, body_hit_pos, body_hit_dist, body_hit_cell, body_hit_dir, body_normal, body_voxel, 100);
+        bool body_hit = cast_ray(body_materials, body_ray_dir, body_pos, body_size, body_origin, 0, false, body_hit_pos, body_hit_dist, body_hit_cell, body_hit_dir, body_normal, body_voxel, 100);
         // if(body_hit && (!hit || body_jump_dist+body_hit_dist < hit_dist) && b != 13 && b != 12)
-        if(body_hit && (!hit || body_jump_dist+body_hit_dist < hit_dist))
+        float new_dist = body_jump_dist+body_hit_dist;
+        if(body_hit && (!hit || new_dist < hit_dist))
         {
             hit = true;
-            hit_pos = apply_rotation(body_orientation, body_hit_pos-body_x_cm)+body_x;
-            hit_dist = body_jump_dist+body_hit_dist;
+            hit_pos = apply_rotation(body_orientation, body_hit_pos+body_lower-body_x_cm)+body_x;
+            hit_dist = new_dist;
             hit_cell = body_hit_cell;
             hit_dir = body_hit_dir;
             normal = apply_rotation(body_orientation, body_normal);
             voxel = body_voxel;
             if(voxel.r >= BASE_CELL_MAT) voxel.r += bodies[b].cell_material_id;
             voxel_orientation = body_orientation;
-            voxel_x = apply_rotation(body_orientation, vec3(body_hit_cell)-body_x_cm+0.5)+body_x;
+            voxel_x = apply_rotation(body_orientation, vec3(body_hit_cell+body_lower)-body_x_cm+0.5)+body_x;
         }
     }
 
@@ -189,6 +189,7 @@ void main()
         float initial_transmission = exp(-opacity(mat(medium))*hit_dist);
 
         voxel_data = voxel;
+
         gl_FragDepth = 1.0f/total_dist;
 
         for(int i = 0; i < 5; i++)
@@ -203,7 +204,7 @@ void main()
             else ray_dir = ray_dir - 2*c*normal; //total internal reflection
             // ray_dir = normalize(ray_dir);
             medium = mat(voxel);
-            bool hit = cast_ray(materials, ray_dir, ray_pos, size, origin, medium, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
+            bool hit = cast_ray(materials, ray_dir, ray_pos, size, origin, medium, true, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
 
             if(hit)
             {

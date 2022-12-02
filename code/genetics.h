@@ -58,7 +58,7 @@ struct form_endpoint
 struct gpu_form_data
 {
     int_3 materials_origin;
-    bounding_box bounds;
+    bounding_box material_bounds;
 
     int_3 x_origin;
 
@@ -430,6 +430,7 @@ struct genedit_window
     real_3 extrude_counter;
 
     int drag_key;
+    int active_cell_material;
     int active_material;
 };
 
@@ -521,7 +522,7 @@ bool set_form_cell(memory_manager* manager, cuboid_space* form_space, genome* g,
 {
     cpu_form_data* form_cpu = &g->forms_cpu[form_id];
     gpu_form_data* form_gpu = &g->forms_gpu[form_id];
-    if(material == 0 && form_gpu->bounds.u-form_gpu->bounds.l == (int_3){1,1,1} && *pos == form_gpu->bounds.l)
+    if(material == 0 && form_gpu->material_bounds.u-form_gpu->material_bounds.l == (int_3){1,1,1} && *pos == form_gpu->material_bounds.l)
     {
         delete_form(g, form_id);
         return false;
@@ -551,7 +552,7 @@ bool set_form_cell(memory_manager* manager, cuboid_space* form_space, genome* g,
     assert(index < form_cpu->storage_size.x*form_cpu->storage_size.y*form_cpu->storage_size.z, "pos: ", *pos, ", size: ", form_cpu->storage_size, "\n");
     int old_material = form_cpu->materials[index];
     form_cpu->materials[index] = material;
-    form_gpu->bounds = expand_to(form_gpu->bounds, *pos);
+    form_gpu->material_bounds = expand_to(form_gpu->material_bounds, *pos);
     return true;
 
     return false;
@@ -590,6 +591,18 @@ void do_edit_window(memory_manager* manager, render_data* ui, user_input* input,
             cell_type* cell = &gew->active_genome->cell_types[c];
             real_2 x_anchor = gew->x + (real_2){0.2, -0.2-1.5*gene_row_spacing};
             x_anchor.y += -c*gene_row_spacing;
+
+            real_2 x_activate = x_anchor;
+            x_activate.x -= 1.5*genode_spacing;
+            real_4 button_color = {0.5,0.5,0.5,1};
+            int cell_material = c+128;
+            real button_radius = genode_radius*1.5;
+            if(is_pressed(M1, input) && normsq(input->mouse-x_activate) < sq(button_radius))
+            {
+                gew->active_cell_material = cell_material;
+            }
+            if(gew->active_cell_material == cell_material) button_color = {1,1,1,1};
+            draw_circle(ui, pad_3(x_activate), button_radius, button_color);
 
             bool inserting = false;
 
@@ -746,8 +759,14 @@ void do_edit_window(memory_manager* manager, render_data* ui, user_input* input,
                 input->active_ui_element = {ui_form_voxel, hit_form_cpu};
                 gew->extrude_counter = {};
                 gew->drag_key = M1;
-                gew->active_material = 128;
+                gew->active_material = gew->active_cell_material;
                 gew->selected_form = gew->active_form;
+
+                if(set_form_cell(manager, form_space, gew->active_genome, gew->active_form, &hit.pos, gew->active_material))
+                {
+                    hit_form_cpu->gpu_data->is_mutating = true;
+                    reload_form_to_gpu(hit_form_cpu, hit_form_cpu->gpu_data);
+                }
             }
             if(is_pressed(M2, input))
             {
@@ -755,6 +774,7 @@ void do_edit_window(memory_manager* manager, render_data* ui, user_input* input,
                 gew->extrude_counter = {};
                 gew->drag_key = M2;
                 gew->active_material = 0;
+                gew->selected_form = gew->active_form;
 
                 if(set_form_cell(manager, form_space, gew->active_genome, gew->active_form, &hit.pos, gew->active_material))
                 {
@@ -799,9 +819,11 @@ void do_edit_window(memory_manager* manager, render_data* ui, user_input* input,
                     int f = gew->active_genome->n_forms++;
                     cpu_form_data* form_cpu = &gew->active_genome->forms_cpu[f];
                     gpu_form_data* form_gpu = &gew->active_genome->forms_gpu[f];
+                    *form_cpu = {};
+                    *form_gpu = {};
                     form_cpu->gpu_data = form_gpu;
                     form_cpu->materials = dynamic_alloc(manager->first_region, total_size);
-                    gew->active_material = 128;
+                    gew->active_material = gew->active_cell_material;
                     for(int i = 0; i < total_size; i++) form_cpu->materials[i] = gew->active_material;
                     // form_cpu->materials[0] = gew->active_material;
                     // int_3 extend_dir = abs_per_axis(hit.dir);
@@ -821,7 +843,7 @@ void do_edit_window(memory_manager* manager, render_data* ui, user_input* input,
                     gew->active_genome->joints[gew->active_genome->n_joints++] = {
                         .type = joint_ball,
                         .form_id = {hit_form_id, f},
-                        .pos = {hit.pos-hit_form_cpu->gpu_data->x_origin, form_gpu->x_origin},
+                        .pos = {hit.pos-hit_form_cpu->gpu_data->x_origin, (int_3){0,0,0}-form_gpu->x_origin},
                     };
 
                     load_form_to_gpu(form_space, form_cpu, form_gpu);

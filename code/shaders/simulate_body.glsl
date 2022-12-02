@@ -17,6 +17,8 @@ layout(location = 3) uniform usampler3D body_materials;
 layout(location = 4, rgba8ui) uniform uimage3D body_materials_out;
 layout(location = 5) uniform usampler3D form_materials;
 layout(location = 6) uniform int n_bodies;
+layout(location = 7) uniform int n_beams;
+layout(location = 8) uniform int n_body_chunks;
 
 #define MATERIAL_PHYSICAL_PROPERTIES
 #include "include/materials_physical.glsl"
@@ -24,6 +26,8 @@ layout(location = 6) uniform int n_bodies;
 #include "include/body_data.glsl"
 #define PARTICLE_DATA_BINDING 1
 #include "include/particle_data.glsl"
+#define BEAM_DATA_BINDING 2
+#include "include/beam_data.glsl"
 
 struct body_chunk
 {
@@ -33,9 +37,8 @@ struct body_chunk
     uint origin_z;
 };
 
-layout(std430, binding = 2) buffer body_chunk_data
+layout(std430, binding = 3) buffer body_chunk_data
 {
-    uint n_body_chunks;
     body_chunk body_chunks[];
 };
 
@@ -53,12 +56,10 @@ void main()
     int bi = int(body_chunks[body_chunk_id].body_id);
     uvec3 origin = uvec3(body_chunks[body_chunk_id].origin_x, body_chunks[body_chunk_id].origin_y, body_chunks[body_chunk_id].origin_z);
 
-    get_body_data(bi);
-
+    int pad = 1;
     ivec3 pos = ivec3(origin+gl_LocalInvocationID);
-    if(any(greaterThan(pos, body_materials_origin+body_size))) return;
-
-    const int padding = 1;
+    // if(any(greaterThan(pos, body_texture_lower(bi)+body_upper(bi)))) return;
+    if(any(greaterThan(pos, body_texture_upper(bi)))) return;
 
     // if(bi == 0 && layer == 0 && gl_VertexID == 0)
     // {
@@ -90,9 +91,9 @@ void main()
     uvec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
     uvec4 b  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
 
-    ivec3 form_pos = pos-body_materials_origin-body_x_origin+body_form_origin;
+    ivec3 form_pos = pos+body_form_origin(bi);
     uint form_voxel = 0;
-    if(all(greaterThanEqual(form_pos, body_form_lower)) && all(lessThan(form_pos, body_form_upper)))
+    if(all(greaterThanEqual(form_pos, body_form_lower(bi))) && all(lessThan(form_pos, body_form_upper(bi))))
         form_voxel = texelFetch(form_materials, form_pos, 0).r;
 
     int spawned_cell = 0;
@@ -103,7 +104,7 @@ void main()
 
     uint mid = mat(c); //material id
     bool is_cell = mid >= BASE_CELL_MAT;
-    if(is_cell) mid += body_cell_material_id;
+    if(is_cell) mid += body_cell_material_id(bi);
 
     for(int i = 0; i < n_triggers(mid); i++)
     {
@@ -173,12 +174,18 @@ void main()
 
     //check if this cell is empty, on the surface, and is filled in the body map
     //then check for neighbors that are trying to grow
-    if(body_is_mutating==1 && mid != form_voxel)
+    if(body_is_mutating(bi)==1 && mid != form_voxel)
     {
         c = uvec4(0);
     }
 
-    if(mid != form_voxel && form_voxel != 0 && depth(c) == 0 && frame_number%growth_time(form_voxel) == 0)
+    vec3 voxel_pos = pos-body_texture_lower(bi)-body_x_cm(bi)+0.5;
+
+    //TODO: seed this in a way that is independent of internal engine variables, use displacement from nucleus or something
+    // int grow_phase = int(length(voxel_pos));
+    uint grow_phase = rand(rand(rand(pos.z)+pos.y)+pos.x);
+
+    if(mid != form_voxel && form_voxel != 0 && depth(c) == 0 && (frame_number+grow_phase)%growth_time(form_voxel) == 0)
     {
         c.r = form_voxel;
     }
@@ -196,7 +203,7 @@ void main()
         if(growing_mat != 0)
         {
             bool is_cell = growing_mat >= BASE_CELL_MAT;
-            if(is_cell) growing_mat += body_cell_material_id;
+            if(is_cell) growing_mat += body_cell_material_id(bi);
 
             uint trigger_data = trigger_info(growing_mat, trig(growing_cell)-1);
             uint condition_type = trigger_data&0xFF;
@@ -210,17 +217,36 @@ void main()
         }
     }
 
-    // c.r = 1;
+    vec3 voxel_x = apply_rotation(body_orientation(bi), voxel_pos)+body_x(bi);
+    //TODO: apply pushback force
+    for(int be = 0; be < n_beams; be++)
+    {
+        vec3 delta = voxel_x-beam_x(be);
+        vec3 dhat = normalize(beam_d(be));
+        float d = clamp(dot(dhat, delta), 0.0, length(beam_d(be)));
+        vec3 nearest_x = d*dhat+beam_x(be);
+        vec3 r = voxel_x-nearest_x;
+        if(dot(r, r) <= sq(beams[be].r))
+        {
+            temp = clamp(temp+100, 0u, 255u);
+        }
+    }
+
+    if(float(temp) > melting_point(mat(c))) c.r = 0;
+    if(float(temp) > boiling_point(mat(c))) c.r = 0;
+
+    if(mat(c) == 0) temp = room_temp;
+
     uvec4 out_voxel = c;
 
     int depth = MAX_DEPTH-1;
-    bool filledness = mat(c) != 0 && transient(c)==0;
-    if(((mat(u) != 0 && transient(u) == 0) != filledness) ||
-       ((mat(d) != 0 && transient(d) == 0) != filledness) ||
-       ((mat(r) != 0 && transient(r) == 0) != filledness) ||
-       ((mat(l) != 0 && transient(l) == 0) != filledness) ||
-       ((mat(f) != 0 && transient(f) == 0) != filledness) ||
-       ((mat(b) != 0 && transient(b) == 0) != filledness)) depth = 0;
+    bool filledness = mat(c) != 0;
+    if(((mat(u) != 0) != filledness) ||
+       ((mat(d) != 0) != filledness) ||
+       ((mat(r) != 0) != filledness) ||
+       ((mat(l) != 0) != filledness) ||
+       ((mat(f) != 0) != filledness) ||
+       ((mat(b) != 0) != filledness)) depth = 0;
     else
     {
         depth = min(depth, depth(u)+1);
@@ -231,7 +257,25 @@ void main()
         depth = min(depth, depth(b)+1);
     }
 
-    out_voxel.g = uint(depth);
+    uint inside = 0;
+    uint outside = 0;
+    for(int z = 0; z < 2; z++)
+        for(int y = 0; y < 2; y++)
+            for(int x = 0; x < 2; x++)
+            {
+                uvec4 vox = texelFetch(body_materials, ivec3(pos.x-x, pos.y-y, pos.z-z), 0);
+                if(mat(vox) != 0)
+                {
+                    inside = 1;
+                }
+                else
+                {
+                    outside = 1;
+                }
+            }
+    uint corner = inside&outside;
+
+    out_voxel.g = uint(depth) | (corner << 7);
     // out_voxel.g = uint(depth) | (phase << 6) | (transient << 7);
 
     out_voxel.b = temp;

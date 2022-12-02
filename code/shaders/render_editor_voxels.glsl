@@ -91,7 +91,7 @@ void main()
         ivec3 form_size = form_upper-form_lower;
         ivec3 form_origin = ivec3(forms[f].materials_origin_x,
                                   forms[f].materials_origin_y,
-                                  forms[f].materials_origin_z);
+                                  forms[f].materials_origin_z)+form_lower;
 
         //ray info in the forms frame
         vec3 form_pos = apply_rotation(conjugate(form_orientation), pos-form_x) + form_x_origin - form_lower;
@@ -99,6 +99,7 @@ void main()
         vec3 form_ray_dir = apply_rotation(conjugate(form_orientation), ray_dir);
 
         float form_jump_dist = 0.0;
+        //NOTE optimization: could probably reorder this for better superscalaring ie. max(max(),max()) instead of max(max(max()))
         if(iform_pos.x < 0            && form_ray_dir.x > 0) form_jump_dist = max(form_jump_dist, epsilon+(-form_pos.x)/(form_ray_dir.x));
         if(iform_pos.x >= form_size.x && form_ray_dir.x < 0) form_jump_dist = max(form_jump_dist, epsilon+(form_size.x-form_pos.x)/(form_ray_dir.x));
         if(iform_pos.y < 0            && form_ray_dir.y > 0) form_jump_dist = max(form_jump_dist, epsilon+(-form_pos.y)/(form_ray_dir.y));
@@ -114,7 +115,7 @@ void main()
         vec3 form_hit_dir;
         vec3 form_normal;
         uvec4 form_voxel;
-        bool form_hit = cast_ray(form_materials, form_ray_dir, form_pos, form_size, form_origin+form_lower, 0, form_hit_pos, form_hit_dist, form_hit_cell, form_hit_dir, form_normal, form_voxel, 100);
+        bool form_hit = cast_ray(form_materials, form_ray_dir, form_pos, form_size, form_origin, 0, false, form_hit_pos, form_hit_dist, form_hit_cell, form_hit_dir, form_normal, form_voxel, 100);
         // if(form_hit && (!hit || form_jump_dist+form_hit_dist < hit_dist) && b != 13 && b != 12)
         if(form_hit && (!hit || form_jump_dist+form_hit_dist < hit_dist))
         {

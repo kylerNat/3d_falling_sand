@@ -45,19 +45,24 @@ void main()
     x_dot.z -= 0.1;
     int i = 0;
     uint transient = 1;
-    while(mat(texelFetch(materials, ivec3(x), 0)) != 0)
-    {
-        vec3 normal = normalize(unnormalized_gradient(materials, ivec3(x)));
-        // x += max(0.1f, float(SURF_DEPTH-depth(voxel)))*normal;
-        x += 0.05f*normal;
-        x_dot -= dot(x_dot, normal)*normal;
-
-        transient = 0;
-        if(i++ > 50)
+    uvec4 vox = texelFetch(materials, ivec3(x), 0);
+    if(!particles[p].die_on_collision)
+        while(mat(vox) != 0)
         {
-            break;
+            vec3 normal = normalize(unnormalized_gradient(materials, ivec3(x)));
+            if(phase(vox) == phase_liquid) normal = vec3(0,0,1);
+            if(phase(vox) == phase_gas) normal = vec3(0,0,-1);
+            // vec3 normal = vec3(0,0,1);
+            // x += max(0.1f, float(SURF_DEPTH-depth(voxel)))*normal;
+            x += 0.05f*normal;
+            x_dot -= min(dot(x_dot, normal), 0)*normal;
+
+            transient = 0;
+            if(i++ > 50)
+            {
+                break;
+            }
         }
-    }
 
     particles[p].x = x.x;
     particles[p].y = x.y;
@@ -67,7 +72,7 @@ void main()
     particles[p].y_dot = x_dot.y;
     particles[p].z_dot = x_dot.z;
 
-    if(transient == 0 && mat(texelFetch(materials, ivec3(x), 0)) == 0)
+    if(!particles[p].is_visual && transient == 0 && mat(texelFetch(materials, ivec3(x), 0)) == 0)
     {
         uint v = particles[p].voxel_data;
         uvec4 particle_voxel_data = uvec4((v&0xF), ((v>>8)&0x7)|(transient<<7), ((v>>16)&0xF), ((v>>24)&0xF)|7);
@@ -85,5 +90,13 @@ void main()
         particles[p].alive = false;
         int dead_index = atomicAdd(n_dead_particles, 1);
         dead_particles[dead_index] = p;
+        return;
+    }
+    if(any(lessThan(x, vec3(0))) || any(greaterThanEqual(x, vec3(512))) || (particles[p].die_on_collision && mat(vox) != 0))
+    {
+        particles[p].alive = false;
+        int dead_index = atomicAdd(n_dead_particles, 1);
+        dead_particles[dead_index] = p;
+        return;
     }
 }

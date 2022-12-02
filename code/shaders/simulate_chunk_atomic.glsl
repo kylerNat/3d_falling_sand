@@ -16,9 +16,17 @@ layout(location = 4) uniform usampler3D active_regions_in;
 layout(location = 5) uniform writeonly uimage3D active_regions_out;
 layout(location = 6) uniform writeonly uimage3D occupied_regions_out;
 layout(location = 7) uniform int update_cells;
+layout(location = 8) uniform int n_explosions;
+layout(location = 9) uniform int n_beams;
 
 #define MATERIAL_PHYSICAL_PROPERTIES
 #include "include/materials_physical.glsl"
+
+#include "include/particle_data.glsl"
+#define EXPLOSION_DATA_BINDING 1
+#include "include/explosion_data.glsl"
+#define BEAM_DATA_BINDING 2
+#include "include/beam_data.glsl"
 
 uint rand(uint seed)
 {
@@ -55,6 +63,7 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
     if(cell_p == ivec3(0,0,0)) imageStore(occupied_regions_out, rpos, uvec4(0,0,0,0));
 
     uvec4 c  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z),0);
+    uvec4 old_voxel  = c;
 
     //+,0,-,0
     //0,+,0,-
@@ -81,6 +90,12 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
     uvec4 dr = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z-1),0);
     uvec4 ur = texelFetch(materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z+1),0);
 
+    uvec4 df = texelFetch(materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z-1),0);
+    uvec4 db = texelFetch(materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z-1),0);
+
+    uvec4 ldf = texelFetch(materials, ivec3(pl.x-dir.y, pl.y+dir.x, pl.z-1),0);
+    uvec4 ldb = texelFetch(materials, ivec3(pl.x+dir.y, pl.y-dir.x, pl.z-1),0);
+
     uvec4 ul = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z+1),0);
     uvec4 ll = texelFetch(materials, ivec3(pos.x-2*dir.x, pos.y-2*dir.y, pos.z),0);
     uvec4 dl = texelFetch(materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z-1),0);
@@ -99,7 +114,7 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
                 c = u;
             else if(mat(ul) != 0 && mat(l) != 0 && mat(u) == 0 && phase(ul) >= phase_sand && flow(ul) == flow && transient(ul)==0)
                 c = ul;
-            else if(mat(l) != 0 && mat(dl) != 0 && mat(d) != 0 && (phase(d) >= phase_liquid || phase(dl) >= phase_liquid) && phase(l) == phase_liquid && flow(l) == flow && transient(l)==0)
+            else if(mat(l) != 0 && mat(dl) != 0 && mat(d) != 0 && mat(ldf) != 0 && mat(ldb) != 0 && (phase(d) >= phase_liquid || phase(dl) >= phase_liquid) && phase(l) == phase_liquid && flow(l) == flow && transient(l)==0)
                 c = l;
             else if(mat(d) != 0 && phase(d) == phase_gas && transient(d)==0)
                 c = d;
@@ -110,7 +125,8 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
             else
             {
                 // flow = rand(rand(rand(frame_number+pos.x+pos.y+pos.z)))%4;
-                flow = (frame_number)%4;
+                // flow = (frame_number)%4;
+                flow = rand(871841735+frame_number)%4;
 
                 for(int f = 0; f < 4; f++)
                 {
@@ -143,10 +159,10 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
             bool fall_allowed = (pos.z > 0 && (mat(d) == 0 || (mat(dr) == 0 && mat(r) == 0 && flow(dr) == flow)) && phase(c) >= phase_sand);
             bool flow_allowed = (pos.z > 0 && mat(r) == 0
                                  && (mat(ur) == 0 || phase(ur) < phase_sand || flow(ur) != flow)
+                                 && mat(df) != 0 && mat(db) != 0
                                  && (mat(u) == 0 || phase(u) < phase_sand)
                                  && (phase(dr) >= phase_liquid || phase(d) >= phase_liquid) && phase(c) == phase_liquid && flow(r) == flow);
 
-            //TODO: check for other higher priority motions, in addition to uu falling
             bool float_allowed = (pos.z < 511 && (mat(u) == 0 || (mat(ur) == 0 && mat(r) == 0 && flow(ur) == flow)) && phase(c) == phase_gas && (mat(uu) == 0 || (phase(uu) <= phase_solid)));
 
             bool gas_flow_allowed = (pos.z > 0 && mat(r) == 0
@@ -158,7 +174,6 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
             if(fall_allowed || flow_allowed || float_allowed || gas_flow_allowed) c = uvec4(0);
             else
             {
-                // flow = rand(rand(rand(frame_number)))%4;
                 for(int f = 0; f < 4; f++)
                 {
                     uint fl = (f+flow)%4;
@@ -187,13 +202,13 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
     }
 
     int depth = MAX_DEPTH-1;
-    uint permaterial = permaterial(c);
-    if((permaterial(u) != permaterial) ||
-       (permaterial(d) != permaterial) ||
-       (permaterial(r) != permaterial) ||
-       (permaterial(l) != permaterial) ||
-       (permaterial(f) != permaterial) ||
-       (permaterial(b) != permaterial)) depth = 0;
+    uint solidity = solidity(c);
+    if((solidity(u) != solidity) ||
+       (solidity(d) != solidity) ||
+       (solidity(r) != solidity) ||
+       (solidity(l) != solidity) ||
+       (solidity(f) != solidity) ||
+       (solidity(b) != solidity)) depth = 0;
     else
     {
         depth = min(depth, depth(u)+1);
@@ -263,7 +278,7 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
         // if(avg_temp.x > float(temp)) temp++;
         // else if(avg_temp.x < float(temp)) temp--;
     }
-    else temp = 100;
+    else temp = room_temp;
 
     // temp = clamp(temp+abs((volt-int(volt(c)))), 0u, 255u);
     temp = clamp(temp+volt, 0u, 255u);
@@ -291,20 +306,65 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
 
     out_voxel.a = volt | (flow<<4);
 
-    // bool changed = c.r != (out_voxel&0xFF) || c.g != ((out_voxel>>8)&0xFF) || (int(c.b) != int((out_voxel>>16)&0xFF) && ((out_voxel>>16)>128)) || volt != volt(c) || volt > 0;
-    bool changed = c.r != out_voxel.r || c.g != out_voxel.g || (int(c.b) != int(out_voxel.b) && out_voxel.b > 128) || volt != volt(c) || volt > 0;
+    vec3 voxel_x = (vec3(pos)+0.5);
+    for(int e = 0; e < n_explosions; e++)
+    {
+        vec3 r = voxel_x-explosion_x(e);
+        if(dot(r, r) <= sq(explosions[e].r))
+        {
+            if(mat(out_voxel) != 0)
+            {
+                int dead_index = atomicAdd(n_dead_particles, -1)-1;
+                //this assumes particle creation and destruction never happen simutaneously
+                uint p = dead_particles[dead_index];
+                particles[p].voxel_data = out_voxel.r|out_voxel.g<<8|out_voxel.b<<16|out_voxel.a<<24;
+                particles[p].x = voxel_x.x;
+                particles[p].y = voxel_x.y;
+                particles[p].z = voxel_x.z;
+                // vec3 x_dot = normalize(unnormalized_gradient(materials, pos));
+                vec3 x_dot = 2*r/explosions[e].r;
+                particles[p].x_dot = x_dot.x;
+                particles[p].y_dot = x_dot.y;
+                particles[p].z_dot = x_dot.z;
+                particles[p].is_visual = true;
+                particles[p].die_on_collision = true;
+                particles[p].alive = true;
+            }
+
+            out_voxel = uvec4(0);
+        }
+        else if(dot(r, r) <= sq(explosions[e].r+1))
+        {
+            out_voxel.b = clamp(out_voxel.b+100, 0u, 255u);
+        }
+    }
+
+    for(int be = 0; be < n_beams; be++)
+    {
+        vec3 delta = voxel_x-beam_x(be);
+        vec3 dhat = normalize(beam_d(be));
+        float d = clamp(dot(dhat, delta), 0.0, length(beam_d(be)));
+        vec3 nearest_x = d*dhat+beam_x(be);
+        vec3 r = voxel_x-nearest_x;
+        if(dot(r, r) <= sq(beams[be].r))
+        {
+            out_voxel.b = clamp(out_voxel.b+100, 0u, 255u);
+        }
+    }
+
+    bool changed = old_voxel.r != out_voxel.r || old_voxel.g != out_voxel.g || (int(old_voxel.b) != int(out_voxel.b) && out_voxel.b > 128) || out_voxel.b > 130 || volt != volt(old_voxel) || volt > 0;
     if(changed)
     {
         c_active = true;
-        u_active = u_active || cell_p.z==15;
-        d_active = d_active || cell_p.z== 0;
-        r_active = r_active || cell_p.y==15;
-        l_active = l_active || cell_p.y== 0;
-        f_active = f_active || cell_p.x==15;
-        b_active = b_active || cell_p.x== 0;
+        u_active = u_active || cell_p.z>=15;
+        d_active = d_active || cell_p.z<= 0;
+        r_active = r_active || cell_p.y>=15;
+        l_active = l_active || cell_p.y<= 0;
+        f_active = f_active || cell_p.x>=15;
+        b_active = b_active || cell_p.x<= 0;
     }
 
-    if(c != 0) imageStore(occupied_regions_out, ivec3(pos.x/16, pos.y/16, pos.z/16), uvec4(1,0,0,0));
+    if(out_voxel.r != 0) imageStore(occupied_regions_out, ivec3(pos.x/16, pos.y/16, pos.z/16), uvec4(1,0,0,0));
 
     // memoryBarrier();
     imageStore(materials_out, pos, out_voxel);
@@ -326,11 +386,11 @@ void main()
             for(int z = 0; z < subgroup_size; z++)
                 simulate_voxel(pos+ivec3(x,y,z), rpos);
 
-    if(c_active) imageStore(active_regions_out, ivec3(rpos.x, rpos.y, rpos.z), uvec4(1,0,0,0));
+    if(c_active) imageStore(active_regions_out, ivec3(rpos.x, rpos.y, rpos.z),   uvec4(1,0,0,0));
     if(u_active) imageStore(active_regions_out, ivec3(rpos.x, rpos.y, rpos.z+1), uvec4(1,0,0,0));
     if(d_active) imageStore(active_regions_out, ivec3(rpos.x, rpos.y, rpos.z-1), uvec4(1,0,0,0));
-    if(l_active) imageStore(active_regions_out, ivec3(rpos.x, rpos.y+1, rpos.z), uvec4(1,0,0,0));
-    if(r_active) imageStore(active_regions_out, ivec3(rpos.x, rpos.y-1, rpos.z), uvec4(1,0,0,0));
+    if(r_active) imageStore(active_regions_out, ivec3(rpos.x, rpos.y+1, rpos.z), uvec4(1,0,0,0));
+    if(l_active) imageStore(active_regions_out, ivec3(rpos.x, rpos.y-1, rpos.z), uvec4(1,0,0,0));
     if(f_active) imageStore(active_regions_out, ivec3(rpos.x+1, rpos.y, rpos.z), uvec4(1,0,0,0));
     if(b_active) imageStore(active_regions_out, ivec3(rpos.x-1, rpos.y, rpos.z), uvec4(1,0,0,0));
 }

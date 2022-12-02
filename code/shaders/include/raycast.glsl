@@ -1,6 +1,6 @@
 int n_texture_reads = 0;
 
-bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, ivec3 origin, uint medium, out vec3 pos, out float hit_dist, out ivec3 hit_cell, out vec3 hit_dir, out vec3 normal, out uvec4 hit_voxel, int max_iterations)
+bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, ivec3 origin, uint medium, bool use_depth, out vec3 pos, out float hit_dist, out ivec3 hit_cell, out vec3 hit_dir, out vec3 normal, out uvec4 hit_voxel, int max_iterations)
 {
 
     pos = ray_origin;
@@ -66,17 +66,20 @@ bool cast_ray(isampler3D materials, vec3 ray_dir, vec3 ray_origin, ivec3 size, i
             }
 
             #ifndef RAY_CAST_IGNORE_DEPTH
-            int depth = depth(voxel);
-            if(depth >= 3
-               // #ifdef ACTIVE_REGIONS
-               // && texelFetch(active_regions, ipos>>4, 0).r == 0
-               // #endif //ACTIVE_REGIONS
-                )
+            if(use_depth)
             {
-                float skip_dist = (depth-2)/dot(ray_dir,ray_sign);
-                pos += ray_dir*skip_dist;
-                hit_dist += skip_dist;
-                ipos = ivec3(pos);
+                int depth = depth(voxel);
+                if(depth >= 3
+                   // #ifdef ACTIVE_REGIONS
+                   // && texelFetch(active_regions, ipos>>4, 0).r == 0
+                   // #endif //ACTIVE_REGIONS
+                    )
+                {
+                    float skip_dist = (depth-2)/dot(ray_dir,ray_sign);
+                    pos += ray_dir*skip_dist;
+                    hit_dist += skip_dist;
+                    ipos = ivec3(pos);
+                }
             }
             #endif
 

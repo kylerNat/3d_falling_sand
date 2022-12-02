@@ -18,6 +18,10 @@ layout(location = 3) uniform int n_joints;
 #define MATERIAL_PHYSICAL_PROPERTIES
 #include "include/materials_physical.glsl"
 
+#include "include/body_data.glsl"
+#define BODY_UPDATE_DATA_BINDING 1
+#include "include/body_update_data.glsl"
+#define BODY_JOINT_DATA_BINDING 2
 #include "include/body_joint_data.glsl"
 
 void main()
@@ -43,4 +47,40 @@ void main()
 
     imageStore(body_materials, p0, v0_out);
     imageStore(body_materials, p1, v1_out);
+
+    if(mat(v0_out) != 0)
+    {
+        int b0 = joints[j].body_index_0;
+        int b1 = joints[j].body_index_1;
+        ivec3 texture_lower0 = ivec3(bodies[b0].texture_lower_x, bodies[b0].texture_lower_y, bodies[b0].texture_lower_z);
+        ivec3 texture_lower1 = ivec3(bodies[b1].texture_lower_x, bodies[b1].texture_lower_y, bodies[b1].texture_lower_z);
+        ivec3 texture_upper0 = ivec3(bodies[b0].texture_upper_x, bodies[b0].texture_upper_y, bodies[b0].texture_upper_z);
+        ivec3 texture_upper1 = ivec3(bodies[b1].texture_upper_x, bodies[b1].texture_upper_y, bodies[b1].texture_upper_z);
+        ivec3 lower0 = ivec3(bodies[b0].lower_x, bodies[b0].lower_y, bodies[b0].lower_z);
+        ivec3 lower1 = ivec3(bodies[b1].lower_x, bodies[b1].lower_y, bodies[b1].lower_z);
+        ivec3 upper0 = ivec3(bodies[b0].upper_x, bodies[b0].upper_y, bodies[b0].upper_z);
+        ivec3 upper1 = ivec3(bodies[b1].upper_x, bodies[b1].upper_y, bodies[b1].upper_z);
+
+        if(all(equal(upper0-lower0, ivec3(0)))) lower0 = p0-texture_lower0;
+        else                                    lower0 = min(lower0, p0-texture_lower0);
+        upper0 = max(upper0, p0-texture_lower0+1);
+
+        if(all(equal(upper1-lower1, ivec3(0)))) lower1 = p1-texture_lower1;
+        else                                    lower1 = min(lower1, p1-texture_lower1);
+        upper1 = max(upper1, p1-texture_lower1+1);
+
+        bodies[b0].lower_x = lower0.x;
+        bodies[b0].lower_y = lower0.y;
+        bodies[b0].lower_z = lower0.z;
+        bodies[b0].upper_x = upper0.x;
+        bodies[b0].upper_y = upper0.y;
+        bodies[b0].upper_z = upper0.z;
+
+        bodies[b1].lower_x = lower1.x;
+        bodies[b1].lower_y = lower1.y;
+        bodies[b1].lower_z = lower1.z;
+        bodies[b1].upper_x = upper1.x;
+        bodies[b1].upper_y = upper1.y;
+        bodies[b1].upper_z = upper1.z;
+    }
 }

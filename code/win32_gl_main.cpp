@@ -601,11 +601,15 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .body_table = (index_table_entry*) permalloc_clear(manager, sizeof(index_table_entry)*n_max_bodies),
         .n_max_bodies = n_max_bodies,
         .next_body_id = 1,
+        //TODO: real max limits
         .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, 4096*sizeof(cpu_body_data)),
         .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, 4096*sizeof(gpu_body_data)),
         .n_bodies = 0,
         .joints = (body_joint*) permalloc_clear(manager, 4096*sizeof(body_joint)),
         .n_joints = 0,
+
+        .contacts = (contact_point*) permalloc_clear(manager, 128*1024*sizeof(contact_point)),
+        .n_contacts = 0,
 
         .brain_table = (index_table_entry*) permalloc_clear(manager, sizeof(index_table_entry)*n_max_brains),
         .n_max_brains = n_max_brains,
@@ -639,6 +643,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             .gizmo_x = {.r = 5, .color = {1,0,0,1},},
             .gizmo_y = {.r = 5, .color = {0,1,0,1},},
             .gizmo_z = {.r = 5, .color = {0,0,1,1},},
+
+            .active_cell_material = 128,
         },
 
         .form_space = {
@@ -653,8 +659,16 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             .n_free_regions = 0,
         },
 
+        .explosions = (explosion_data*) permalloc_clear(manager, 4096*sizeof(explosion_data)),
+        .n_explosions = 0,
+
+        .beams = (beam_data*) permalloc_clear(manager, 4096*sizeof(beam_data)),
+        .n_beams = 0,
+
         .c = (chunk*) permalloc(manager, 8*sizeof(chunk)),
         .chunk_lookup = {},
+
+        .collision_grid = (collision_cell*) permalloc_clear(manager, sizeof(collision_cell)*collision_cells_per_axis*collision_cells_per_axis*collision_cells_per_axis),
     };
 
     w.form_space.free_regions[w.form_space.n_free_regions++] = {{0,0,0}, {form_texture_size, form_texture_size, form_texture_size}};
@@ -773,11 +787,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     for(int i = 0; i < 3; i++)
     {
         int b = new_body_index(&w);
-        w.bodies_gpu[b].size = {12,12,12};
-        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
-        w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
-        w.bodies_gpu[b].x_origin = int_cast(0.5*real_cast(w.bodies_gpu[b].size));
-        w.bodies_gpu[b].x_cm -= real_cast(w.bodies_gpu[b].x_origin);
+        int_3 unpadded_size = {12,12,12};
+        int_3 size = unpadded_size+(int_3){4,2,2};
+        w.bodies_gpu[b].material_bounds = {{0,0,0}, size};
+        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, size.x*size.y*size.z*sizeof(uint8));
+        w.bodies_gpu[b].x_cm = 0.5*real_cast(unpadded_size);
+        w.bodies_gpu[b].form_offset = {0,0,0};
         w.bodies_gpu[b].x = {chunk_size*3/4-5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
         // w.bodies_gpu[b].omega = {0.0,-0.5,0.0};
@@ -787,6 +802,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.bodies_gpu[b].m = 1.0;
         w.bodies_cpu[b].I = real_identity_3(10.0);
 
+        w.bodies_cpu[b].genome_id = 0;
+
         w.bodies_gpu[b].substantial = true;
 
         real half_angle = 0.5*(pi/4);
@@ -794,18 +811,18 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
         // w.b->orientation = w.b->orientation*rotation;
 
-        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
-            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
-                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+        for(int z = 0; z < unpadded_size.z; z++)
+            for(int y = 0; y < unpadded_size.y; y++)
+                for(int x = 0; x < unpadded_size.x; x++)
                 {
-                    bool x_middle = x >= w.bodies_gpu[b].size.x/3 && x < w.bodies_gpu[b].size.x*2/3;
-                    bool y_middle = y >= w.bodies_gpu[b].size.x/3 && y < w.bodies_gpu[b].size.x*2/3;
-                    bool z_middle = z >= w.bodies_gpu[b].size.x/3 && z < w.bodies_gpu[b].size.x*2/3;
+                    bool x_middle = x >= unpadded_size.x/3 && x < unpadded_size.x*2/3;
+                    bool y_middle = y >= unpadded_size.x/3 && y < unpadded_size.x*2/3;
+                    bool z_middle = z >= unpadded_size.x/3 && z < unpadded_size.x*2/3;
 
                     // int material = 2;
-                    // if((x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu[b].size.z-1)) material = 1;
-                    // if((x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu[b].size.x-1)) material = 1;
-                    // if((x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu[b].size.y-1)) material = 1;
+                    // if((x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu[b].unpadded_size.z-1)) material = 1;
+                    // if((x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu[b].unpadded_size.x-1)) material = 1;
+                    // if((x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu[b].unpadded_size.y-1)) material = 1;
                     // if(x_middle && y_middle) material = 0;
                     // if(y_middle && z_middle) material = 0;
                     // if(z_middle && x_middle) material = 0;
@@ -814,13 +831,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     if(x_middle && y_middle) material = 3;
                     if(y_middle && z_middle) material = 3;
                     if(z_middle && x_middle) material = 3;
-                    if(material == 3 && (x+y+z)%2==0 && (z <= 0 || z >= w.bodies_gpu[b].size.z-1)) material = 1;
-                    if(material == 3 && (x+y+z)%2==0 && (x <= 0 || x >= w.bodies_gpu[b].size.x-1)) material = 1;
-                    if(material == 3 && (x+y+z)%2==0 && (y <= 0 || y >= w.bodies_gpu[b].size.y-1)) material = 1;
+                    if(material == 3 && (x+y+z)%2==0 && (z <= 0 || z >= unpadded_size.z-1)) material = 1;
+                    if(material == 3 && (x+y+z)%2==0 && (x <= 0 || x >= unpadded_size.x-1)) material = 1;
+                    if(material == 3 && (x+y+z)%2==0 && (y <= 0 || y >= unpadded_size.y-1)) material = 1;
 
                     // if(abs(y - 12) > 2 || abs(x - 12) > 2) material = 0;
 
-                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+                    w.bodies_cpu[b].materials[index_3D({x,y,z}, size)] = material;
                 }
     }
 
@@ -943,11 +960,11 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     {
         int b = new_body_index(&w);
-        w.bodies_gpu[b].size = {20,10,5};
-        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y*w.bodies_gpu[b].size.z*sizeof(uint8));
-        w.bodies_gpu[b].x_cm = 0.5*real_cast(w.bodies_gpu[b].size);
-        w.bodies_gpu[b].x_origin = int_cast(0.5*real_cast(w.bodies_gpu[b].size));
-        w.bodies_gpu[b].x_cm -= real_cast(w.bodies_gpu[b].x_origin);
+        int_3 size = {20,10,5};
+        w.bodies_gpu[b].material_bounds = {{0,0,0}, size};
+        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, size.x*size.y*size.z*sizeof(uint8));
+        w.bodies_gpu[b].x_cm = 0.5*real_cast(size);
+        w.bodies_gpu[b].form_offset = {0,0,0};
         w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
@@ -956,6 +973,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         w.bodies_gpu[b].m = 0.0;
         w.bodies_cpu[b].I = {};
 
+        w.bodies_cpu[b].genome_id = 0;
+
         w.bodies_gpu[b].substantial = true;
 
         real half_angle = 0.5*(pi/4);
@@ -963,12 +982,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         quaternion rotation = (quaternion){cos(half_angle), sin(half_angle)*axis.x, sin(half_angle)*axis.y, sin(half_angle)*axis.z};
         // w.b->orientation = w.b->orientation*rotation;
 
-        for(int z = 0; z < w.bodies_gpu[b].size.z; z++)
-            for(int y = 0; y < w.bodies_gpu[b].size.y; y++)
-                for(int x = 0; x < w.bodies_gpu[b].size.x; x++)
+        for(int z = 0; z < size.z; z++)
+            for(int y = 0; y < size.y; y++)
+                for(int x = 0; x < size.x; x++)
                 {
                     int material = 3;
-                    w.bodies_cpu[b].materials[x+y*w.bodies_gpu[b].size.x+z*w.bodies_gpu[b].size.x*w.bodies_gpu[b].size.y] = material;
+                    w.bodies_cpu[b].materials[x+y*size.x+z*size.x*size.y] = material;
                     real m = 0.001;
                     w.bodies_gpu[b].m += m;
 
@@ -1063,11 +1082,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         cpu_body_data* body_cpu = &w.bodies_cpu[b];
         gpu_body_data* body_gpu = &w.bodies_gpu[b];
 
-        // int_3 pos = body_cpu->texture_region.l;
-        // int_3 size = body_cpu->texture_region.u-body_cpu->texture_region.l;
-
-        int_3 pos = body_cpu->texture_region.l+body_gpu->x_origin;
-        int_3 size = body_cpu->texture_region.u-body_cpu->texture_region.l-(int_3){2,2,2};
+        int_3 pos = body_gpu->texture_region.l+(int_3){1,1,1};
+        int_3 size = body_gpu->texture_region.u-body_gpu->texture_region.l-(int_3){2,2,2};
 
         uint8_4 materials_data = {128,0,0,0};
 
@@ -1099,8 +1115,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                             body_cpu->I[i][j] += -m*r[i]*r[j];
                 }
 
-        body_gpu->materials_origin = pos;
-        body_gpu->size = size;
+        body_gpu->material_bounds = {{1,1,1}, size+(int_3){1,1,1}};
 
         body_gpu->substantial = true;
     }
@@ -1139,11 +1154,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     {
         w.bodies_gpu[b].x = {chunk_size/2+45.1*(1+b*1.0/w.n_bodies), chunk_size/2+45.1, 42.1};
         w.bodies_cpu[b].invI = inverse(w.bodies_cpu[b].I);
-        update_inertia(&w.bodies_cpu[b], &w.bodies_gpu[b]);
 
-        w.bodies_cpu[b].contact_depths[0] = 16.0f;
-        w.bodies_cpu[b].contact_depths[1] = 16.0f;
-        w.bodies_cpu[b].contact_depths[2] = 16.0f;
+        w.bodies_gpu[b].old_x = w.bodies_gpu[b].x;
+        w.bodies_gpu[b].old_orientation = w.bodies_gpu[b].orientation;
+        update_inertia(&w.bodies_cpu[b], &w.bodies_gpu[b]);
 
         load_body_to_gpu(&w.body_space, &w.bodies_cpu[b], &w.bodies_gpu[b]);
     }
@@ -1300,6 +1314,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     bool show_fps = true;
     real smoothed_frame_time = 1.0;
 
+    bool step_mode = false;
+
     real Deltat = 0;
     //TODO: make render loop evenly sample inputs when vsynced
     while(update_window(&wnd))
@@ -1342,13 +1358,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
             // if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
 
-            simulate_particles();
-
-            // simulate_chunk(w.c, 1);
-            // for(int i = 0 ; i < 8; i++)
-            //     simulate_chunk(w.c, 0);
-            if(!is_down('Z', &wnd.input)) simulate_chunk_atomic(w.c, 1);
-            // if(is_pressed('Z', &wnd.input)) simulate_chunk(w.c, 1);
+            step_mode = step_mode != is_pressed(VK_OEM_COMMA, &wnd.input);
+            if(step_mode ? is_pressed('Z', &wnd.input) : !is_down('Z', &wnd.input))
+            {
+                simulate_particles();
+                update_beams(&w);
+                simulate_chunk_atomic(&w, 1);
+            }
 
             if(is_pressed('P', &wnd.input)) do_draw_lightprobes = !do_draw_lightprobes;
             if(is_pressed(VK_OEM_3, &wnd.input)) show_fps = !show_fps;
@@ -1443,6 +1459,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         glClear(GL_DEPTH_BUFFER_BIT);
         draw_particles(rd.camera);
+
+        draw_beams(rd.camera, rd.camera_axes, &w);
 
         // draw_circles(ground_circles, n_ground_circles, rd.camera);
 
