@@ -45,6 +45,10 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
 
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+#include "imgui_impl_opengl3.h"
+
 #undef assert
 
 #include <maths/maths.h>
@@ -236,8 +240,129 @@ void fullscreen(window_t wnd)
     }
 }
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+// There is no distinct VK_xxx for keypad enter, instead it is VK_RETURN + KF_EXTENDED, we assign it an arbitrary value to make code more readable (VK_ codes go up to 255)
+#define IM_VK_KEYPAD_ENTER      (VK_RETURN + 256)
+
+// Map VK_xxx to ImGuiKey_xxx.
+static ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
+{
+    switch (wParam)
+    {
+        case VK_TAB: return ImGuiKey_Tab;
+        case VK_LEFT: return ImGuiKey_LeftArrow;
+        case VK_RIGHT: return ImGuiKey_RightArrow;
+        case VK_UP: return ImGuiKey_UpArrow;
+        case VK_DOWN: return ImGuiKey_DownArrow;
+        case VK_PRIOR: return ImGuiKey_PageUp;
+        case VK_NEXT: return ImGuiKey_PageDown;
+        case VK_HOME: return ImGuiKey_Home;
+        case VK_END: return ImGuiKey_End;
+        case VK_INSERT: return ImGuiKey_Insert;
+        case VK_DELETE: return ImGuiKey_Delete;
+        case VK_BACK: return ImGuiKey_Backspace;
+        case VK_SPACE: return ImGuiKey_Space;
+        case VK_RETURN: return ImGuiKey_Enter;
+        case VK_ESCAPE: return ImGuiKey_Escape;
+        case VK_OEM_7: return ImGuiKey_Apostrophe;
+        case VK_OEM_COMMA: return ImGuiKey_Comma;
+        case VK_OEM_MINUS: return ImGuiKey_Minus;
+        case VK_OEM_PERIOD: return ImGuiKey_Period;
+        case VK_OEM_2: return ImGuiKey_Slash;
+        case VK_OEM_1: return ImGuiKey_Semicolon;
+        case VK_OEM_PLUS: return ImGuiKey_Equal;
+        case VK_OEM_4: return ImGuiKey_LeftBracket;
+        case VK_OEM_5: return ImGuiKey_Backslash;
+        case VK_OEM_6: return ImGuiKey_RightBracket;
+        case VK_OEM_3: return ImGuiKey_GraveAccent;
+        case VK_CAPITAL: return ImGuiKey_CapsLock;
+        case VK_SCROLL: return ImGuiKey_ScrollLock;
+        case VK_NUMLOCK: return ImGuiKey_NumLock;
+        case VK_SNAPSHOT: return ImGuiKey_PrintScreen;
+        case VK_PAUSE: return ImGuiKey_Pause;
+        case VK_NUMPAD0: return ImGuiKey_Keypad0;
+        case VK_NUMPAD1: return ImGuiKey_Keypad1;
+        case VK_NUMPAD2: return ImGuiKey_Keypad2;
+        case VK_NUMPAD3: return ImGuiKey_Keypad3;
+        case VK_NUMPAD4: return ImGuiKey_Keypad4;
+        case VK_NUMPAD5: return ImGuiKey_Keypad5;
+        case VK_NUMPAD6: return ImGuiKey_Keypad6;
+        case VK_NUMPAD7: return ImGuiKey_Keypad7;
+        case VK_NUMPAD8: return ImGuiKey_Keypad8;
+        case VK_NUMPAD9: return ImGuiKey_Keypad9;
+        case VK_DECIMAL: return ImGuiKey_KeypadDecimal;
+        case VK_DIVIDE: return ImGuiKey_KeypadDivide;
+        case VK_MULTIPLY: return ImGuiKey_KeypadMultiply;
+        case VK_SUBTRACT: return ImGuiKey_KeypadSubtract;
+        case VK_ADD: return ImGuiKey_KeypadAdd;
+        case IM_VK_KEYPAD_ENTER: return ImGuiKey_KeypadEnter;
+        case VK_LSHIFT: return ImGuiKey_LeftShift;
+        case VK_LCONTROL: return ImGuiKey_LeftCtrl;
+        case VK_LMENU: return ImGuiKey_LeftAlt;
+        case VK_LWIN: return ImGuiKey_LeftSuper;
+        case VK_RSHIFT: return ImGuiKey_RightShift;
+        case VK_RCONTROL: return ImGuiKey_RightCtrl;
+        case VK_RMENU: return ImGuiKey_RightAlt;
+        case VK_RWIN: return ImGuiKey_RightSuper;
+        case VK_APPS: return ImGuiKey_Menu;
+        case '0': return ImGuiKey_0;
+        case '1': return ImGuiKey_1;
+        case '2': return ImGuiKey_2;
+        case '3': return ImGuiKey_3;
+        case '4': return ImGuiKey_4;
+        case '5': return ImGuiKey_5;
+        case '6': return ImGuiKey_6;
+        case '7': return ImGuiKey_7;
+        case '8': return ImGuiKey_8;
+        case '9': return ImGuiKey_9;
+        case 'A': return ImGuiKey_A;
+        case 'B': return ImGuiKey_B;
+        case 'C': return ImGuiKey_C;
+        case 'D': return ImGuiKey_D;
+        case 'E': return ImGuiKey_E;
+        case 'F': return ImGuiKey_F;
+        case 'G': return ImGuiKey_G;
+        case 'H': return ImGuiKey_H;
+        case 'I': return ImGuiKey_I;
+        case 'J': return ImGuiKey_J;
+        case 'K': return ImGuiKey_K;
+        case 'L': return ImGuiKey_L;
+        case 'M': return ImGuiKey_M;
+        case 'N': return ImGuiKey_N;
+        case 'O': return ImGuiKey_O;
+        case 'P': return ImGuiKey_P;
+        case 'Q': return ImGuiKey_Q;
+        case 'R': return ImGuiKey_R;
+        case 'S': return ImGuiKey_S;
+        case 'T': return ImGuiKey_T;
+        case 'U': return ImGuiKey_U;
+        case 'V': return ImGuiKey_V;
+        case 'W': return ImGuiKey_W;
+        case 'X': return ImGuiKey_X;
+        case 'Y': return ImGuiKey_Y;
+        case 'Z': return ImGuiKey_Z;
+        case VK_F1: return ImGuiKey_F1;
+        case VK_F2: return ImGuiKey_F2;
+        case VK_F3: return ImGuiKey_F3;
+        case VK_F4: return ImGuiKey_F4;
+        case VK_F5: return ImGuiKey_F5;
+        case VK_F6: return ImGuiKey_F6;
+        case VK_F7: return ImGuiKey_F7;
+        case VK_F8: return ImGuiKey_F8;
+        case VK_F9: return ImGuiKey_F9;
+        case VK_F10: return ImGuiKey_F10;
+        case VK_F11: return ImGuiKey_F11;
+        case VK_F12: return ImGuiKey_F12;
+        default: return ImGuiKey_None;
+    }
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
+        return true;
+
     switch(msg)
     {
         case WM_CLOSE:
@@ -246,13 +371,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_DESTROY:
             PostQuitMessage(0);
             break;
-        case WM_SIZE:
-        {
-            // //TODO: set correct context
-            window_width = LOWORD(lParam);
-            window_height = HIWORD(lParam);
-            break;
-        }
+        // case WM_SIZE:
+        // {
+        //     // //TODO: set correct context
+        //     window_width = LOWORD(lParam);
+        //     window_height = HIWORD(lParam);
+        //     break;
+        // }
         default:
             return DefWindowProc(hwnd, msg, wParam, lParam);
     }
@@ -332,6 +457,14 @@ window_t create_window(memory_manager* manager, char* window_title, char* class_
         0 //lparam
         );
     assert(hwnd, "window creation failed");
+
+    TITLEBARINFOEX title_info;
+    title_info.cbSize = sizeof(TITLEBARINFOEX);
+    SendMessage(hwnd, WM_GETTITLEBARINFOEX,0, (LPARAM) &title_info);
+    int title_height = title_info.rcTitleBar.bottom-title_info.rcTitleBar.top;
+    int title_width  = title_info.rcTitleBar.right -title_info.rcTitleBar.left;
+    log_output("title_height = ", title_height, "\n");
+    SetWindowPos(hwnd, HWND_TOP, x, y, width, height+2*title_height, 0);
 
     win32_load_gl_functions(hwnd, hinstance);
 
@@ -457,10 +590,11 @@ int update_window(window_t* wnd)
         wnd->size = {(window_rect.right-window_rect.left),
                     (window_rect.bottom-window_rect.top)};
         ClipCursor(&window_rect);
-        ShowCursor(0);
     }
 
     GetCursorPos(&cursor_point);
+
+    ImGuiIO &io = ImGui::GetIO();
 
     MSG msg;
     while(PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
@@ -497,9 +631,9 @@ int update_window(window_t* wnd)
                         //usButtonFlags can have more than one input at a time
                         #define update_numbered_button(N)               \
                             if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_DOWN) \
-                                wnd->input.buttons[0] |= 1<<M##N;       \
+                            { wnd->input.buttons[0] |= 1<<M##N;    io.AddMouseButtonEvent(N-1,  true); } \
                             else if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_UP) \
-                                wnd->input.buttons[0] &= ~(1<<M##N);
+                            { wnd->input.buttons[0] &= ~(1<<M##N); io.AddMouseButtonEvent(N-1, false); }
 
                         update_numbered_button(1);
                         update_numbered_button(2);
@@ -509,7 +643,7 @@ int update_window(window_t* wnd)
 
                         if(ms.usButtonFlags & RI_MOUSE_WHEEL)
                         {
-                            wnd->input.mouse_wheel = (short) ms.usButtonData;
+                            wnd->input.mouse_wheel = (short) ms.usButtonData/WHEEL_DELTA;
                             if((short) ms.usButtonData > 0)
                             {
                                 wnd->input.buttons[1] |= 1<<(M_WHEEL_UP-8);
@@ -518,6 +652,21 @@ int update_window(window_t* wnd)
                             {
                                 wnd->input.buttons[1] |= 1<<(M_WHEEL_DOWN-8);
                             }
+                            io.AddMouseWheelEvent(0.0f, ms.usButtonData);
+                        }
+
+                        if(ms.usButtonFlags & RI_MOUSE_HWHEEL)
+                        {
+                            wnd->input.mouse_hwheel = (short) ms.usButtonData/WHEEL_DELTA;
+                            if((short) ms.usButtonData > 0)
+                            {
+                                wnd->input.buttons[1] |= 1<<(M_WHEEL_RIGHT-8);
+                            }
+                            else
+                            {
+                                wnd->input.buttons[1] |= 1<<(M_WHEEL_LEFT-8);
+                            }
+                            io.AddMouseWheelEvent(ms.usButtonData/WHEEL_DELTA, 0.0);
                         }
 
                         break;
@@ -525,8 +674,26 @@ int update_window(window_t* wnd)
                     case RIM_TYPEKEYBOARD:
                     {
                         RAWKEYBOARD& kb = raw.data.keyboard;
-                        if(kb.Flags&RI_KEY_BREAK) set_key_up(kb.VKey, wnd->input);
-                        else                    set_key_down(kb.VKey, wnd->input);
+                        bool keyup = kb.Flags&RI_KEY_BREAK;
+                        if(keyup) set_key_up(kb.VKey, wnd->input);
+                        else    set_key_down(kb.VKey, wnd->input);
+
+                        ImGuiKey imgui_key = ImGui_ImplWin32_VirtualKeyToImGuiKey(kb.VKey);
+                        if(imgui_key != ImGuiKey_None)
+                        {
+                            io.AddKeyEvent(imgui_key, !keyup);
+                        }
+                        char c = kb.VKey;
+                        if(c == VK_SPACE) c = ' ';
+                        else if(c == VK_RETURN) c = '\n';
+                        else if('A' <= c && c <= 'Z') {c += 'a'-'A';}
+                        else if('0' <= c && c <= '9'){}
+                        else c = 0;
+
+                        if(c != 0)
+                        {
+                            if(is_pressed(kb.VKey, &wnd->input)) io.AddInputCharacter(kb.VKey);
+                        }
                         break;
                     }
                 }
@@ -551,6 +718,17 @@ int update_window(window_t* wnd)
 
     wnd->input.mouse = {(2.0*cursor_point.x-(window_rect.left+window_rect.right))/window_height,
         (-2.0*cursor_point.y+(window_rect.bottom+window_rect.top))/window_height};
+
+    if(io.WantCaptureKeyboard) memset(wnd->input.buttons, 0, sizeof(wnd->input.buttons));
+    if(io.WantCaptureMouse)
+    {
+        wnd->input.dmouse = {0,0};
+        ShowCursor(1);
+    }
+    else
+    {
+        ShowCursor(0);
+    }
 
     real gamma = 2.2;
     glClearColor(pow(0.2, gamma), pow(0.0, gamma), pow(0.3, gamma), 1.0);
@@ -605,6 +783,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, 4096*sizeof(cpu_body_data)),
         .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, 4096*sizeof(gpu_body_data)),
         .n_bodies = 0,
+
+        .body_fragments = (int*) permalloc(manager, 4096*sizeof(int)),
+        .n_body_fragments = 0,
+
         .joints = (body_joint*) permalloc_clear(manager, 4096*sizeof(body_joint)),
         .n_joints = 0,
 
@@ -1263,6 +1445,19 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // }
     }
 
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    ImGui::StyleColorsDark();
+
+    const char* glsl_version = "#version 460";
+    ImGui_ImplWin32_Init(wnd.hwnd);
+    ImGui_ImplOpenGL3_Init(glsl_version);
+
+    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
     ui.camera = {
         1.0*window_height/window_width, 0, 0, 0,
         0, 1, 0, 0,
@@ -1329,6 +1524,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // const int N_MAX_FRAMES = 2;
         // for(int i = 0; Deltat > 0 && i < N_MAX_FRAMES; Deltat -= dt, i++)
 
+        ImGui_ImplWin32_NewFrame();
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui::NewFrame();
+
         wnd.last_time = wnd.this_time;
         QueryPerformanceCounter(&wnd.this_time);
         {
@@ -1381,6 +1580,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         if(!is_down('N', &wnd.input))
         {
             move_lightprobes();
+            cast_lightprobes();
             update_lightprobes();
         }
 
@@ -1497,6 +1697,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         for(int i = 0; i < ui.n_texts; i++)
             draw_text(ui.texts[i].text, ui.texts[i].x.x, ui.texts[i].x.y, ui.texts[i].color, font);
+
+        // ImGui::ShowDemoWindow();
+
+        ImGui::Render();
+
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
     return 0;
 }

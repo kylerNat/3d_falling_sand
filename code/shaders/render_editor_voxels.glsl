@@ -37,7 +37,7 @@ layout(location = 8) uniform ivec3 highlight_cell;
 #include "include/maths.glsl"
 #include "include/blue_noise.glsl"
 #include "include/form_data.glsl"
-#include "include/materials.glsl"
+#include "include/materials_visual.glsl"
 #include "include/materials_physical.glsl"
 #define ACTIVE_REGIONS
 #define RAY_CAST_IGNORE_DEPTH

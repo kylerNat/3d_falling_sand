@@ -1,7 +1,7 @@
 #ifndef GAME_COMMON
 #define GAME_COMMON
 
-#define N_SOLVER_ITERATIONS 20
+#define N_SOLVER_ITERATIONS 40
 
 size_t index_3D(int_3 pos, int_3 size)
 {
@@ -37,6 +37,7 @@ struct user_input
     real_2 mouse;
     real_2 dmouse;
     int16 mouse_wheel;
+    int16 mouse_hwheel;
     byte buttons[32];
     byte prev_buttons[32];
     ui_element active_ui_element;
@@ -49,6 +50,8 @@ struct user_input
 #define M5 0x06
 #define M_WHEEL_DOWN 0x0A
 #define M_WHEEL_UP 0x0B
+#define M_WHEEL_LEFT 0x0E
+#define M_WHEEL_RIGHT 0x0F
 
 #define LARROW 0x25
 #define UARROW 0x26
@@ -58,8 +61,8 @@ struct user_input
 #define is_down(key_code, input) (((input)->buttons[(key_code)/8]>>((key_code)%8))&1)
 #define is_pressed(key_code, input) ((((input)->buttons[(key_code)/8] & ~(input)->prev_buttons[(key_code)/8])>>((key_code)%8))&1)
 
-#define set_key_down(key_code, input) input.buttons[(key_code)/8] |= 1<<((key_code)%8)
-#define set_key_up(key_code, input) input.buttons[(key_code)/8] &= ~(1<<((key_code)%8))
+#define set_key_down(key_code, input) (input).buttons[(key_code)/8] |= 1<<((key_code)%8)
+#define set_key_up(key_code, input) (input).buttons[(key_code)/8] &= ~(1<<((key_code)%8))
 
 enum storage_mode
 {
@@ -280,6 +283,7 @@ struct gpu_body_data
     int cell_material_id; //material_id of cell type 0 for this body
     int is_mutating;
     int substantial;
+    int fragment_id;
 };
 #pragma pack(pop)
 
@@ -304,6 +308,9 @@ struct cpu_body_data
 
     bool has_contact;
     bool phasing;
+
+    int first_fragment_index;
+    int n_fragments;
 };
 
 #define MAX_COYOTE_TIME 6.0f
@@ -323,13 +330,21 @@ struct contact_point
 struct body_update
 {
     real m;
-    float I_xx = 0;
-    float I_xy = 0; float I_yy = 0;
-    float I_xz = 0; float I_yz = 0; float I_zz = 0;
+    real I_xx = 0;
+    real I_xy = 0; real I_yy = 0;
+    real I_xz = 0; real I_yz = 0; real I_zz = 0;
     real_3 x_cm;
 
     int_3 lower;
     int_3 upper;
+
+    int fragment_id;
+    int n_fragments;
+};
+
+struct joint_update
+{
+    int fragment_id[2];
 };
 #pragma pack(pop)
 
@@ -394,6 +409,9 @@ struct world
     cpu_body_data * bodies_cpu;
     gpu_body_data * bodies_gpu;
     int n_bodies;
+
+    int* body_fragments; //contains a list of body ids for bodies that have just been fragmented off other bodies
+    int n_body_fragments;
 
     //TODO: turn everything into hashtables
     body_joint* joints;
@@ -1191,7 +1209,7 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
 
                 average_joint_pos *= 0.5;
 
-                real kp = 0.5;
+                real kp = 1.0;
                 real ki = 0.05;
 
                 real_3 deltap = invK*(kp*u);
@@ -1233,7 +1251,9 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
                         u += (a?-1:1)*pos;
                     }
 
-                    real_3 pseudo_force = invK*(kp*u);
+
+                    real kp_pos = 1.0;
+                    real_3 pseudo_force = invK*(kp_pos*u);
 
                     if(use_integral)
                     {
@@ -1458,7 +1478,7 @@ void iterate_contact_points(memory_manager* manager, world* w, render_data* rd)
             //TODO: set consistent target depths across entire contact manifold
             real depth = dot(contact->x-x, normal)-contact->depth[1]-target_penetration;
             // real_3 deltax = 0.05f*max(depth, 0.0f)*normal;
-            real_3 deltax = 0.05f*depth*normal;
+            real_3 deltax = 0.005f*depth*normal;
 
             body_gpu->x += deltax;
             real_3 pseudo_omega = body_gpu->m*body_gpu->invI*cross(r, deltax);

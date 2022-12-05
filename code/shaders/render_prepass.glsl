@@ -46,7 +46,7 @@ layout(location = 14) uniform int n_bodies;
 #include "include/maths.glsl"
 #include "include/blue_noise.glsl"
 #include "include/body_data.glsl"
-#include "include/materials.glsl"
+#include "include/materials_visual.glsl"
 #include "include/materials_physical.glsl"
 #define ACTIVE_REGIONS
 #include "include/raycast.glsl"
@@ -117,7 +117,7 @@ void main()
     vec3 hit_dir;
     vec3 normal;
     uvec4 voxel;
-    bool hit = cast_ray(materials, ray_dir, pos, size, origin, medium, true, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
+    bool hit = cast_ray(materials, ray_dir, pos, size, origin, medium, medium==0, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 300);
     // bool hit = coarse_cast_ray(ray_dir, pos, hit_pos, hit_dist, hit_cell, hit_dir, normal);
     // voxel = texelFetch(materials, hit_cell, 0);
 
@@ -204,7 +204,7 @@ void main()
             else ray_dir = ray_dir - 2*c*normal; //total internal reflection
             // ray_dir = normalize(ray_dir);
             medium = mat(voxel);
-            bool hit = cast_ray(materials, ray_dir, ray_pos, size, origin, medium, true, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
+            bool hit = cast_ray(materials, ray_dir, ray_pos, size, origin, medium, medium==0, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 200);
 
             if(hit)
             {

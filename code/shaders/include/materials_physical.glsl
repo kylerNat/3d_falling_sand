@@ -10,9 +10,9 @@
 #else
 #define         mat(vox) (vox.r)
 #define       depth(vox) (int(vox.g&0x1F)) //in world
-#define       phase(vox) ((vox.g>>5)&0x3)
+#define       phase(vox) ((vox.g>>5)&0x3) //in world
 #define   transient(vox) (vox.g>>7) //in world
-#define      corner(vox) (vox.g>>7) //in bodies
+#define   floodfill(vox) (vox.g) //in bodies
 #define        temp(vox) (vox.b)
 #define        volt(vox) (vox.a&0xF)
 #define        flow(vox) (vox.a>>4) //in world

@@ -9,6 +9,8 @@
 
 gl_load_operation(void, glDebugMessageCallbackARB, (GLDEBUGPROCARB callback, const void* userParam));
 
+gl_load_operation(void, glMemoryBarrier, (GLbitfield barriers));
+
 gl_load_operation(void, glGenBuffers, (GLsizei n, const GLuint * buffers));
 gl_load_operation(void, glDrawBuffers, (GLsizei n, GLenum * buffers));
 gl_load_operation(void, glBufferStorage, (GLenum target, GLsizei ptrsize, const GLvoid * data, GLbitfield flags));

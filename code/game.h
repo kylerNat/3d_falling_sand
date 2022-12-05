@@ -260,13 +260,6 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     real n = 0.1;
     real f = 1000.0;
 
-    static real camera_dist_target = 240;
-    static real camera_dist = camera_dist_target;
-    camera_dist_target *= pow(1.0+0.001, -input->mouse_wheel);
-    const real min_camera_dist = 1;
-    if(camera_dist_target < min_camera_dist) camera_dist_target = min_camera_dist;
-    camera_dist += 0.2*(camera_dist_target-camera_dist);
-
     real_3 camera_z = {sin(theta)*sin(phi), -sin(theta)*cos(phi), cos(theta)};
     // real_3 camera_x = normalize(cross({0,0,1}, camera_z));
     real_3 camera_x = {cos(phi),sin(phi),0};
@@ -286,7 +279,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     // player->x += player->x_dot;
 
     static real placement_dist = 20.0;
-    placement_dist += 0.02*input->mouse_wheel;
+    placement_dist += 1.0*input->mouse_wheel;
 
     for(int b = 0; b < w->n_bodies; b++)
     {
@@ -485,7 +478,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     }
 
 
-    static bool step_mode = false;
+    static bool step_mode = true;
 
     step_mode = step_mode!=is_pressed(VK_OEM_PERIOD, input);
 
@@ -496,6 +489,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         simulate_bodies(manager, w, w->gew.active_genome->forms_gpu, w->gew.active_genome->n_forms);
         sync_joint_voxels(manager, w);
         simulate_body_physics(manager, w, rd);
+        update_joint_fragments(manager, w);
 
         for(int c = 0; c < w->n_contacts; c++)
         {
@@ -649,6 +643,22 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         }
     }
 
+    if(is_pressed('G', input))
+    {
+        real closest_normsq = 1000;
+        for(int b = 0; b < w->n_bodies; b++)
+        {
+            if(!w->bodies_gpu[b].substantial) continue;
+            real_3 pos = player->x-placement_dist*camera_z;
+            real new_normsq = normsq(pos-w->bodies_gpu[b].x);
+            if(new_normsq < closest_normsq)
+            {
+                selected_body = b;
+                closest_normsq = new_normsq;
+            }
+        }
+    }
+
     if(is_down('G', input))
     {
         // for(int b = 0; b < w->n_bodies; b++)
@@ -660,7 +670,9 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         // }
 
         real_3 pos = player->x-placement_dist*camera_z;
-        w->bodies_gpu[selected_body].x_dot += 0.1*(pos-w->bodies_gpu[selected_body].x);
+        real_3 force = 0.1*(pos-w->bodies_gpu[selected_body].x);
+        // if(normsq(force) > 0.5) force = 0.5*normalize(force);
+        w->bodies_gpu[selected_body].x_dot += force;
         w->bodies_gpu[selected_body].x_dot *= 0.9;
         // w->bodies_gpu[selected_body].omega *= 0.95;
     }

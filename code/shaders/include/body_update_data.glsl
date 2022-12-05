@@ -12,6 +12,9 @@ struct body_update
 
     int lower_x; int lower_y; int lower_z;
     int upper_x; int upper_y; int upper_z;
+
+    int fragment_index;
+    int n_fragments;
 };
 
 layout(std430, binding = BODY_UPDATE_DATA_BINDING) buffer body_update_data

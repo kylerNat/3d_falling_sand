@@ -283,7 +283,9 @@ int main(int n_args, char** args)
         if(entry->d_type == DT_REG)
         {
             char filename[MAX_FILE_NAME_LENGTH];
+
             sprintf(filename, "%s%s", shader_path, entry->d_name);
+            if(entry->d_name[0] == '#') continue;
             process_file(filename, 0, (char*) shader_path);
         }
     }

@@ -37,6 +37,7 @@ struct body
     int cell_material_id;
     int is_mutating;
     int substantial;
+    int fragment_id;
 };
 
 layout(std430, binding = BODY_DATA_BINDING) buffer body_data
@@ -160,4 +161,9 @@ int body_is_mutating(int b)
 int body_is_substantial(int b)
 {
     return bodies[b].substantial;
+}
+
+int body_fragment_id(int b)
+{
+    return bodies[b].fragment_id;
 }

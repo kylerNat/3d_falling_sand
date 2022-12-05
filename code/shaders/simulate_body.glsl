@@ -24,10 +24,15 @@ layout(location = 8) uniform int n_body_chunks;
 #include "include/materials_physical.glsl"
 
 #include "include/body_data.glsl"
-#define PARTICLE_DATA_BINDING 1
+#define BODY_UPDATE_DATA_BINDING 1
+#include "include/body_update_data.glsl"
+#define PARTICLE_DATA_BINDING 2
 #include "include/particle_data.glsl"
-#define BEAM_DATA_BINDING 2
+#define BEAM_DATA_BINDING 3
 #include "include/beam_data.glsl"
+#define CONTACT_DATA_BINDING 4
+#include "include/contact_data.glsl"
+#define BODY_CHUNKS_BINDING 5
 
 struct body_chunk
 {
@@ -37,7 +42,7 @@ struct body_chunk
     uint origin_z;
 };
 
-layout(std430, binding = 3) buffer body_chunk_data
+layout(std430, binding = BODY_CHUNKS_BINDING) buffer body_chunk_data
 {
     body_chunk body_chunks[];
 };
@@ -48,6 +53,34 @@ uint rand(uint seed)
     seed ^= seed>>17;
     seed ^= seed<<5;
     return seed;
+}
+
+void add_world_contact(int bi, uvec4 world_voxel, vec3 world_coord, vec3 body_coord, vec3 normal, float world_depth)
+{
+    int collision_index = atomicAdd(n_contacts, 1);
+
+    contact_point new_contact;
+    new_contact.b0 = bi;
+    new_contact.b1 = -1;
+    new_contact.material1 = world_voxel.r;
+    new_contact.x_x = world_coord.x;
+    new_contact.x_y = world_coord.y;
+    new_contact.x_z = world_coord.z;
+
+    new_contact.p0_x = body_coord.x;
+    new_contact.p0_y = body_coord.y;
+    new_contact.p0_z = body_coord.z;
+
+    new_contact.n_x = normal.x;
+    new_contact.n_y = normal.y;
+    new_contact.n_z = normal.z;
+    new_contact.depth1 = world_depth;
+
+    new_contact.f_x = 0;
+    new_contact.f_y = 0;
+    new_contact.f_z = 0;
+
+    contacts[collision_index++] = new_contact;
 }
 
 void main()
@@ -90,6 +123,17 @@ void main()
     uvec4 l  = texelFetch(body_materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z), 0);
     uvec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
     uvec4 b  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
+
+    if(body_fragment_id(bi) > 0)
+    {
+        if(floodfill(c) != body_fragment_id(bi)) c = uvec4(0);
+        if(floodfill(u) != body_fragment_id(bi)) u = uvec4(0);
+        if(floodfill(d) != body_fragment_id(bi)) d = uvec4(0);
+        if(floodfill(r) != body_fragment_id(bi)) r = uvec4(0);
+        if(floodfill(l) != body_fragment_id(bi)) l = uvec4(0);
+        if(floodfill(f) != body_fragment_id(bi)) f = uvec4(0);
+        if(floodfill(b) != body_fragment_id(bi)) b = uvec4(0);
+    }
 
     ivec3 form_pos = pos+body_form_origin(bi);
     uint form_voxel = 0;
@@ -257,25 +301,67 @@ void main()
         depth = min(depth, depth(b)+1);
     }
 
-    uint inside = 0;
-    uint outside = 0;
+    bool inside = false;
+    bool outside = false;
     for(int z = 0; z < 2; z++)
         for(int y = 0; y < 2; y++)
             for(int x = 0; x < 2; x++)
             {
-                uvec4 vox = texelFetch(body_materials, ivec3(pos.x-x, pos.y-y, pos.z-z), 0);
-                if(mat(vox) != 0)
+                ivec3 p = ivec3(pos.x-x, pos.y-y, pos.z-z);
+                uvec4 vox;
+                if(any(lessThan(p, body_texture_lower(bi))) || any(greaterThan(p, body_texture_upper(bi))))
+                    vox = uvec4(0);
+                else
+                    vox = texelFetch(body_materials, p, 0);
+                if(mat(vox) != 0 && (body_fragment_id(bi) == 0 || floodfill(vox) == body_fragment_id(bi)))
                 {
-                    inside = 1;
+                    inside = true;
                 }
                 else
                 {
-                    outside = 1;
+                    outside = true;
                 }
             }
-    uint corner = inside&outside;
 
-    out_voxel.g = uint(depth) | (corner << 7);
+    if(inside && outside)
+    {
+        vec3 body_coord = pos-body_texture_lower(bi);
+
+        // int n_subdivisions = max(int(length(body_x(bi)-body_old_x(bi))*5.0), 1);
+        int n_subdivisions = 1;
+        float scale = 1.0/max(float(n_subdivisions-1), 1.0);
+        vec3 r = body_coord-body_x_cm(bi);
+
+        for(int i = n_subdivisions-1; i >= 0; i--)
+        {
+            float t = 1-i*scale;
+            vec4 orientation = mix(body_old_orientation(bi), body_orientation(bi), t); //who needs slerp
+            orientation = normalize(orientation);
+            vec3 x = mix(body_old_x(bi), body_x(bi), t);
+            vec3 world_coord = apply_rotation(orientation, r)+x;
+
+            ivec3 wvc = ivec3(world_coord); //world_voxel_coord
+            uvec4 world_voxel = texelFetch(materials, wvc, 0);
+            int world_depth = signed_depth(world_voxel);
+
+            if(world_depth <= 0)
+            {
+                vec3 normal = unnormalized_gradient(materials, wvc);
+                normal = normalize(normal);
+                vec3 nsign = sign(normal);
+                vec3 nabs = normal*nsign;
+
+                vec3 main_dir = step(nabs.yzx, nabs.xyz)*step(nabs.zyx, nabs.xyz);
+                vec3 adjusted_world_coord = mix(world_coord, nsign*ceil(nsign*world_coord), main_dir);
+
+                add_world_contact(bi, world_voxel, adjusted_world_coord, body_coord, normal, world_depth);
+                break;
+            }
+        }
+    }
+
+    out_voxel.g = 0;
+    // out_voxel.g = uint(depth);
     // out_voxel.g = uint(depth) | (phase << 6) | (transient << 7);
 
     out_voxel.b = temp;

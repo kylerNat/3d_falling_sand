@@ -40,7 +40,9 @@ vec3 F(uint material_id, float lh)
 {
     //Schlick approximation
     vec3 F0 = mix(vec3(1), get_base_color(material_id), get_metalicity(material_id));
-    return F0-(vec3(1)-F0)*pow(1-lh, 5.0f);
+    // return F0-(vec3(1)-F0)*pow(1-lh, 5.0f);
+    float b = 1-lh;
+    return F0-(vec3(1)-F0)*sq(sq(b))*b;
 }
 
 //view factor, specular G/(4*dot(n, l)*dot(n,v))
@@ -48,8 +50,8 @@ float V(uint material_id, float nh, float nl, float nv)
 {
     float roughness = get_roughness(material_id);
     float k = sq(roughness+1)/8;
-    // return 1.0f/(4*(nv*(1-k)+k)*(nl*(1-k)+k));
-    return 1.0f/4.0f;
+    return 1.0f/(4*(nv*(1-k)+k)*(nl*(1-k)+k));
+    // return 1.0f/4.0f;
 }
 
 //TODO: should also have transmittance

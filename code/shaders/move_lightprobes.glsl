@@ -22,9 +22,11 @@ void main()
 
 layout(location = 0) out vec3 new_x;
 
-layout(location = 0) uniform isampler3D materials;
-layout(location = 1) uniform sampler2D old_x;
+layout(location = 0) uniform sampler2D material_visual_properties;
+layout(location = 1) uniform isampler3D materials;
+layout(location = 2) uniform sampler2D old_x;
 
+#include "include/materials_visual.glsl"
 #include "include/materials_physical.glsl"
 
 void main()
@@ -41,17 +43,19 @@ void main()
                          (lightprobe_spacing/2)+lightprobe_spacing*(j/sq(lightprobes_per_axis)));
 
     ivec4 voxel = texelFetch(materials, ix, 0);
-    if(signed_depth(voxel) < 4)
+    #define target_dist 8
+    if(signed_depth(voxel) < target_dist)
     {
         vec3 gradient = unnormalized_gradient(materials, ix);
         gradient = normalize(gradient);
 
-        x += 0.1*gradient*(5-signed_depth(voxel));
+        x += 0.1*gradient*(target_dist-signed_depth(voxel));
     }
-    else if(signed_depth(voxel) > 5)
+    else if(signed_depth(voxel) > target_dist+1)
     {
         x = mix(x, center_x, 0.1);
     }
+    x = clamp(x, center_x-0.5*lightprobe_spacing, center_x+0.5*lightprobe_spacing);
 
     new_x = x;
 }

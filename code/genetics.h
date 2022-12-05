@@ -697,7 +697,7 @@ void do_edit_window(memory_manager* manager, render_data* ui, user_input* input,
         gew->phi -= 0.8*input->dmouse.x;
         gew->theta = clamp(gew->theta, 0.0f, pi);
     }
-    if(input->active_ui_element.type == 0) gew->camera_dist *= pow(1.0+0.001, -input->mouse_wheel);
+    if(input->active_ui_element.type == 0) gew->camera_dist *= pow(1.0+0.1, -input->mouse_wheel);
 
     real_3 dir = {cos(gew->phi)*sin(gew->theta), sin(gew->phi)*sin(gew->theta), cos(gew->theta)};
     real_3 side_dir    = {-sin(gew->phi), cos(gew->phi), 0};

@@ -40,7 +40,7 @@ layout(location = 12) uniform sampler2D blue_noise_texture;
 
 #include "include/maths.glsl"
 #include "include/blue_noise.glsl"
-#include "include/materials.glsl"
+#include "include/materials_visual.glsl"
 #include "include/materials_physical.glsl"
 #include "include/lightprobe.glsl"
 
@@ -160,6 +160,7 @@ void main()
         vec2 sample_depth;
         frag_color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)
             *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
+        // frag_color.rgb += sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth); //no materials
     }
     frag_color.rgb *= transmission;
 

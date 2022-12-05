@@ -57,8 +57,8 @@ struct text_render_info
 };
 
 //TODO: probably should put this somewhere else? I eventually want to be able to handle multiple windows for local multiplayer and stuff
-int window_width = 1;
-int window_height = 1;
+int window_width = 1280;
+int window_height = 720;
 
 struct render_data
 {
