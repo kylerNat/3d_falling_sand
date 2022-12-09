@@ -9,6 +9,7 @@ struct collision_cell
 };
 
 #define collision_cells_per_axis 16
+#define collision_cell_size 32
 
 layout(std430, binding = COLLISION_GRID_BINDING) buffer collision_grid_data
 {

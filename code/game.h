@@ -41,9 +41,9 @@ int create_body_from_form(world* w, genome* g, brain* br, int form_id)
     cpu_body_data* body_cpu = &w->bodies_cpu[b];
     gpu_body_data* body_gpu = &w->bodies_gpu[b];
 
-    body_cpu->brain_id = br->id;
     body_cpu->genome_id = br->genome_id;
     body_cpu->form_id = form_id;
+    body_gpu->brain_id = br->id;
 
     body_cpu->is_root = form_cpu->is_root;
     if(body_cpu->is_root) br->root_id = body_cpu->id;
@@ -206,7 +206,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     static real theta = pi/2;
     static real phi = -pi/4;
     // static real phi = 0;
-    if(!w->edit_mode)
+    if(!w->edit_mode && !debug_menu_active)
     {
         theta += 0.8*input->dmouse.y;
         phi -= 0.8*input->dmouse.x;
@@ -382,7 +382,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
         genome* g = get_genome(w, body_cpu->genome_id);
         if(!g->is_mutating) continue;
-        brain* br = get_brain(w, body_cpu->brain_id);
+        brain* br = get_brain(w, body_gpu->brain_id);
 
         int new_form_id = g->form_id_updates[body_cpu->form_id];
         br->body_ids[new_form_id] = body_cpu->id;
@@ -477,14 +477,37 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         g->is_mutating = false;
     }
 
-
     static bool step_mode = true;
-
     step_mode = step_mode!=is_pressed(VK_OEM_PERIOD, input);
-
     if(step_mode ? is_pressed('M', input) : !is_down('M', input))
     {
-        integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
+        //add bodies to collision grid
+        for(int z = 0; z < collision_cells_per_axis; z++)
+            for(int y = 0; y < collision_cells_per_axis; y++)
+                for(int x = 0; x < collision_cells_per_axis; x++)
+                {
+                    collision_cell* cell = &w->collision_grid[index_3D({x,y,z}, collision_cells_per_axis)];
+                    cell->n_bodies = 0;
+                }
+
+        for(int b = 0; b < w->n_bodies; b++)
+        {
+            cpu_body_data* body_cpu = &w->bodies_cpu[b];
+            gpu_body_data* body_gpu = &w->bodies_gpu[b];
+            update_bounding_box(body_gpu);
+            if(!body_gpu->substantial) continue;
+            int_3 lower = int_cast(body_gpu->box.l/collision_cell_size);
+            int_3 upper = int_cast(body_gpu->box.u/collision_cell_size);
+            lower = clamp_per_axis(lower, 0, collision_cells_per_axis);
+            upper = clamp_per_axis(upper, 0, collision_cells_per_axis);
+            for(int z = lower.z; z <= upper.z; z++)
+                for(int y = lower.y; y <= upper.y; y++)
+                    for(int x = lower.x; x <= upper.x; x++)
+                    {
+                        collision_cell* cell = &w->collision_grid[index_3D({x,y,z}, collision_cells_per_axis)];
+                        cell->body_indices[cell->n_bodies++] = b;
+                    }
+        }
 
         simulate_bodies(manager, w, w->gew.active_genome->forms_gpu, w->gew.active_genome->n_forms);
         sync_joint_voxels(manager, w);
@@ -500,83 +523,127 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
             body_cpu->phasing = false;
         }
 
-        simulate_joints(manager, w, rd);
-    }
-
-    //add bodies to collision grid
-    for(int z = 0; z < collision_cells_per_axis; z++)
-        for(int y = 0; y < collision_cells_per_axis; y++)
-            for(int x = 0; x < collision_cells_per_axis; x++)
-            {
-                collision_cell* cell = &w->collision_grid[index_3D({x,y,z}, collision_cells_per_axis)];
-                cell->n_bodies = 0;
-            }
-
-    for(int b = 0; b < w->n_bodies; b++)
-    {
-        cpu_body_data* body_cpu = &w->bodies_cpu[b];
-        gpu_body_data* body_gpu = &w->bodies_gpu[b];
-        update_bounding_box(body_gpu);
-        int_3 lower = int_cast(body_gpu->box.l/collision_cell_size);
-        int_3 upper = int_cast(body_gpu->box.u/collision_cell_size);
-        lower = max_per_axis(upper, {0,0,0});
-        upper = min_per_axis(upper, {collision_cells_per_axis, collision_cells_per_axis, collision_cells_per_axis});
-        for(int z = lower.z; z <= upper.z; z++)
-            for(int y = lower.y; y <= upper.y; y++)
-                for(int x = lower.x; x <= upper.x; x++)
-                {
-                    collision_cell* cell = &w->collision_grid[index_3D({x,y,z}, collision_cells_per_axis)];
-                    cell->body_indices[cell->n_bodies++] = b;
-                }
+        solve_velocity_constraints(manager, w, rd);
+        integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
+        solve_position_constraints(manager, w, rd);
     }
 
     //drawing circles
-    for(int b = 0; b < w->n_bodies; b++)
+    static bool draw_circles = false;
+    draw_circles = draw_circles != is_pressed(VK_F2, input);
+    if(draw_circles)
     {
-        cpu_body_data* body_cpu = &w->bodies_cpu[b];
-        gpu_body_data* body_gpu = &w->bodies_gpu[b];
+        for(int b = 0; b < w->n_bodies; b++)
+        {
+            cpu_body_data* body_cpu = &w->bodies_cpu[b];
+            gpu_body_data* body_gpu = &w->bodies_gpu[b];
 
-        // for(int i = 0; i < 3; i++)
-        // {
-        //     draw_circle(rd, body_cpu->contact_points[i], 0.3, {body_cpu->contact_depths[i] > 1,body_cpu->contact_depths[i] <= 1,0,1});
-        //     draw_circle(rd, body_cpu->contact_points[i]+body_cpu->contact_normals[i], 0.3, {0,0,1,1});
-        // }
+            // for(int i = 0; i < 3; i++)
+            // {
+            //     draw_circle(rd, body_cpu->contact_points[i], 0.3, {body_cpu->contact_depths[i] > 1,body_cpu->contact_depths[i] <= 1,0,1});
+            //     draw_circle(rd, body_cpu->contact_points[i]+body_cpu->contact_normals[i], 0.3, {0,0,1,1});
+            // }
 
-    //     brain* br = &w->brains[0];
-    //         for(int z = 0; z < 2; z++)
-    //             for(int y = 0; y < 2; y++)
-    //                 for(int x = 0; x < 2; x++)
-    //                 {
-    //                     real_3 r = apply_rotation(body_gpu->orientation, -body_gpu->x_cm+multiply_per_axis(real_cast(body_gpu->size), (real_3){x,y,z}));
-    //                     draw_circle(rd, body_gpu->x+r , 0.1, {0,1,1,1});
+            //     brain* br = &w->brains[0];
+            //         for(int z = 0; z < 2; z++)
+            //             for(int y = 0; y < 2; y++)
+            //                 for(int x = 0; x < 2; x++)
+            //                 {
+            //                     real_3 r = apply_rotation(body_gpu->orientation, -body_gpu->x_cm+multiply_per_axis(real_cast(body_gpu->size), (real_3){x,y,z}));
+            //                     draw_circle(rd, body_gpu->x+r , 0.1, {0,1,1,1});
 
-    //                     if(br->root_id == body_cpu->id)
-    //                     {
-    //                         real_3 r_storage = apply_rotation(body_gpu->orientation, -body_gpu->x_cm-real_cast(body_gpu->materials_origin-body_cpu->texture_region.l)+multiply_per_axis(real_cast(body_cpu->texture_region.u-body_cpu->texture_region.l), (real_3){x,y,z}));
-    //                         draw_circle(rd, body_gpu->x+r_storage , 0.1, {0,0.5,1,1});
-    //                     }
-    //                 }
+            //                     if(br->root_id == body_cpu->id)
+            //                     {
+            //                         real_3 r_storage = apply_rotation(body_gpu->orientation, -body_gpu->x_cm-real_cast(body_gpu->materials_origin-body_cpu->texture_region.l)+multiply_per_axis(real_cast(body_cpu->texture_region.u-body_cpu->texture_region.l), (real_3){x,y,z}));
+            //                         draw_circle(rd, body_gpu->x+r_storage , 0.1, {0,0.5,1,1});
+            //                     }
+            //                 }
 
-    //         real_3 r_origin = apply_rotation(body_gpu->orientation, -body_gpu->x_cm+real_cast(-body_gpu->materials_origin+body_cpu->texture_region.l+body_gpu->form_offset));
-    //         draw_circle(rd, body_gpu->x+r_origin , 0.1, {1,0,0,1});
+            //         real_3 r_origin = apply_rotation(body_gpu->orientation, -body_gpu->x_cm+real_cast(-body_gpu->materials_origin+body_cpu->texture_region.l+body_gpu->form_offset));
+            //         draw_circle(rd, body_gpu->x+r_origin , 0.1, {1,0,0,1});
 
-        draw_circle(rd, body_gpu->x, 0.1, {1,0,1,1});
+            draw_circle(rd, body_gpu->x, 0.1, {1,0,1,1});
+            draw_circle(rd, body_gpu->box.l, 0.1, {1,0,0,1});
+            draw_circle(rd, body_gpu->box.u, 0.1, {1,0.2,0,1});
+        }
+
+        for(int c = 0; c < w->n_contacts; c++)
+        {
+            contact_point* contact = &w->contacts[c];
+            if(contact->body_index[1] == -1)
+            {
+                int b = contact->body_index[0];
+                cpu_body_data* body_cpu = &w->bodies_cpu[b];
+                gpu_body_data* body_gpu = &w->bodies_gpu[b];
+
+                real_3 r = apply_rotation(body_gpu->orientation, contact->pos[0]-body_gpu->x_cm);
+                real_3 x = r+body_gpu->x;
+
+                // draw_circle(rd, contact->x-contact->normal*contact->depth[1], 0.15, {0,1,1,1});
+                draw_circle(rd, contact->pos[1]-contact->normal*contact->depth[1], 0.15, {0,1,0,1});
+                draw_circle(rd, x, 0.1, {0,1,1,1});
+            }
+            else
+            {
+                for(int a = 0; a <= 1; a++)
+                {
+                    int b = contact->body_index[a];
+                    cpu_body_data* body_cpu = &w->bodies_cpu[b];
+                    gpu_body_data* body_gpu = &w->bodies_gpu[b];
+
+                    real_3 r = apply_rotation(body_gpu->orientation, contact->pos[a]-body_gpu->x_cm);
+                    real_3 x = r+body_gpu->x;
+                    if(a == 0) x -= contact->normal*contact->depth[1];
+
+                    draw_circle(rd, x, 0.15-0.05*a, {0,1,a,1});
+                }
+            }
+        }
     }
 
-    for(int c = 0; c < w->n_contacts; c++)
+    #ifdef IMGUI_VERSION
+    debug_menu.body_inspector_active = debug_menu.body_inspector_active != is_pressed(VK_F1, input);
+    if(debug_menu.body_inspector_active)
     {
-        contact_point* contact = &w->contacts[c];
-        int b = contact->body_index[0];
-        cpu_body_data* body_cpu = &w->bodies_cpu[b];
-        gpu_body_data* body_gpu = &w->bodies_gpu[b];
+        ImGui::Begin("Body Inspector", &debug_menu.body_inspector_active, 0);
+        int j = debug_menu.active_joint;
+        char item_name[100];
 
-        real_3 r = apply_rotation(body_gpu->orientation, contact->pos[0]-body_gpu->x_cm);
-        real_3 x = r+body_gpu->x;
+        body_joint* joint = &w->joints[j];
+        real_3 u = {0,0,0};
+        for(int a = 0; a <= 1; a++)
+        {
+            int b = get_body_index(w, joint->body_id[a]);
+            gpu_body_data* body_gpu = &w->bodies_gpu[b];
+            cpu_body_data* body_cpu = &w->bodies_cpu[b];
+            real_3 r = apply_rotation(body_gpu->orientation, real_cast(joint->pos[a]+body_gpu->form_offset)+(real_3){0.5,0.5,0.5}-body_gpu->x_cm);
+            draw_circle(rd, body_gpu->x + r, 0.2, {1,0.5+0.5*a,0,1});
 
-        // draw_circle(rd, contact->x-contact->normal*contact->depth[1], 0.15, {0,1,1,1});
-        draw_circle(rd, contact->x-contact->normal*contact->depth[1], 0.15, {0,1,0,1});
-        draw_circle(rd, x, 0.1, {0,1,1,1});
+            real_3 pos = r+body_gpu->x;
+            u += (a?-1:1)*pos;
+        }
+
+        int b0 = w->joints[j].body_id[0];
+        int b1 = w->joints[j].body_id[1];
+        sprintf(item_name, "joint %d (bodies %d & %d)", j, b0, b1);
+        if(ImGui::BeginCombo("selected joint", item_name))
+        {
+            for(int j = 0; j < w->n_joints; j++)
+            {
+                sprintf(item_name, "joint %d (bodies %d & %d)", j, w->joints[j].body_id[0], w->joints[j].body_id[1]);
+                bool is_selected = j == debug_menu.active_joint;
+                if(ImGui::Selectable(item_name, is_selected)) debug_menu.active_joint = j;
+                if(is_selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PlotLines(debug_menu.plotname, debug_menu.plotline, debug_menu.n_plotline_points, 0, 0, -5, 5, ImVec2(0, 80));
+
+        ImGui::Text("current error: %f", norm(u));
+
+        ImGui::End();
     }
+    #endif
 
     // for(int j = 0; j < w->n_joints; j++)
     // {
@@ -645,7 +712,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     if(is_pressed('G', input))
     {
-        real closest_normsq = 1000;
+        real closest_normsq = sq(1000);
         for(int b = 0; b < w->n_bodies; b++)
         {
             if(!w->bodies_gpu[b].substantial) continue;
@@ -716,7 +783,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         }
     }
 
-    if(is_down(M1, input) && !w->edit_mode)
+    if(is_down(M1, input) && !w->edit_mode && !debug_menu_active)
     {
         int brush_size = 50;
         real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};

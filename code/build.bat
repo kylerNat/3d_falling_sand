@@ -18,7 +18,9 @@ if not errorlevel 1 (
 
 echo compiling...
 
-clang -ftime-trace -Wno-deprecated-declarations -Wno-braced-scalar-init -Wno-c++11-narrowing -Wno-writable-strings -ferror-limit=-1 -g -gcodeview -O0 -mavx -mavx2 -mmmx -msse -msse2 -msse3 -mssse3 -msse4.1 -msse4.2 -o "3dsand.exe" -D DEBUG -I "%HOME%/lib/" -I "%HOME%/lib/imgui/" -I "%HOME%/lib/imgui/backends/" "../code/win32_gl_main.cpp" "%HOME%/lib/imgui/imgui*.cpp" "%HOME%/lib/imgui/backends/imgui_impl_opengl3.cpp" "%HOME%/lib/imgui/backends/imgui_impl_win32.cpp" -lUser32.lib -lGdi32.lib -lopengl32.lib -lOle32.lib
+clang -ftime-trace -Wno-deprecated-declarations -Wno-braced-scalar-init -Wno-c++11-narrowing -Wno-writable-strings -ferror-limit=-1 -g -gcodeview -O2 -mavx -mavx2 -mmmx -msse -msse2 -msse3 -mssse3 -msse4.1 -msse4.2 -o "3dsand.exe" -D DEBUG -I "%HOME%/lib/" -I "%HOME%/lib/imgui/" -I "%HOME%/lib/imgui/backends/" -I "%HOME%/lib/tracy/public/" "../code/win32_gl_main.cpp" -lUser32.lib -lGdi32.lib -lopengl32.lib -lOle32.lib
+rem imgui sources
+rem "%HOME%/lib/imgui/imgui*.cpp" "%HOME%/lib/imgui/backends/imgui_impl_opengl3.cpp" "%HOME%/lib/imgui/backends/imgui_impl_win32.cpp"
 
 echo done compiling
 

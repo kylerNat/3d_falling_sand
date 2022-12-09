@@ -2003,6 +2003,42 @@ void simulate_bodies(memory_manager* manager, world* w, gpu_form_data* forms_gpu
     glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32I, 0, sizeof(int), GL_RED_INTEGER, GL_INT, &n_contacts);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, contacts_buffer);
 
+    const int n_max_body_indices = 1024*1024;
+    size_t body_indices_size = sizeof(int)*n_max_body_indices;
+    size_t collision_grid_size = sizeof(int_2)*collision_cells_per_axis*collision_cells_per_axis*collision_cells_per_axis;
+
+    byte* data = reserve_block(manager, collision_grid_size+sizeof(int)+body_indices_size);
+
+    int_2* collision_grid = (int_2*) data;
+    data += collision_grid_size;
+
+    int* n_body_indices = (int*) data;
+    *n_body_indices = 0;
+    data += sizeof(int);
+
+    int* body_indices = (int*) data;
+    data += body_indices_size;
+
+    for(int z = 0; z < collision_cells_per_axis; z++)
+        for(int y = 0; y < collision_cells_per_axis; y++)
+            for(int x = 0; x < collision_cells_per_axis; x++)
+            {
+                int index = index_3D({x,y,z}, collision_cells_per_axis);
+                collision_cell* cell = &w->collision_grid[index];
+                int start_index = (*n_body_indices);
+                for(int i = 0; i < cell->n_bodies; i++)
+                {
+                    body_indices[(*n_body_indices)++] = cell->body_indices[i];
+                }
+                collision_grid[index] = {start_index, cell->n_bodies};
+            }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, collision_grid_buffer);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, collision_grid_size+(1+(*n_body_indices))*sizeof(int), collision_grid);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, collision_grid_buffer);
+
+    unreserve_block(manager);
+
     uint* body_chunks = (uint*) reserve_block(manager, w->n_bodies*8*4*sizeof(uint));
     uint n_body_chunks = 0;
     for(int b = 0; b < w->n_bodies; b++)
@@ -2029,11 +2065,11 @@ void simulate_bodies(memory_manager* manager, world* w, gpu_form_data* forms_gpu
 
     glUniform1i(uniform_i++, n_body_chunks);
 
-    unreserve_block(manager);
-
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_chunks_buffer);
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (1+4*n_body_chunks)*sizeof(uint), body_chunks);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, body_chunks_buffer);
+
+    unreserve_block(manager);
 
     glDispatchCompute(n_body_chunks,1,1);
 
@@ -2143,38 +2179,6 @@ void simulate_body_physics(memory_manager* manager, world* w, render_data* rd)
     size_t offset = 0;
     int layout_location = 0;
 
-    const int n_max_body_indices = 1024*1024;
-    size_t body_indices_size = sizeof(int)*n_max_body_indices;
-    size_t collision_grid_size = sizeof(int_2)*collision_cell_size*collision_cell_size*collision_cell_size;
-
-    byte* data = reserve_block(manager, body_indices_size + collision_grid_size);
-
-    int_2* collision_grid = (int_2*) data;
-    data += collision_grid_size;
-
-    int* body_indices = (int*) data;
-    data += body_indices_size;
-
-    int n_body_indices = 0;
-
-    for(int z = 0; z < collision_cells_per_axis; z++)
-        for(int y = 0; y < collision_cells_per_axis; y++)
-            for(int x = 0; x < collision_cells_per_axis; x++)
-            {
-                int index = index_3D({x,y,z}, collision_cells_per_axis);
-                collision_cell* cell = &w->collision_grid[index];
-                int start_index = n_body_indices;
-                for(int i = 0; i < cell->n_bodies; i++)
-                {
-                    body_indices[n_body_indices++] = cell->body_indices[i];
-                }
-                collision_grid[index] = {start_index, cell->n_bodies};
-            }
-
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, collision_grid_buffer);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, collision_grid_size+n_body_indices*sizeof(int), collision_grid);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, collision_grid_buffer);
-
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_updates_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, body_updates_buffer);
 
@@ -2182,11 +2186,9 @@ void simulate_body_physics(memory_manager* manager, world* w, render_data* rd)
 
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT|GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
-    unreserve_block(manager);
-
     size_t body_updates_size = sizeof(body_update)*w->n_bodies;
 
-    data = reserve_block(manager, body_updates_size);
+    byte* data = reserve_block(manager, body_updates_size);
 
     body_update* body_updates = (body_update*) data;
     data += body_updates_size;
@@ -2245,7 +2247,7 @@ void simulate_body_physics(memory_manager* manager, world* w, render_data* rd)
             body_cpu->n_fragments++;
             w->body_fragments[w->n_body_fragments++] = new_body_cpu->id;
 
-            new_body_cpu->brain_id = body_cpu->brain_id;
+            new_body_gpu->brain_id = body_gpu->brain_id;
             new_body_cpu->genome_id = body_cpu->genome_id;
             new_body_cpu->form_id = body_cpu->form_id;
             new_body_cpu->is_root = body_cpu->is_root;

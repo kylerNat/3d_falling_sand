@@ -38,6 +38,8 @@ struct body
     int is_mutating;
     int substantial;
     int fragment_id;
+
+    int brain_id;
 };
 
 layout(std430, binding = BODY_DATA_BINDING) buffer body_data
@@ -166,4 +168,9 @@ int body_is_substantial(int b)
 int body_fragment_id(int b)
 {
     return bodies[b].fragment_id;
+}
+
+int body_brain_id(int b)
+{
+    return bodies[b].brain_id;
 }

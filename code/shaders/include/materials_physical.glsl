@@ -9,10 +9,10 @@
 #define        flow(vox) ((vox>>30))
 #else
 #define         mat(vox) (vox.r)
-#define       depth(vox) (int(vox.g&0x1F)) //in world
+#define       depth(vox) (int(vox.g&0x1F))
 #define       phase(vox) ((vox.g>>5)&0x3) //in world
 #define   transient(vox) (vox.g>>7) //in world
-#define   floodfill(vox) (vox.g) //in bodies
+#define   floodfill(vox) (vox.g>>5) //in bodies
 #define        temp(vox) (vox.b)
 #define        volt(vox) (vox.a&0xF)
 #define        flow(vox) (vox.a>>4) //in world
@@ -68,49 +68,59 @@ float sharpness(uint material_id)
     return texelFetch(material_physical_properties, ivec2(2,material_id), 0).r;
 }
 
-float melting_point(uint material_id)
+float friction(uint material_id)
 {
     return texelFetch(material_physical_properties, ivec2(3,material_id), 0).r;
 }
 
-float boiling_point(uint material_id)
+float restitution(uint material_id)
 {
     return texelFetch(material_physical_properties, ivec2(4,material_id), 0).r;
 }
 
-float heat_capacity(uint material_id)
+float melting_point(uint material_id)
 {
     return texelFetch(material_physical_properties, ivec2(5,material_id), 0).r;
 }
 
-float thermal_conductivity(uint material_id)
+float boiling_point(uint material_id)
 {
-    return texelFetch(material_physical_properties, ivec2(6,material_id), 0).r+0.001;
+    return texelFetch(material_physical_properties, ivec2(6,material_id), 0).r;
 }
 
-float conductivity(uint material_id)
+float heat_capacity(uint material_id)
 {
     return texelFetch(material_physical_properties, ivec2(7,material_id), 0).r;
 }
 
+float thermal_conductivity(uint material_id)
+{
+    return texelFetch(material_physical_properties, ivec2(8,material_id), 0).r+0.001;
+}
+
+float conductivity(uint material_id)
+{
+    return texelFetch(material_physical_properties, ivec2(9,material_id), 0).r;
+}
+
 float work_function(uint material_id)
-{
-    return texelFetch(material_physical_properties, ivec2(8,material_id), 0).r;
-}
-
-int growth_time(uint material_id)
-{
-    return int(texelFetch(material_physical_properties, ivec2(9,material_id), 0).r);
-}
-
-float n_triggers(uint material_id)
 {
     return texelFetch(material_physical_properties, ivec2(10,material_id), 0).r;
 }
 
+int growth_time(uint material_id)
+{
+    return int(texelFetch(material_physical_properties, ivec2(11,material_id), 0).r);
+}
+
+float n_triggers(uint material_id)
+{
+    return texelFetch(material_physical_properties, ivec2(12,material_id), 0).r;
+}
+
 uint trigger_info(uint material_id, uint trigger_id)
 {
-    return uint(texelFetch(material_physical_properties, ivec2(11+trigger_id,material_id), 0).r);
+    return uint(texelFetch(material_physical_properties, ivec2(13+trigger_id,material_id), 0).r);
 }
 
 #endif

@@ -45,9 +45,13 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
 
-#include "imgui.h"
-#include "imgui_impl_win32.h"
-#include "imgui_impl_opengl3.h"
+// #include "imgui.h"
+// #include "imgui_impl_win32.h"
+// #include "imgui_impl_opengl3.h"
+
+#define _CMATH_
+#define _CSTDLIB_
+#include <tracy/Tracy.hpp>
 
 #undef assert
 
@@ -240,6 +244,7 @@ void fullscreen(window_t wnd)
     }
 }
 
+#ifdef IMGUI_VERSION
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 // There is no distinct VK_xxx for keypad enter, instead it is VK_RETURN + KF_EXTENDED, we assign it an arbitrary value to make code more readable (VK_ codes go up to 255)
@@ -357,11 +362,14 @@ static ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
         default: return ImGuiKey_None;
     }
 }
+#endif
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    #ifdef IMGUI_VERSION
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
         return true;
+    #endif
 
     switch(msg)
     {
@@ -458,13 +466,17 @@ window_t create_window(memory_manager* manager, char* window_title, char* class_
         );
     assert(hwnd, "window creation failed");
 
-    TITLEBARINFOEX title_info;
-    title_info.cbSize = sizeof(TITLEBARINFOEX);
-    SendMessage(hwnd, WM_GETTITLEBARINFOEX,0, (LPARAM) &title_info);
-    int title_height = title_info.rcTitleBar.bottom-title_info.rcTitleBar.top;
-    int title_width  = title_info.rcTitleBar.right -title_info.rcTitleBar.left;
-    log_output("title_height = ", title_height, "\n");
-    SetWindowPos(hwnd, HWND_TOP, x, y, width, height+2*title_height, 0);
+    // TITLEBARINFOEX title_info;
+    // title_info.cbSize = sizeof(TITLEBARINFOEX);
+    // SendMessage(hwnd, WM_GETTITLEBARINFOEX,0, (LPARAM) &title_info);
+    // int title_height = title_info.rcTitleBar.bottom-title_info.rcTitleBar.top;
+    // int title_width  = title_info.rcTitleBar.right -title_info.rcTitleBar.left;
+    // log_output("title_height = ", title_height, "\n");
+    // SetWindowPos(hwnd, HWND_TOP, x, y, width, height+2*title_height, 0);
+
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+    SetWindowPos(hwnd, HWND_TOP, x, y, 2*width-(rect.right-rect.left), 2*height-(rect.bottom-rect.top), 0);
 
     win32_load_gl_functions(hwnd, hinstance);
 
@@ -594,7 +606,9 @@ int update_window(window_t* wnd)
 
     GetCursorPos(&cursor_point);
 
+    #ifdef IMGUI_VERSION
     ImGuiIO &io = ImGui::GetIO();
+    #endif
 
     MSG msg;
     while(PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
@@ -629,11 +643,19 @@ int update_window(window_t* wnd)
                         // }
 
                         //usButtonFlags can have more than one input at a time
+                        #ifdef IMGUI_VERSION
                         #define update_numbered_button(N)               \
                             if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_DOWN) \
                             { wnd->input.buttons[0] |= 1<<M##N;    io.AddMouseButtonEvent(N-1,  true); } \
                             else if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_UP) \
                             { wnd->input.buttons[0] &= ~(1<<M##N); io.AddMouseButtonEvent(N-1, false); }
+                        #else
+                        #define update_numbered_button(N)               \
+                            if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_DOWN) \
+                            { wnd->input.buttons[0] |= 1<<M##N; } \
+                            else if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_UP) \
+                            { wnd->input.buttons[0] &= ~(1<<M##N); }
+                        #endif
 
                         update_numbered_button(1);
                         update_numbered_button(2);
@@ -652,7 +674,9 @@ int update_window(window_t* wnd)
                             {
                                 wnd->input.buttons[1] |= 1<<(M_WHEEL_DOWN-8);
                             }
+                            #ifdef IMGUI_VERSION
                             io.AddMouseWheelEvent(0.0f, ms.usButtonData);
+                            #endif
                         }
 
                         if(ms.usButtonFlags & RI_MOUSE_HWHEEL)
@@ -666,7 +690,9 @@ int update_window(window_t* wnd)
                             {
                                 wnd->input.buttons[1] |= 1<<(M_WHEEL_LEFT-8);
                             }
+                            #ifdef IMGUI_VERSION
                             io.AddMouseWheelEvent(ms.usButtonData/WHEEL_DELTA, 0.0);
+                            #endif
                         }
 
                         break;
@@ -678,6 +704,7 @@ int update_window(window_t* wnd)
                         if(keyup) set_key_up(kb.VKey, wnd->input);
                         else    set_key_down(kb.VKey, wnd->input);
 
+                        #ifdef IMGUI_VERSION
                         ImGuiKey imgui_key = ImGui_ImplWin32_VirtualKeyToImGuiKey(kb.VKey);
                         if(imgui_key != ImGuiKey_None)
                         {
@@ -694,6 +721,7 @@ int update_window(window_t* wnd)
                         {
                             if(is_pressed(kb.VKey, &wnd->input)) io.AddInputCharacter(kb.VKey);
                         }
+                        #endif
                         break;
                     }
                 }
@@ -719,15 +747,28 @@ int update_window(window_t* wnd)
     wnd->input.mouse = {(2.0*cursor_point.x-(window_rect.left+window_rect.right))/window_height,
         (-2.0*cursor_point.y+(window_rect.bottom+window_rect.top))/window_height};
 
-    if(io.WantCaptureKeyboard) memset(wnd->input.buttons, 0, sizeof(wnd->input.buttons));
-    if(io.WantCaptureMouse)
+    // if(io.WantCaptureKeyboard) memset(wnd->input.buttons, 0, sizeof(wnd->input.buttons));
+    // if(io.WantCaptureMouse)
+    // {
+    //     wnd->input.dmouse = {0,0};
+    //     ShowCursor(1);
+    // }
+    // else
+    // {
+    //     ShowCursor(0);
+    // }
+
+    CURSORINFO ci;
+    GetCursorInfo(&ci);
+    static HCURSOR old_cursor = 0;
+    if(debug_menu_active)
     {
-        wnd->input.dmouse = {0,0};
-        ShowCursor(1);
+        HCURSOR last_curosr = SetCursor(old_cursor);
     }
     else
     {
-        ShowCursor(0);
+        HCURSOR last_cursor = SetCursor(0);
+        if(last_cursor) old_cursor = last_cursor;
     }
 
     real gamma = 2.2;
@@ -1169,6 +1210,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 for(int x = 0; x < size.x; x++)
                 {
                     int material = 3;
+                    if(x == size.x-1 || y == size.y-1 || z == size.z-1) material = 0;
                     w.bodies_cpu[b].materials[x+y*size.x+z*size.x*size.y] = material;
                     real m = 0.001;
                     w.bodies_gpu[b].m += m;
@@ -1334,7 +1376,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     for(int b = 0; b < w.n_bodies; b++)
     {
-        w.bodies_gpu[b].x = {chunk_size/2+45.1*(1+b*1.0/w.n_bodies), chunk_size/2+45.1, 42.1};
+        w.bodies_gpu[b].x = {chunk_size/2+15.1*(1+b), chunk_size/2+95.1, 42.1};
         w.bodies_cpu[b].invI = inverse(w.bodies_cpu[b].I);
 
         w.bodies_gpu[b].old_x = w.bodies_gpu[b].x;
@@ -1445,6 +1487,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // }
     }
 
+    #ifdef IMGUI_VERSION
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
@@ -1456,7 +1499,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     ImGui_ImplWin32_Init(wnd.hwnd);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    #endif
 
     ui.camera = {
         1.0*window_height/window_width, 0, 0, 0,
@@ -1524,9 +1567,11 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // const int N_MAX_FRAMES = 2;
         // for(int i = 0; Deltat > 0 && i < N_MAX_FRAMES; Deltat -= dt, i++)
 
+        #ifdef IMGUI_VERSION
         ImGui_ImplWin32_NewFrame();
         ImGui_ImplOpenGL3_NewFrame();
         ImGui::NewFrame();
+        #endif
 
         wnd.last_time = wnd.this_time;
         QueryPerformanceCounter(&wnd.this_time);
@@ -1700,9 +1745,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         // ImGui::ShowDemoWindow();
 
+        #ifdef IMGUI_VERSION
         ImGui::Render();
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        FrameMark;
+        #endif
     }
     return 0;
 }

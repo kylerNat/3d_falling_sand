@@ -11,9 +11,7 @@ layout(location = 2) uniform usampler3D materials;
 layout(location = 3, rgba8ui) restrict uniform uimage3D body_materials;
 
 #include "include/body_data.glsl"
-#define COLLISION_GRID_BINDING 1
-#include "include/collision_grid.glsl"
-#define BODY_UPDATE_DATA_BINDING 2
+#define BODY_UPDATE_DATA_BINDING 1
 #include "include/body_update_data.glsl"
 
 #define MATERIAL_PHYSICAL_PROPERTIES
@@ -185,7 +183,8 @@ void main()
 
     int n_new_fragments = 0;
 
-    #define N_MAX_FRAGMENTS 16
+    #define N_MAX_FRAGMENTS 7
+    //TODO: better handling for going over the max, currently additional fragments just get deleted
     for(int i = 0; i < N_MAX_FRAGMENTS; i++)
     {
         current_fragment_id = n_new_fragments+1;
@@ -202,7 +201,7 @@ void main()
             ivec3 body_coord = search_stack[--stack_size];
             ivec3 pos = body_coord+body_texture_lower(b);
             uvec4 body_voxel = imageLoad(body_materials, pos);
-            body_voxel.g = current_fragment_id;
+            body_voxel.g |= current_fragment_id<<5;
             imageStore(body_materials, pos, body_voxel);
 
             fragment_lower = min(fragment_lower, body_coord);

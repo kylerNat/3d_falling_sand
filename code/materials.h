@@ -25,6 +25,9 @@ struct material_physical_info
     real hardness;
     real sharpness;
 
+    real friction;
+    real restitution;
+
     //thermal properties
     real melting_point;
     real boiling_point;
@@ -57,26 +60,26 @@ material_visual_info material_visuals[N_MAX_MATERIALS] = {
 
 material_physical_info material_physicals[N_MAX_MATERIALS] = {
     {.heat_capacity = 0.0, .thermal_conductivity = 0.01}, //air
-    {.density = 0.001, .hardness = 0,
+    {.density = 0.001, .hardness = 0, .friction = 1, .restitution = 0.5,
      .melting_point = 256, .boiling_point = 256, .heat_capacity = 1.0, .thermal_conductivity = 0.05}, //sand
-    {.density = 0.001, .hardness = 1,
+    {.density = 0.001, .hardness = 1, .friction = 10, .restitution = 0.5,
      .melting_point =  -1, .boiling_point = 130, .heat_capacity = 10.0, .thermal_conductivity = 1.0}, //water
-    {.density = 0.001, .hardness = 1,
+    {.density = 0.001, .hardness = 1, .friction = 1, .restitution = 0.5,
      .melting_point = 200, .boiling_point = 256, .heat_capacity = 10.0, .thermal_conductivity = 0.1,
      .conductivity = 10.0, }, //coperish
-    {.density = 0.001, .hardness = 1,
+    {.density = 0.001, .hardness = 1, .friction = 1, .restitution = 0.5,
      .melting_point = 254, .boiling_point = 256, .heat_capacity=100.0, .thermal_conductivity = 1.0,
      .conductivity = 10.0, }, //purply
-    {.density = 0.001, .hardness = 1,
+    {.density = 0.001, .hardness = 1, .friction = 1, .restitution = 0.5,
      .melting_point = 256, .boiling_point = 256, .heat_capacity = 1.0, .thermal_conductivity = 0.1}, //light
-    {.density = 0.001, .hardness = 1,
+    {.density = 0.001, .hardness = 1, .friction = 1, .restitution = 0.5,
      .melting_point = -1, .boiling_point = -1, .heat_capacity = 10.0, .thermal_conductivity = 1.0}, //gas
-    {.density = 0.001, .hardness = 1,
+    {.density = 0.001, .hardness = 1, .friction = 1, .restitution = 0.5,
      .melting_point = 200, .boiling_point = 256, .heat_capacity = 10.0, .thermal_conductivity = 1.0}, //glass
 };
 
 material_visual_info base_cell_visual = {.base_color = {1, 1, 1}, .roughness = 0.3f, .metalicity = 0.0f, .opacity = 1.0f};
-material_physical_info base_cell_physical = {.density = 0.001, .hardness = 1, .melting_point = 200, .boiling_point = 250, .growth_time = 1};
+material_physical_info base_cell_physical = {.density = 0.001, .hardness = 1, .friction = 10, .restitution = 0.5, .melting_point = 200, .boiling_point = 250, .growth_time = 1};
 
 GLuint material_visual_properties_texture;
 GLuint material_physical_properties_texture;

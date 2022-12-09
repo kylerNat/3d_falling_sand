@@ -1,7 +1,7 @@
 #ifndef GAME_COMMON
 #define GAME_COMMON
 
-#define N_SOLVER_ITERATIONS 40
+#define N_SOLVER_ITERATIONS 20
 
 size_t index_3D(int_3 pos, int_3 size)
 {
@@ -284,6 +284,8 @@ struct gpu_body_data
     int is_mutating;
     int substantial;
     int fragment_id;
+
+    int brain_id;
 };
 #pragma pack(pop)
 
@@ -292,7 +294,6 @@ struct cpu_body_data
     int id;
     gpu_body_data* gpu_data;
 
-    int brain_id;
     int genome_id;
     int form_id;
 
@@ -320,9 +321,9 @@ struct contact_point
 {
     int body_index[2];
     uint material[2];
+    uint phase;
     real depth[2];
     real_3 pos[2];
-    real_3 x;
     real_3 normal;
     real_3 force;
 };
@@ -398,6 +399,21 @@ struct entity
 };
 #include "chunk.h"
 
+struct debug_menu_t
+{
+    real plotline[1000];
+    int n_plotline_points;
+    char plotname[100];
+
+    bool body_inspector_active;
+    int active_body;
+    int active_joint;
+};
+
+debug_menu_t debug_menu;
+
+#define debug_menu_active (debug_menu.body_inspector_active)
+
 struct world
 {
     uint32 seed;
@@ -413,7 +429,6 @@ struct world
     int* body_fragments; //contains a list of body ids for bodies that have just been fragmented off other bodies
     int n_body_fragments;
 
-    //TODO: turn everything into hashtables
     body_joint* joints;
     int n_joints;
 
@@ -587,6 +602,7 @@ void delete_body(world* w, int id)
     }
 }
 
+//NOTE: bounding boxes seem larger than necessary, not sure if it's a bug or just needs voxel-level detection
 void update_bounding_box(gpu_body_data* body_gpu)
 {
     for(int i = 0; i < 3; i++)
@@ -596,9 +612,10 @@ void update_bounding_box(gpu_body_data* body_gpu)
         real_3 signs = apply_rotation(conjugate(body_gpu->orientation), axis);
         real_3 l;
         real_3 u;
+        //find the corners in the directions of +- axis
         for(int j = 0; j < 3; j++)
         {
-            if(signs[i] > 0)
+            if(signs[j] > 0)
             {
                 l[j] = body_gpu->material_bounds.l[j];
                 u[j] = body_gpu->material_bounds.u[j];
@@ -928,7 +945,6 @@ void iterate_brains(world* w, render_data* rd)
                     force = (1.0f/N_SOLVER_ITERATIONS)*foot_force;
                     // force *= (1.0f/MAX_COYOTE_TIME)*ep->coyote_time;
 
-
                     if(ep->grab_target)
                     {
                         int b = get_body_index(w, ep->grab_target);
@@ -1209,8 +1225,8 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
 
                 average_joint_pos *= 0.5;
 
-                real kp = 1.0;
-                real ki = 0.05;
+                real kp = 0.2;
+                real ki = 0.01;
 
                 real_3 deltap = invK*(kp*u);
                 real_3 deltaL = {0,0,0};
@@ -1238,6 +1254,78 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
                     body->omega += s*body->invI*(cross(r, deltap) + deltaL);
                 }
 
+                // joint->deltap += deltap;
+                // joint->deltaL += deltaL;
+
+                break;
+            }
+            default:;
+        }
+
+        assert(child_gpu->omega.x == child_gpu->omega.x);
+        assert(parent_gpu->omega.x == parent_gpu->omega.x);
+    }
+
+    unreserve_block(manager);
+}
+
+void iterate_joints_positions(memory_manager* manager, world* w, bool use_integral)
+{
+    int* perm = (int*) reserve_block(manager, sizeof(int)*w->n_joints);
+    for(int i = 0; i < w->n_joints; i++) perm[i] = i;
+
+    for(int j = 0; j < w->n_joints; j++)
+    {
+        int i = rand(&w->seed, j, w->n_joints);
+        swap(perm[i], perm[j]);
+        body_joint* joint = &w->joints[perm[j]];
+
+        int b0 = get_body_index(w, joint->body_id[0]);
+        gpu_body_data* parent_gpu = &w->bodies_gpu[b0];
+        cpu_body_data* parent_cpu = &w->bodies_cpu[b0];
+
+        int b1 = get_body_index(w, joint->body_id[1]);
+        gpu_body_data* child_gpu = &w->bodies_gpu[b1];
+        cpu_body_data* child_cpu = &w->bodies_cpu[b1];
+
+        if(!child_gpu->substantial || !parent_gpu->substantial) continue;
+
+        assert(child_gpu->omega.x == child_gpu->omega.x);
+
+        switch(joint->type)
+        {
+            case joint_ball:
+            {
+                real_3 u = {0,0,0};
+                real mu = 0; //reduced mass
+                real_3x3 reduced_I = {};
+                real_3 average_joint_pos = {0,0,0};
+                real_3x3 K = {};
+                for(int a = 0; a <= 1; a++)
+                {
+                    int b = get_body_index(w, joint->body_id[a]);
+                    gpu_body_data* body = &w->bodies_gpu[b];
+                    cpu_body_data* body_cpu = &w->bodies_cpu[b];
+                    real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+                    average_joint_pos += r+body->x;
+                    mu += 1.0/body->m;
+                    reduced_I += body->invI;
+
+                    real_3x3 r_dual = {
+                        0   ,+r.z,-r.y,
+                        -r.z, 0  ,+r.x,
+                        +r.y,-r.x, 0
+                    };
+                    K += real_identity_3(1.0/body->m) - r_dual*body->invI*r_dual;
+                }
+
+                real_3x3 invK = inverse(K);
+
+                mu = 1.0/mu;
+                reduced_I = inverse(reduced_I);
+
+                average_joint_pos *= 0.5;
+
                 { //position correction
                     real_3 u = {0,0,0};
                     for(int a = 0; a <= 1; a++)
@@ -1245,20 +1333,25 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
                         int b = get_body_index(w, joint->body_id[a]);
                         gpu_body_data* body = &w->bodies_gpu[b];
                         cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                        quaternion orientation = axis_to_quaternion(body->omega)*body->orientation;
-                        real_3 r = apply_rotation(orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
-                        real_3 pos = r+body->x+body->x_dot;
+                        real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+                        real_3 pos = r+body->x;
                         u += (a?-1:1)*pos;
                     }
 
-
-                    real kp_pos = 1.0;
+                    real kp_pos = 0.2;
+                    real ki_pos = 0.01;
                     real_3 pseudo_force = invK*(kp_pos*u);
 
                     if(use_integral)
                     {
                         pseudo_force += joint->pseudo_force;
-                        joint->pseudo_force += invK*(ki*u);
+                        joint->pseudo_force += invK*(ki_pos*u);
+                    }
+
+                    if(j == debug_menu.active_joint)
+                    {
+                        sprintf(debug_menu.plotname, "joint position error");
+                        debug_menu.plotline[debug_menu.n_plotline_points++] = norm(u);
                     }
 
                     for(int a = 0; a <= 1; a++)
@@ -1274,105 +1367,29 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
                         update_inertia(body_cpu, body);
                     }
 
+                    if(j == debug_menu.active_joint)
+                    {
+                        u = {0,0,0};
+                        for(int a = 0; a <= 1; a++)
+                        {
+                            int b = get_body_index(w, joint->body_id[a]);
+                            gpu_body_data* body = &w->bodies_gpu[b];
+                            cpu_body_data* body_cpu = &w->bodies_cpu[b];
+                            real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+                            real_3 pos = r+body->x;
+                            u += (a?-1:1)*pos;
+                        }
+
+                        sprintf(debug_menu.plotname, "joint position error");
+                        debug_menu.plotline[debug_menu.n_plotline_points++] = norm(u);
+                    }
+
                     // joint->pseudo_force += pseudo_force;
                     // // joint->pseudo_torque += pseudo_torque;
                 }
 
                 // joint->deltap += deltap;
                 // joint->deltaL += deltaL;
-
-                break;
-            }
-            case joint_hinge:
-            {
-                real_3 u = {0,0,0};
-                real_3 nu = {0,0,0};
-                real theta_dot = 0;
-                real mu = 0.0;
-                real_3x3 reduced_I = {};
-                real_3 average_axis = {0,0,0};
-                real_3 average_joint_pos = {0,0,0};
-                for(int a = 0; a <= 1; a++)
-                {
-                    int b = get_body_index(w, joint->body_id[a]);
-                    gpu_body_data* body = &w->bodies_gpu[b];
-                    cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                    real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
-                    real_3 velocity = cross(body->omega, r)+body->x_dot;
-                    real_3 axis = {0,0,0};
-                    axis[joint->axis[a]] = 1.0;
-                    axis = apply_rotation(body->orientation, axis);
-                    u += (a?-1:1)*velocity;
-                    nu += (a?-1:1)*rej(body->omega, axis);
-                    theta_dot += (a?-1:1)*dot(body->omega, axis);
-                    average_axis += axis;
-                    average_joint_pos += r+body->x;
-                    mu += 1.0f/body->m;
-                    reduced_I += body->invI;
-                }
-                mu = 1.0/mu;
-                reduced_I = inverse(reduced_I);
-
-                average_axis = normalize(average_axis);
-                average_joint_pos *= 0.5;
-
-                real k = 0.2;
-
-                real_3 deltap = k*u*mu;
-                real_3 deltaL = reduced_I*(k*nu);
-
-                for(int a = 0; a <= 1; a++)
-                {
-                    int b = get_body_index(w, joint->body_id[a]);
-                    gpu_body_data* body = &w->bodies_gpu[b];
-                    cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                    real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
-                    real s = (a?1:-1);
-                    body->x_dot += s*deltap/body->m;
-                    body->omega += s*body->invI*(cross(r, deltap) + deltaL);
-                }
-
-                { //position correction
-                    real_3 u = {0,0,0};
-                    real_3 nu = {0,0,0};
-                    for(int a = 0; a <= 1; a++)
-                    {
-                        int b = get_body_index(w, joint->body_id[a]);
-                        gpu_body_data* body = &w->bodies_gpu[b];
-                        cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                        quaternion orientation = axis_to_quaternion(body->omega)*body->orientation;
-                        real_3 r = apply_rotation(orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
-                        real_3 pos = r+body->x+body->x_dot;
-                        real_3 axis = {0,0,0};
-                        axis[joint->axis[a]] = 1.0;
-                        axis = apply_rotation(orientation, axis);
-                        u += (a?-1:1)*pos;
-                        if(a == 0) nu = axis;
-                        else nu = cross(axis, nu);
-                    }
-
-                    real_3 pseudo_force = k*u*mu;
-                    real_3 pseudo_torque = reduced_I*(k*nu);
-
-                    for(int a = 0; a <= 1; a++)
-                    {
-                        int b = get_body_index(w, joint->body_id[a]);
-                        gpu_body_data* body = &w->bodies_gpu[b];
-                        cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                        real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
-                        real s = (a?1:-1);
-                        body->x += s*pseudo_force/body->m;
-                        real_3 pseudo_omega = s*(body->invI*(cross(r, pseudo_force) + pseudo_torque));
-                        body->orientation = axis_to_quaternion(pseudo_omega)*body->orientation;
-                        update_inertia(body_cpu, body);
-                    }
-
-                    joint->pseudo_force += pseudo_force;
-                    joint->pseudo_torque += pseudo_torque;
-                }
-
-                joint->deltap += deltap;
-                joint->deltaL += deltaL;
 
                 break;
             }
@@ -1386,10 +1403,52 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
     unreserve_block(manager);
 }
 
+real_3 calculate_contact_impulse(contact_point* contact, real_3 u, real_3 normal, real_3x3 invK)
+{
+    // real COF = 2.0/(1.0/material_physicals[contact->material[0]].friction+1.0/material_physicals[contact->material[1]].friction);
+    real COF = 0.5*(material_physicals[contact->material[0]].friction+material_physicals[contact->material[1]].friction);
+    real COR = 0.5*(material_physicals[contact->material[0]].restitution+material_physicals[contact->material[1]].restitution);
+    if(COF != COF) COF = 0;
+    // log_output("coefficient of friction between body indices ", contact->body_index[0], " and ", contact->body_index[1], " with materials ", contact->material[0], " and ", contact->material[1], ": ", COF, "\n");
+
+    real u_n = dot(u, normal);
+
+    //static friction impulse
+    real_3 deltap = invK*(-COR*u_n*normal-u);
+
+    real_3 static_impulse = deltap;
+
+    real normal_force = dot(deltap, normal);
+
+    real_3 u_t = u-u_n*normal;
+    real_3 tangent = normalize_or_zero(u_t);
+
+    //if static friction impulse is outside of the friction cone, compute kinetic impulse
+    if(normsq(deltap) > (1+sq(COF))*sq(normal_force) || normal_force < -dot(contact->force, normal))
+    {
+        real_3 impulse_dir = normal;
+        //only apply friction if normal force is positive,
+        //techincally I think there should be negative friction but need to figure out consistent direction for that
+        real effective_COR = COR;
+        // if(normal_force > 0)
+        // {
+        //     effective_COR = 0;
+        //     // impulse_dir += -COF*tangent;
+        //     impulse_dir += -deltax_dot;
+        // }
+        // normal_force = -((1.0f+effective_COR)*u_n)/dot(K*impulse_dir, normal);
+        // normal_force = max(normal_force, -body_cpu->normal_forces[i]);
+        normal_force = max(normal_force, 0.0f);
+        real_3 tangent_force = deltap-normal_force*normal;
+        impulse_dir += COF*normalize_or_zero(tangent_force);
+        deltap = normal_force*impulse_dir;
+    }
+
+    return deltap;
+}
+
 void iterate_contact_points(memory_manager* manager, world* w, render_data* rd)
 {
-    real COR = 0.2;
-    real COF = 10.2;
     real target_penetration = 0.1;
 
     static int frame_number = 0;
@@ -1412,84 +1471,224 @@ void iterate_contact_points(memory_manager* manager, world* w, render_data* rd)
 
             if(!body_gpu->substantial) continue;
             if(body_cpu->phasing) continue;
-            assert(body_gpu->omega.x == body_gpu->omega.x);
 
-            real_3 normal = contact->normal;
-            real_3 r = apply_rotation(body_gpu->orientation, contact->pos[0]-body_gpu->x_cm);
-            real_3 x = r+body_gpu->x;
-            real_3 u = body_gpu->x_dot+cross(body_gpu->omega, r);
-            real u_n = dot(u, normal);
-
-            real_3x3 r_dual = {
-                0   ,+r.z,-r.y,
-                -r.z, 0  ,+r.x,
-                +r.y,-r.x, 0
-            };
-
-            real_3x3 K = real_identity_3(1.0) - body_gpu->m*r_dual*body_gpu->invI*r_dual;
-            real_3x3 invK = inverse(K);
-
-            //static friction impulse
-            real_3 deltax_dot = invK*(-COR*u_n*normal-u);
-
-            real_3 static_impulse = deltax_dot;
-
-            real normal_force = dot(deltax_dot, normal);
-
-            real_3 u_t = u-u_n*normal;
-            real_3 tangent = normalize_or_zero(u_t);
-
-            //if static friction impulse is outside of the friction cone, compute kinetic impulse
-            if(normsq(deltax_dot) > (1+sq(COF))*sq(normal_force) || normal_force < -dot(contact->force, normal))
+            if(contact->phase == 1 || contact->phase == 2) //collision with solid or sand
             {
-                real_3 impulse_dir = normal;
-                //only apply friction if normal force is positive,
-                //techincally I think there should be negative friction but need to figure out consistent direction for that
-                real effective_COR = COR;
-                // if(normal_force > 0)
-                // {
-                //     effective_COR = 0;
-                //     // impulse_dir += -COF*tangent;
-                //     impulse_dir += -deltax_dot;
-                // }
-                // normal_force = -((1.0f+effective_COR)*u_n)/dot(K*impulse_dir, normal);
-                // normal_force = max(normal_force, -body_cpu->normal_forces[i]);
-                normal_force = max(normal_force, 0.0f);
-                real_3 tangent_force = deltax_dot-normal_force*normal;
-                impulse_dir += COF*normalize_or_zero(tangent_force);
-                deltax_dot = normal_force*impulse_dir;
+                assert(body_gpu->omega.x == body_gpu->omega.x);
+
+                real_3 normal = contact->normal;
+                real_3 r = apply_rotation(body_gpu->orientation, contact->pos[0]-body_gpu->x_cm);
+                real_3 x = r+body_gpu->x;
+                real_3 u = body_gpu->x_dot+cross(body_gpu->omega, r);
+
+                real_3x3 r_dual = {
+                    0   ,+r.z,-r.y,
+                    -r.z, 0  ,+r.x,
+                    +r.y,-r.x, 0
+                };
+
+                real_3x3 K = real_identity_3(1.0/body_gpu->m) - r_dual*body_gpu->invI*r_dual;
+                real_3x3 invK = inverse(K);
+
+                real_3 deltap = calculate_contact_impulse(contact, u, normal, invK);
+
+                if(norm(deltap) > 1000)
+                {
+                    real_3 new_x_dot = body_gpu->x_dot + deltap;
+                    real_3 new_omega = body_gpu->omega + body_gpu->m*body_gpu->invI*cross(r, deltap);
+
+                    real_3 new_u = new_x_dot+cross(new_omega, r);
+
+                    log_output("large impulse ", dot(u, normal), ", ", dot(new_u, normal),"\n");
+                }
+
+                contact->force += deltap;
+                body_gpu->x_dot += (1.0/body_gpu->m)*deltap;
+                body_gpu->omega += body_gpu->invI*cross(r, deltap);
+
+                if(body_gpu->omega.x != body_gpu->omega.x)
+                {
+                    assert(0, "nan omega ", b, ", ", K);
+                }
             }
-
-            if(norm(deltax_dot) > 1000)
+            else
             {
-                real_3 impulse_dir = normal-COF*normalize(rej(u, normal));
-                real_3 new_x_dot = body_gpu->x_dot + deltax_dot;
-                real_3 new_omega = body_gpu->omega + body_gpu->m*body_gpu->invI*cross(r, deltax_dot);
+                real_3 r = apply_rotation(body_gpu->orientation, contact->pos[0]-body_gpu->x_cm);
+                real_3 x = r+body_gpu->x;
+                real_3 u = body_gpu->x_dot+cross(body_gpu->omega, r);
 
-                real_3 new_u = new_x_dot+cross(new_omega, r);
-
-                log_output("large impulse ", u_n, ", ", dot(new_u, normal),"\n");
-            }
-
-            contact->force += deltax_dot;
-            body_gpu->x_dot += deltax_dot;
-            body_gpu->omega += body_gpu->m*body_gpu->invI*cross(r, deltax_dot);
-
-            //TODO: set consistent target depths across entire contact manifold
-            real depth = dot(contact->x-x, normal)-contact->depth[1]-target_penetration;
-            // real_3 deltax = 0.05f*max(depth, 0.0f)*normal;
-            real_3 deltax = 0.005f*depth*normal;
-
-            body_gpu->x += deltax;
-            real_3 pseudo_omega = body_gpu->m*body_gpu->invI*cross(r, deltax);
-            body_gpu->orientation = axis_to_quaternion(pseudo_omega)*body_gpu->orientation;
-            update_inertia(body_cpu, body_gpu);
-
-            if(body_gpu->omega.x != body_gpu->omega.x)
-            {
-                assert(0, "nan omega ", b, ", ", K);
+                real_3 deltap = {0,0,0.00005};
+                deltap -= 0.0001*u;
+                deltap *= (1.0/N_SOLVER_ITERATIONS);
+                contact->force += deltap;
+                body_gpu->x_dot += (1.0/body_gpu->m)*deltap;
+                body_gpu->omega += body_gpu->invI*cross(r, deltap);
             }
         }
+        else
+        { //collision between two bodies
+            // real_3 normal = apply_rotation(w->bodies_gpu[contact->body_index[1]].orientation, contact->normal);
+            real_3 normal = contact->normal;
+
+            real_3 u = {0,0,0};
+            real_3x3 K = {};
+            for(int a = 0; a <= 1; a++)
+            {
+                int b = contact->body_index[a];
+                gpu_body_data* body_gpu = &w->bodies_gpu[b];
+                cpu_body_data* body_cpu = &w->bodies_cpu[b];
+
+                if(!body_gpu->substantial) goto next_contact_jump;
+                if(body_cpu->phasing) goto next_contact_jump;
+
+                real_3 r = apply_rotation(body_gpu->orientation, contact->pos[a]-body_gpu->x_cm);
+                real_3 velocity = cross(body_gpu->omega, r)+body_gpu->x_dot;
+                u += (a?-1:1)*velocity;
+
+                real_3x3 r_dual = {
+                    0   ,+r.z,-r.y,
+                    -r.z, 0  ,+r.x,
+                    +r.y,-r.x, 0
+                };
+                K += real_identity_3(1.0/body_gpu->m) - r_dual*body_gpu->invI*r_dual;
+            }
+
+            real_3x3 invK = inverse(K);
+
+            real_3 deltap = calculate_contact_impulse(contact, u, normal, invK);
+
+            contact->force += deltap;
+
+            for(int a = 0; a <= 1; a++)
+            {
+                int b = contact->body_index[a];
+                gpu_body_data* body_gpu = &w->bodies_gpu[b];
+                cpu_body_data* body_cpu = &w->bodies_cpu[b];
+
+                real_3 r = apply_rotation(body_gpu->orientation, contact->pos[a]-body_gpu->x_cm);
+
+                body_gpu->x_dot += ((a?-1:1)/body_gpu->m)*deltap;
+                body_gpu->omega += (a?-1:1)*(body_gpu->invI*cross(r, deltap));
+            }
+        }
+    next_contact_jump:;
+    }
+    unreserve_block(manager);
+}
+
+void iterate_contact_points_positions(memory_manager* manager, world* w, render_data* rd)
+{
+    real target_penetration = 0.1;
+
+    static int frame_number = 0;
+    frame_number++;
+
+    int* perm = (int*) reserve_block(manager, sizeof(int)*w->n_contacts);
+    for(int i = 0; i < w->n_contacts; i++) perm[i] = i;
+
+    for(int i = 0; i < w->n_contacts; i++)
+    {
+        int j = rand(&w->seed, i, w->n_contacts);
+        swap(perm[i], perm[j]);
+        contact_point* contact = &w->contacts[perm[i]];
+
+        if(contact->body_index[1] == -1)
+        { //collision with world
+            int b = contact->body_index[0];
+            cpu_body_data* body_cpu = &w->bodies_cpu[b];
+            gpu_body_data* body_gpu = &w->bodies_gpu[b];
+
+            if(contact->phase == 1 || contact->phase == 2) //collision with solid or sand
+            {
+                if(!body_gpu->substantial) continue;
+                if(body_cpu->phasing) continue;
+                assert(body_gpu->omega.x == body_gpu->omega.x);
+
+                real_3 normal = contact->normal;
+                real_3 r = apply_rotation(body_gpu->orientation, contact->pos[0]-body_gpu->x_cm);
+                real_3 x = r+body_gpu->x;
+                real_3 u = body_gpu->x_dot+cross(body_gpu->omega, r);
+                real u_n = dot(u, normal);
+
+                real_3x3 r_dual = {
+                    0   ,+r.z,-r.y,
+                    -r.z, 0  ,+r.x,
+                    +r.y,-r.x, 0
+                };
+
+                real_3x3 K = real_identity_3(1.0) - body_gpu->m*r_dual*body_gpu->invI*r_dual;
+                real_3x3 invK = inverse(K);
+
+                { //position correction
+                    //TODO: set consistent target depths across entire contact manifold
+                    real depth = dot(contact->pos[1]-x, normal)-contact->depth[1]-target_penetration;
+                    // real_3 deltax = 0.05f*max(depth, 0.0f)*normal;
+                    real_3 deltax = invK*(0.5f*max(depth, 0.0f)*normal);
+
+                    body_gpu->x += deltax;
+                    real_3 pseudo_omega = body_gpu->m*body_gpu->invI*cross(r, deltax);
+                    body_gpu->orientation = axis_to_quaternion(pseudo_omega)*body_gpu->orientation;
+                    update_inertia(body_cpu, body_gpu);
+                }
+
+                if(body_gpu->omega.x != body_gpu->omega.x)
+                {
+                    assert(0, "nan omega ", b, ", ", K);
+                }
+            }
+        }
+        // else
+        // { //collision between two bodies
+        //     gpu_body_data* body0_gpu = &w->bodies_gpu[contact->body_index[0]];
+        //     gpu_body_data* body1_gpu = &w->bodies_gpu[contact->body_index[1]];
+
+        //     // real_3 normal = apply_rotation(body1_gpu->orientation, contact->normal);
+        //     real_3 normal = contact->normal;
+
+        //     real_3 u = {0,0,0};
+        //     real_3x3 K = {};
+        //     for(int a = 0; a <= 1; a++)
+        //     {
+        //         int b = contact->body_index[a];
+        //         gpu_body_data* body_gpu = &w->bodies_gpu[b];
+        //         cpu_body_data* body_cpu = &w->bodies_cpu[b];
+
+        //         if(!body_gpu->substantial) goto next_contact_jump_pos;
+        //         if(body_cpu->phasing) goto next_contact_jump_pos;
+
+        //         real_3 r = apply_rotation(body_gpu->orientation, contact->pos[a]-body_gpu->x_cm);
+        //         real_3 x = body_gpu->x+r;
+        //         u += (a?-1:1)*x;
+
+        //         real_3x3 r_dual = {
+        //             0   ,+r.z,-r.y,
+        //             -r.z, 0  ,+r.x,
+        //             +r.y,-r.x, 0
+        //         };
+        //         K += real_identity_3(1.0/body_gpu->m) - r_dual*body_gpu->invI*r_dual;
+        //     }
+
+        //     real_3x3 invK = inverse(K);
+
+        //     real depth = dot(u, normal)-0*contact->depth[1]-0*target_penetration;
+        //     real_3 pseudo_force = invK*(-0.5f*max(depth, 0.0f)*normal);
+
+        //     if(normsq(pseudo_force) > sq(1)) log_output("psuedo_force: ", pseudo_force, "\n");
+        //     for(int a = 0; a <= 1; a++)
+        //     { //position correction
+        //         int b = contact->body_index[a];
+        //         gpu_body_data* body_gpu = &w->bodies_gpu[b];
+        //         cpu_body_data* body_cpu = &w->bodies_cpu[b];
+
+        //         real_3 r = apply_rotation(body_gpu->orientation, contact->pos[a]-body_gpu->x_cm);
+
+        //         body_gpu->x += ((a?-1:1)/body_gpu->m)*pseudo_force;
+        //         real_3 pseudo_omega = (a?-1:1)*body_gpu->invI*cross(r, pseudo_force);
+        //         body_gpu->orientation = axis_to_quaternion(pseudo_omega)*body_gpu->orientation;
+        //         update_inertia(body_cpu, body_gpu);
+        //     }
+        // }
+    next_contact_jump_pos:;
     }
     unreserve_block(manager);
 }
@@ -1506,7 +1705,7 @@ void iterate_gravity(int iterations, gpu_body_data* bodies_gpu, int n_bodies)
     }
 }
 
-void simulate_joints(memory_manager* manager, world* w, render_data* rd)
+void solve_velocity_constraints(memory_manager* manager, world* w, render_data* rd)
 {
     plan_brains(w, rd);
     for(int b = 0; b < w->n_bodies; b++)
@@ -1525,13 +1724,23 @@ void simulate_joints(memory_manager* manager, world* w, render_data* rd)
         body_gpu->old_x = body_gpu->x;
         body_gpu->old_orientation = body_gpu->orientation;
     }
+    debug_menu.n_plotline_points = 0;
     warm_start_joints(w);
     for(int i = 0; i < N_SOLVER_ITERATIONS; i++)
     {
         iterate_gravity(N_SOLVER_ITERATIONS, w->bodies_gpu, w->n_bodies);
         iterate_brains(w, rd);
         iterate_contact_points(manager, w, rd);
-        iterate_joints(manager, w, i < N_SOLVER_ITERATIONS-2);
+        iterate_joints(manager, w, true);
+    }
+}
+
+void solve_position_constraints(memory_manager* manager, world* w, render_data* rd)
+{
+    for(int i = 0; i < N_SOLVER_ITERATIONS; i++)
+    {
+        iterate_contact_points_positions(manager, w, rd);
+        iterate_joints_positions(manager, w, true);
     }
 }
 
@@ -1580,57 +1789,45 @@ void integrate_body_motion(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu,
 
             real subdivisions = clamp(ceil(norm(omega)/0.01), 1.0f, 100.0f);
 
-            // if(b==14)
+            // for(int i = 0; i < subdivisions; i++)
             // {
-            //     log_output("b: ", b, "\n");
-            //     log_output("E: ", E, "\n");
+            //     quaternion rotation = axis_to_quaternion(omega/subdivisions);
+            //     L = apply_rotation(conjugate(rotation), L);
+            //     total_rotation = total_rotation*rotation;
+            //     omega = bodies_cpu[b].invI*L;
+
+            //     //rotate along energy gradient to fix energy
+            //     for(int n = 0; n < 1; n++)
+            //     {
+            //         real_3 new_omega = bodies_cpu[b].invI*L;
+            //         real new_E = dot(new_omega, L);
+            //         // log_output("new E: ", new_E, "\n");
+
+            //         // real_3 new_L = L+0.001*(E-new_E)*new_omega;
+            //         // new_L = norm(L)*normalize(new_L);
+            //         // real_3 axis = cross(normalize(L), normalize(new_L));
+            //         // real cosine = sqrt(1.0-normsq(axis));
+            //         // real sine   = sqrt(0.5*(1.0-cosine));
+            //         // axis = sine*normalize(axis);
+            //         // quaternion adjustment = {sqrt(1.0-normsq(axis)), axis.x, axis.y, axis.z};
+            //         // // L = new_L;
+
+            //         real_3 axis = 0.1*((E-new_E)/(new_E+E))*cross(normalize(L), normalize(new_omega));
+            //         quaternion adjustment = {sqrt(1.0-normsq(axis)), axis.x, axis.y, axis.z};
+
+            //         L = apply_rotation(adjustment, L);
+            //         total_rotation = total_rotation*conjugate(adjustment);
+            //     }
             // }
+            // total_rotation = total_rotation*conjugate(bodies_gpu[b].orientation);
 
-            for(int i = 0; i < subdivisions; i++)
-            {
-                quaternion rotation = axis_to_quaternion(omega/subdivisions);
-                L = apply_rotation(conjugate(rotation), L);
-                total_rotation = total_rotation*rotation;
-                omega = bodies_cpu[b].invI*L;
-
-                //rotate along energy gradient to fix energy
-                for(int n = 0; n < 1; n++)
-                {
-                    real_3 new_omega = bodies_cpu[b].invI*L;
-                    real new_E = dot(new_omega, L);
-                    // log_output("new E: ", new_E, "\n");
-
-                    // real_3 new_L = L+0.001*(E-new_E)*new_omega;
-                    // new_L = norm(L)*normalize(new_L);
-                    // real_3 axis = cross(normalize(L), normalize(new_L));
-                    // real cosine = sqrt(1.0-normsq(axis));
-                    // real sine   = sqrt(0.5*(1.0-cosine));
-                    // axis = sine*normalize(axis);
-                    // quaternion adjustment = {sqrt(1.0-normsq(axis)), axis.x, axis.y, axis.z};
-                    // // L = new_L;
-
-                    real_3 axis = 0.1*((E-new_E)/(new_E+E))*cross(normalize(L), normalize(new_omega));
-                    quaternion adjustment = {sqrt(1.0-normsq(axis)), axis.x, axis.y, axis.z};
-
-                    L = apply_rotation(adjustment, L);
-                    total_rotation = total_rotation*conjugate(adjustment);
-                }
-            }
-            total_rotation = total_rotation*conjugate(bodies_gpu[b].orientation);
-
-            // if(b==14)
-            // {
-            //     real_3 new_omega = bodies_cpu[b].invI*L;
-            //     real new_E = dot(new_omega, L);
-            //     log_output("final E: ", new_E, "\n");
-            // }
+            total_rotation = axis_to_quaternion(bodies_gpu[b].omega);
 
             bodies_gpu[b].orientation = total_rotation*bodies_gpu[b].orientation;
             bodies_gpu[b].orientation = normalize(bodies_gpu[b].orientation);
 
             update_inertia(&bodies_cpu[b], &bodies_gpu[b]);
-            bodies_gpu[b].omega = bodies_gpu[b].invI*world_L;
-            // bodies_gpu[b].omega = apply_rotation(bodies_gpu[b].orientation, bodies_cpu[b].invI*L);
+            // bodies_gpu[b].omega = bodies_gpu[b].invI*world_L;
 
             {
                 real new_E = dot(bodies_gpu[b].omega, world_L);

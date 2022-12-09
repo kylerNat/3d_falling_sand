@@ -6,7 +6,7 @@
 #include "include/header.glsl"
 #include "include/maths.glsl"
 
-#define localgroup_size 8
+#define localgroup_size 4
 #define subgroup_size 1
 layout(local_size_x = localgroup_size, local_size_y = localgroup_size, local_size_z = localgroup_size) in;
 
@@ -32,7 +32,9 @@ layout(location = 8) uniform int n_body_chunks;
 #include "include/beam_data.glsl"
 #define CONTACT_DATA_BINDING 4
 #include "include/contact_data.glsl"
-#define BODY_CHUNKS_BINDING 5
+#define COLLISION_GRID_BINDING 5
+#include "include/collision_grid.glsl"
+#define BODY_CHUNKS_BINDING 6
 
 struct body_chunk
 {
@@ -55,26 +57,33 @@ uint rand(uint seed)
     return seed;
 }
 
-void add_world_contact(int bi, uvec4 world_voxel, vec3 world_coord, vec3 body_coord, vec3 normal, float world_depth)
+void add_contact(int bi0, int bi1, uvec4 voxel0, uvec4 voxel1, vec3 body0_coord, vec3 body1_coord, vec3 normal, uint phase)
 {
     int collision_index = atomicAdd(n_contacts, 1);
 
     contact_point new_contact;
-    new_contact.b0 = bi;
-    new_contact.b1 = -1;
-    new_contact.material1 = world_voxel.r;
-    new_contact.x_x = world_coord.x;
-    new_contact.x_y = world_coord.y;
-    new_contact.x_z = world_coord.z;
 
-    new_contact.p0_x = body_coord.x;
-    new_contact.p0_y = body_coord.y;
-    new_contact.p0_z = body_coord.z;
+    new_contact.b0 = bi0;
+    new_contact.b1 = bi1;
+
+    new_contact.material0 = mat(voxel0);
+    new_contact.material1 = mat(voxel1);
+
+    new_contact.phase = phase;
+
+    new_contact.p0_x = body0_coord.x;
+    new_contact.p0_y = body0_coord.y;
+    new_contact.p0_z = body0_coord.z;
+
+    new_contact.p1_x = body1_coord.x;
+    new_contact.p1_y = body1_coord.y;
+    new_contact.p1_z = body1_coord.z;
 
     new_contact.n_x = normal.x;
     new_contact.n_y = normal.y;
     new_contact.n_z = normal.z;
-    new_contact.depth1 = world_depth;
+    new_contact.depth0 = signed_depth(voxel0);
+    new_contact.depth1 = signed_depth(voxel1);
 
     new_contact.f_x = 0;
     new_contact.f_y = 0;
@@ -92,7 +101,7 @@ void main()
     int pad = 1;
     ivec3 pos = ivec3(origin+gl_LocalInvocationID);
     // if(any(greaterThan(pos, body_texture_lower(bi)+body_upper(bi)))) return;
-    if(any(greaterThan(pos, body_texture_upper(bi)))) return;
+    if(any(greaterThanEqual(pos, body_texture_upper(bi)))) return;
 
     // if(bi == 0 && layer == 0 && gl_VertexID == 0)
     // {
@@ -112,27 +121,47 @@ void main()
     //+,0,-,0
     //0,+,0,-
     // int rot = (frame_number+layer)%4;
-    uint rot = rand(rand(rand(frame_number)))%4;
+    // uint rot = (2*(pos.x+pos.y+pos.z))%4;
+    uint rot = 0;
     int i = 0;
     ivec2 dir = ivec2(((rot&1)*(2-rot)), (1-(rot&1))*(1-rot));
 
+    ivec3 pu = ivec3(pos.x, pos.y, pos.z+1);
+    ivec3 pd = ivec3(pos.x, pos.y, pos.z-1);
+    ivec3 pr = ivec3(pos.x+dir.x, pos.y+dir.y, pos.z);
+    ivec3 pl = ivec3(pos.x-dir.x, pos.y-dir.y, pos.z);
+    ivec3 pf = ivec3(pos.x-dir.y, pos.y+dir.x, pos.z);
+    ivec3 pb = ivec3(pos.x+dir.y, pos.y-dir.x, pos.z);
+
     uvec4 c  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z), 0);
-    uvec4 u  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z+1), 0);
-    uvec4 d  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z-1), 0);
-    uvec4 r  = texelFetch(body_materials, ivec3(pos.x+dir.x, pos.y+dir.y, pos.z), 0);
-    uvec4 l  = texelFetch(body_materials, ivec3(pos.x-dir.x, pos.y-dir.y, pos.z), 0);
-    uvec4 f  = texelFetch(body_materials, ivec3(pos.x-dir.y, pos.y+dir.x, pos.z), 0);
-    uvec4 b  = texelFetch(body_materials, ivec3(pos.x+dir.y, pos.y-dir.x, pos.z), 0);
+    uvec4 u  = texelFetch(body_materials, pu, 0);
+    uvec4 d  = texelFetch(body_materials, pd, 0);
+    uvec4 r  = texelFetch(body_materials, pr, 0);
+    uvec4 l  = texelFetch(body_materials, pl, 0);
+    uvec4 f  = texelFetch(body_materials, pf, 0);
+    uvec4 b  = texelFetch(body_materials, pb, 0);
 
     if(body_fragment_id(bi) > 0)
     {
         if(floodfill(c) != body_fragment_id(bi)) c = uvec4(0);
-        if(floodfill(u) != body_fragment_id(bi)) u = uvec4(0);
-        if(floodfill(d) != body_fragment_id(bi)) d = uvec4(0);
-        if(floodfill(r) != body_fragment_id(bi)) r = uvec4(0);
-        if(floodfill(l) != body_fragment_id(bi)) l = uvec4(0);
-        if(floodfill(f) != body_fragment_id(bi)) f = uvec4(0);
-        if(floodfill(b) != body_fragment_id(bi)) b = uvec4(0);
+        if(floodfill(u) != body_fragment_id(bi)
+           || any(lessThan(pu, body_texture_lower(bi)))
+           || any(greaterThanEqual(pu, body_texture_upper(bi)))) u = uvec4(0);
+        if(floodfill(d) != body_fragment_id(bi)
+           || any(lessThan(pd, body_texture_lower(bi)))
+           || any(greaterThanEqual(pd, body_texture_upper(bi)))) d = uvec4(0);
+        if(floodfill(r) != body_fragment_id(bi)
+           || any(lessThan(pr, body_texture_lower(bi)))
+           || any(greaterThanEqual(pr, body_texture_upper(bi)))) r = uvec4(0);
+        if(floodfill(l) != body_fragment_id(bi)
+           || any(lessThan(pl, body_texture_lower(bi)))
+           || any(greaterThanEqual(pl, body_texture_upper(bi)))) l = uvec4(0);
+        if(floodfill(f) != body_fragment_id(bi)
+           || any(lessThan(pf, body_texture_lower(bi)))
+           || any(greaterThanEqual(pf, body_texture_upper(bi)))) f = uvec4(0);
+        if(floodfill(b) != body_fragment_id(bi)
+           || any(lessThan(pb, body_texture_lower(bi)))
+           || any(greaterThanEqual(pb, body_texture_upper(bi)))) b = uvec4(0);
     }
 
     ivec3 form_pos = pos+body_form_origin(bi);
@@ -301,21 +330,31 @@ void main()
         depth = min(depth, depth(b)+1);
     }
 
+    out_voxel.g = uint(depth);
+
+    out_voxel.b = temp;
+
+    out_voxel.a = volt | (trig << 4);
+
+    //check 2x2x2 to determine if this corner is on the boundary
     bool inside = false;
     bool outside = false;
+    uvec4 corner_voxel = uvec4(0);
+    //TODO: better way of deciding the corner voxel when there are multiple
     for(int z = 0; z < 2; z++)
         for(int y = 0; y < 2; y++)
             for(int x = 0; x < 2; x++)
             {
                 ivec3 p = ivec3(pos.x-x, pos.y-y, pos.z-z);
                 uvec4 vox;
-                if(any(lessThan(p, body_texture_lower(bi))) || any(greaterThan(p, body_texture_upper(bi))))
+                if(any(lessThan(p, body_texture_lower(bi)+body_lower(bi))) || any(greaterThanEqual(p, body_texture_lower(bi)+body_upper(bi))))
                     vox = uvec4(0);
                 else
                     vox = texelFetch(body_materials, p, 0);
                 if(mat(vox) != 0 && (body_fragment_id(bi) == 0 || floodfill(vox) == body_fragment_id(bi)))
                 {
                     inside = true;
+                    corner_voxel = vox;
                 }
                 else
                 {
@@ -326,47 +365,64 @@ void main()
     if(inside && outside)
     {
         vec3 body_coord = pos-body_texture_lower(bi);
-
-        // int n_subdivisions = max(int(length(body_x(bi)-body_old_x(bi))*5.0), 1);
-        int n_subdivisions = 1;
-        float scale = 1.0/max(float(n_subdivisions-1), 1.0);
         vec3 r = body_coord-body_x_cm(bi);
 
-        for(int i = n_subdivisions-1; i >= 0; i--)
+        vec3 world_coord = apply_rotation(body_orientation(bi), r)+body_x(bi);
+
+        ivec3 wvc = ivec3(world_coord); //world_voxel_coord
+        uvec4 world_voxel = texelFetch(materials, wvc, 0);
+
+        // if(mat(world_voxel) != 0 && (phase(world_voxel) == phase_solid || phase(world_voxel) == phase_sand))
+        if(mat(world_voxel) != 0)
         {
-            float t = 1-i*scale;
-            vec4 orientation = mix(body_old_orientation(bi), body_orientation(bi), t); //who needs slerp
-            orientation = normalize(orientation);
-            vec3 x = mix(body_old_x(bi), body_x(bi), t);
-            vec3 world_coord = apply_rotation(orientation, r)+x;
+            vec3 normal = unnormalized_gradient(materials, wvc);
+            normal = normalize(normal);
+            vec3 nsign = sign(normal);
+            vec3 nabs = normal*nsign;
 
-            ivec3 wvc = ivec3(world_coord); //world_voxel_coord
-            uvec4 world_voxel = texelFetch(materials, wvc, 0);
-            int world_depth = signed_depth(world_voxel);
+            vec3 main_dir = step(nabs.yzx, nabs.xyz)*step(nabs.zyx, nabs.xyz);
+            vec3 adjusted_world_coord = mix(world_coord, nsign*ceil(nsign*world_coord), main_dir);
 
-            if(world_depth <= 0)
+            add_contact(bi, -1, corner_voxel, world_voxel, body_coord, adjusted_world_coord, normal, phase(world_voxel));
+        }
+
+        ivec3 cell_coord = ivec3(world_coord/collision_cell_size);
+        cell_coord = clamp(cell_coord, 0, collision_cells_per_axis);
+
+        collision_cell cell = collision_grid[cell_coord.x+collision_cells_per_axis*(cell_coord.y+collision_cells_per_axis*cell_coord.z)];
+
+        for(int ci = cell.first_index; ci < cell.first_index+cell.n_bodies; ci++)
+        {
+            int bi1 = collision_indices[ci];
+        // for(int bi1 = 0; bi1 < n_bodies; bi1++)
+        // {
+            if(bi1 == bi || body_is_substantial(bi) == 0 || body_fragment_id(bi)!=1 || body_fragment_id(bi1)!=1 || (body_brain_id(bi) != 0 && (body_brain_id(bi1) == body_brain_id(bi)))) continue;
+            //working in the frame of body bi1
+            vec4 rel_orientation = qmult(conjugate(body_orientation(bi1)), body_orientation(bi));
+            vec3 rel_x = apply_rotation(conjugate(body_orientation(bi1)), body_x(bi)-body_x(bi1));
+            vec3 body1_coord = apply_rotation(rel_orientation, r)+rel_x+body_x_cm(bi1);
+
+            ivec3 body1_pos = ivec3(body1_coord);
+            if(any(lessThan(body1_pos, body_lower(bi1))) || any(greaterThanEqual(body1_pos, body_upper(bi1)))) continue;
+            ivec3 pos1 = body1_pos+body_texture_lower(bi1);
+            uvec4 body1_voxel = texelFetch(body_materials, pos1, 0);
+
+            if(mat(body1_voxel) != 0)
             {
-                vec3 normal = unnormalized_gradient(materials, wvc);
+                vec3 normal = unnormalized_gradient(body_materials, pos1);
                 normal = normalize(normal);
                 vec3 nsign = sign(normal);
                 vec3 nabs = normal*nsign;
+                normal = apply_rotation(body_orientation(bi1), normal);
 
                 vec3 main_dir = step(nabs.yzx, nabs.xyz)*step(nabs.zyx, nabs.xyz);
-                vec3 adjusted_world_coord = mix(world_coord, nsign*ceil(nsign*world_coord), main_dir);
+                vec3 adjusted_body1_coord = mix(body1_coord, nsign*ceil(nsign*body1_coord), main_dir);
 
-                add_world_contact(bi, world_voxel, adjusted_world_coord, body_coord, normal, world_depth);
+                add_contact(bi, bi1, corner_voxel, body1_voxel, body_coord, adjusted_body1_coord, normal, phase_solid);
                 break;
             }
         }
     }
-
-    out_voxel.g = 0;
-    // out_voxel.g = uint(depth);
-    // out_voxel.g = uint(depth) | (phase << 6) | (transient << 7);
-
-    out_voxel.b = temp;
-
-    out_voxel.a = volt | (trig << 4);
 
     imageStore(body_materials_out, pos, out_voxel);
 }

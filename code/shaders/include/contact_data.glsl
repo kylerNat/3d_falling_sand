@@ -8,11 +8,11 @@ struct contact_point
     int b1;
     uint material0;
     uint material1;
+    uint phase;
     float depth0;
     float depth1;
     float p0_x; float p0_y; float p0_z;
     float p1_x; float p1_y; float p1_z;
-    float x_x; float x_y; float x_z;
     float n_x; float n_y; float n_z;
     float f_x; float f_y; float f_z;
 };
