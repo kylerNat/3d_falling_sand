@@ -67,9 +67,11 @@ void* platform_big_alloc(size_t memory_size)
     return out;
 }
 // #define platform_big_alloc(memory_size) malloc(memory_size);
-#include "memory.h"
 
-#include "win32_work_system.h"
+#include "memory.cpp"
+#include "context.cpp"
+
+// #include "win32_work_system.h"
 
 struct file_t
 {
@@ -179,7 +181,7 @@ char* load_file_0_terminated(memory_manager* manager, char* filename)
         exit(EXIT_SUCCESS);
     }
 
-    char* output = (char*) permalloc(manager, file_size+1);
+    char* output = (char*) stalloc(file_size+1);
 
     DWORD bytes_read;
     int error = ReadFile(file,
@@ -539,9 +541,8 @@ window_t create_window(memory_manager* manager, char* window_title, char* class_
     glDebugMessageCallbackARB(gl_error_callback, 0);
     glEnable(GL_DEBUG_OUTPUT);
 
-    gl_init_programs(manager);
-
-    gl_init_general_buffers(manager);
+    gl_init_buffers();
+    gl_init_shaders();
 
     { //create raw input device
         RAWINPUTDEVICE rid[2];
@@ -782,23 +783,8 @@ int update_window(window_t* wnd)
 int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nCmdShow)
 {
-    log_output("sizeof(cpu_body_data) = ", sizeof(cpu_body_data), "\n");
-    log_output("sizeof(gpu_body_data) = ", sizeof(gpu_body_data), "\n");
-
-    log_output("sizeof(cpu_form_data) = ", sizeof(cpu_form_data), "\n");
-    log_output("sizeof(gpu_form_data) = ", sizeof(gpu_form_data), "\n");
-
-    memory_block* block = allocate_new_block(block_size);
-    memory_manager* manager = (memory_manager*) (block->memory + block->used);
-    block->used += sizeof(memory_manager);
-    manager->first = block;
-    manager->current = manager->first;
-
-    manager->first_region = (memory_region*) platform_big_alloc(max_dynamic_size),
-    manager->first_region->prev = 0;
-    manager->first_region->next = 0;
-    manager->first_region->size = max_dynamic_size-sizeof(memory_region);
-    manager->first_region->free = true;
+    current_context = create_context();
+    memory_manager* manager = get_context()->manager;
 
     window_t wnd = create_window(manager, "3D Sand", "3dsand", 1280, 720, 10, 10, hinstance);
     // fullscreen(wnd);
@@ -817,33 +803,33 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // .player = {.x = {289.1,175.1, 302.1}, .x_dot = {0,0,0}},
         .player = {.x = {chunk_size/2+45.1, chunk_size/2+25.1, 42.1}, .x_dot = {0,0,0}},
 
-        .body_table = (index_table_entry*) permalloc_clear(manager, sizeof(index_table_entry)*n_max_bodies),
+        .body_table = (index_table_entry*) stalloc_clear(sizeof(index_table_entry)*n_max_bodies),
         .n_max_bodies = n_max_bodies,
         .next_body_id = 1,
         //TODO: real max limits
-        .bodies_cpu = (cpu_body_data*) permalloc_clear(manager, 4096*sizeof(cpu_body_data)),
-        .bodies_gpu = (gpu_body_data*) permalloc_clear(manager, 4096*sizeof(gpu_body_data)),
+        .bodies_cpu = (cpu_body_data*) stalloc_clear(4096*sizeof(cpu_body_data)),
+        .bodies_gpu = (gpu_body_data*) stalloc_clear(4096*sizeof(gpu_body_data)),
         .n_bodies = 0,
 
-        .body_fragments = (int*) permalloc(manager, 4096*sizeof(int)),
+        .body_fragments = (int*) stalloc(4096*sizeof(int)),
         .n_body_fragments = 0,
 
-        .joints = (body_joint*) permalloc_clear(manager, 4096*sizeof(body_joint)),
+        .joints = (body_joint*) stalloc_clear(4096*sizeof(body_joint)),
         .n_joints = 0,
 
-        .contacts = (contact_point*) permalloc_clear(manager, 128*1024*sizeof(contact_point)),
+        .contacts = (contact_point*) stalloc_clear(128*1024*sizeof(contact_point)),
         .n_contacts = 0,
 
-        .brain_table = (index_table_entry*) permalloc_clear(manager, sizeof(index_table_entry)*n_max_brains),
+        .brain_table = (index_table_entry*) stalloc_clear(sizeof(index_table_entry)*n_max_brains),
         .n_max_brains = n_max_brains,
         .next_brain_id = 1,
-        .brains = (brain*) permalloc_clear(manager, 1024*sizeof(brain)),
+        .brains = (brain*) stalloc_clear(1024*sizeof(brain)),
         .n_brains = 0,
 
-        .genome_table = (index_table_entry*) permalloc_clear(manager, sizeof(index_table_entry)*n_max_genomes),
+        .genome_table = (index_table_entry*) stalloc_clear(sizeof(index_table_entry)*n_max_genomes),
         .n_max_genomes = n_max_genomes,
         .next_genome_id = 1,
-        .genomes = (genome*) permalloc_clear(manager, 1024*sizeof(genome)),
+        .genomes = (genome*) stalloc_clear(1024*sizeof(genome)),
         .n_genomes = 0,
 
         .gew = {
@@ -860,7 +846,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             },
             .camera_pos = {0,0,-10},
 
-            .genodes = (genode*) permalloc_clear(manager, 1024*sizeof(genode)),
+            .genodes = (genode*) stalloc_clear(1024*sizeof(genode)),
             .n_genodes = 0,
 
             .gizmo_x = {.r = 5, .color = {1,0,0,1},},
@@ -872,26 +858,26 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         .form_space = {
             .max_size = {form_texture_size, form_texture_size, form_texture_size},
-            .free_regions = (bounding_box*) permalloc(manager, sizeof(bounding_box)*10000),
+            .free_regions = (bounding_box*) stalloc(sizeof(bounding_box)*10000),
             .n_free_regions = 0,
         },
 
         .body_space = {
             .max_size = {body_texture_size, body_texture_size, body_texture_size},
-            .free_regions = (bounding_box*) permalloc(manager, sizeof(bounding_box)*10000),
+            .free_regions = (bounding_box*) stalloc(sizeof(bounding_box)*10000),
             .n_free_regions = 0,
         },
 
-        .explosions = (explosion_data*) permalloc_clear(manager, 4096*sizeof(explosion_data)),
+        .explosions = (explosion_data*) stalloc_clear(4096*sizeof(explosion_data)),
         .n_explosions = 0,
 
-        .beams = (beam_data*) permalloc_clear(manager, 4096*sizeof(beam_data)),
+        .beams = (beam_data*) stalloc_clear(4096*sizeof(beam_data)),
         .n_beams = 0,
 
-        .c = (chunk*) permalloc(manager, 8*sizeof(chunk)),
+        .c = (chunk*) stalloc(8*sizeof(chunk)),
         .chunk_lookup = {},
 
-        .collision_grid = (collision_cell*) permalloc_clear(manager, sizeof(collision_cell)*collision_cells_per_axis*collision_cells_per_axis*collision_cells_per_axis),
+        .collision_grid = (collision_cell*) stalloc_clear(sizeof(collision_cell)*collision_cells_per_axis*collision_cells_per_axis*collision_cells_per_axis),
     };
 
     w.form_space.free_regions[w.form_space.n_free_regions++] = {{0,0,0}, {form_texture_size, form_texture_size, form_texture_size}};
@@ -900,15 +886,15 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     genome* g = create_genome(&w);
     {
-        g->form_id_updates = (int*) permalloc(manager, 1024*sizeof(int));
-        g->forms_cpu = (cpu_form_data*) permalloc(manager, 1024*sizeof(cpu_form_data));
-        g->forms_gpu = (gpu_form_data*) permalloc(manager, 1024*sizeof(gpu_form_data));
+        g->form_id_updates = (int*) stalloc(1024*sizeof(int));
+        g->forms_cpu = (cpu_form_data*) stalloc(1024*sizeof(cpu_form_data));
+        g->forms_gpu = (gpu_form_data*) stalloc(1024*sizeof(gpu_form_data));
         g->n_forms = 0;
-        g->joints = (form_joint*) permalloc(manager, 1024*sizeof(form_joint));
+        g->joints = (form_joint*) stalloc(1024*sizeof(form_joint));
         g->n_joints = 0;
-        g->endpoints = (form_endpoint*) permalloc(manager, 1024*sizeof(form_endpoint));
+        g->endpoints = (form_endpoint*) stalloc(1024*sizeof(form_endpoint));
         g->n_endpoints = 0;
-        g->cell_types = (cell_type*) permalloc_clear(manager, 128*sizeof(cell_type));
+        g->cell_types = (cell_type*) stalloc_clear(128*sizeof(cell_type));
         g->n_cell_types = 3;
     }
 
@@ -928,7 +914,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     chunk* c = w.c;
 
-    c->materials = (uint16*) permalloc(manager, sizeof(uint16)*chunk_size*chunk_size*chunk_size);
+    c->materials = (uint16*) stalloc(sizeof(uint16)*chunk_size*chunk_size*chunk_size);
 
     for(int z = 0; z < chunk_size; z++)
         for(int y = 0; y < chunk_size; y++)
@@ -1013,7 +999,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         int_3 unpadded_size = {12,12,12};
         int_3 size = unpadded_size+(int_3){4,2,2};
         w.bodies_gpu[b].material_bounds = {{0,0,0}, size};
-        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, size.x*size.y*size.z*sizeof(uint8));
+        w.bodies_cpu[b].materials = (uint8*) stalloc(size.x*size.y*size.z*sizeof(uint8));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(unpadded_size);
         w.bodies_gpu[b].form_offset = {0,0,0};
         w.bodies_gpu[b].x = {chunk_size*3/4-5*b, chunk_size/2, 50};
@@ -1100,7 +1086,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         form_cpu->storage_size = {limb_length,1,1};
         int total_size = axes_product(form_cpu->storage_size);
-        form_cpu->materials = (uint8*) dynamic_alloc(manager->first_region, total_size);
+        form_cpu->materials = (uint8*) dynamic_alloc(total_size);
         memset(form_cpu->materials, 0, total_size);
 
         for(int x = 0; x < form_cpu->storage_size.x; x++)
@@ -1134,7 +1120,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         form_cpu->storage_size = {head_size,head_size,head_size};
         form_cpu->storage_size.x = 4*((form_cpu->storage_size.x+3)/4);
         int total_size = axes_product(form_cpu->storage_size);
-        form_cpu->materials = (uint8*) dynamic_alloc(manager->first_region, total_size);
+        form_cpu->materials = (uint8*) dynamic_alloc(total_size);
         memset(form_cpu->materials, 0, total_size);
 
         for(int x = 0; x < head_size; x++)
@@ -1166,7 +1152,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         form_cpu->storage_size = {body_length,body_width,body_depth};
         form_cpu->storage_size.x = 4*((form_cpu->storage_size.x+3)/4);
         int total_size = axes_product(form_cpu->storage_size);
-        form_cpu->materials = (uint8*) dynamic_alloc(manager->first_region, total_size);
+        form_cpu->materials = (uint8*) dynamic_alloc(total_size);
         memset(form_cpu->materials, 0, total_size);
 
         for(int x = 0; x < body_length; x++)
@@ -1185,7 +1171,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         int b = new_body_index(&w);
         int_3 size = {20,10,5};
         w.bodies_gpu[b].material_bounds = {{0,0,0}, size};
-        w.bodies_cpu[b].materials = (uint8*) permalloc(manager, size.x*size.y*size.z*sizeof(uint8));
+        w.bodies_cpu[b].materials = (uint8*) stalloc(size.x*size.y*size.z*sizeof(uint8));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(size);
         w.bodies_gpu[b].form_offset = {0,0,0};
         w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
@@ -1292,9 +1278,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     brain* br = create_brain(&w);
     {
         br->root_id = head_id;
-        br->body_ids = (int*) dynamic_alloc(manager->first_region, 256*sizeof(int));
+        br->body_ids = (int*) dynamic_alloc(256*sizeof(int));
         br->n_max_bodies = 256;
-        br->endpoints = (endpoint*) permalloc(manager, 1024*sizeof(endpoint));
+        br->endpoints = (endpoint*) stalloc(1024*sizeof(endpoint));
         br->n_endpoints = 0;
         br->genome_id = g->id;
     }
@@ -1390,36 +1376,36 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     // w.entity_savefile = open_file("entities.dat");
 
     render_data rd = {
-        .circles = (circle_render_info*) permalloc(manager, 1000000*sizeof(circle_render_info)),
+        .circles = (circle_render_info*) stalloc(1000000*sizeof(circle_render_info)),
         .n_circles = 0,
 
-        .line_points = (line_render_info*) permalloc(manager, 10000*sizeof(line_render_info)),
+        .line_points = (line_render_info*) stalloc(10000*sizeof(line_render_info)),
         .n_total_line_points = 0,
-        .n_line_points = (uint*) permalloc(manager, 1000*sizeof(uint)),
+        .n_line_points = (uint*) stalloc(1000*sizeof(uint)),
         .n_lines = 0,
 
-        .debug_log = (char*) permalloc_clear(manager, 4096),
+        .debug_log = (char*) stalloc_clear(4096),
 
-        .text_data = (char*) permalloc_clear(manager, 65536),
+        .text_data = (char*) stalloc_clear(65536),
         .next_text = rd.text_data,
-        .texts = (text_render_info*) permalloc_clear(manager, sizeof(text_render_info)*4096),
+        .texts = (text_render_info*) stalloc_clear(sizeof(text_render_info)*4096),
         .n_texts = 0,
     };
 
     render_data ui = {
-        .circles = (circle_render_info*) permalloc(manager, 10000*sizeof(circle_render_info)),
+        .circles = (circle_render_info*) stalloc(10000*sizeof(circle_render_info)),
         .n_circles = 0,
 
-        .line_points = (line_render_info*) permalloc(manager, 10000*sizeof(line_render_info)),
+        .line_points = (line_render_info*) stalloc(10000*sizeof(line_render_info)),
         .n_total_line_points = 0,
-        .n_line_points = (uint*) permalloc(manager, 1000*sizeof(uint)),
+        .n_line_points = (uint*) stalloc(1000*sizeof(uint)),
         .n_lines = 0,
 
-        .debug_log = (char*) permalloc_clear(manager, 4096),
+        .debug_log = (char*) stalloc_clear(4096),
 
-        .text_data = (char*) permalloc_clear(manager, 65536),
+        .text_data = (char*) stalloc_clear(65536),
         .next_text = ui.text_data,
-        .texts = (text_render_info*) permalloc_clear(manager, sizeof(text_render_info)*4096),
+        .texts = (text_render_info*) stalloc_clear(sizeof(text_render_info)*4096),
         .n_texts = 0,
     };
 
@@ -1456,12 +1442,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         size_t buffer_size = 4*wft.nAvgBytesPerSec;
         ad = (audio_data){
-            .buffer = (int16*) permalloc(manager, buffer_size),
+            .buffer = (int16*) stalloc(buffer_size),
             .sample_rate = wft.nSamplesPerSec,
             .source_voice = source_voice,
             .samples_played = 0,
 
-            .noises = (noise*) permalloc(manager, 1000*sizeof(noise)),
+            .noises = (noise*) stalloc(1000*sizeof(noise)),
             .n_noises = 0,
         };
         ad.buffer_length = buffer_size/sizeof(ad.buffer[0]);
@@ -1508,32 +1494,32 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         0, 0, 0, 1,
     };
 
-    work_stack = (work_task*) permalloc(manager, 1024*sizeof(work_task));
-    n_work_entries = 0;
-    n_remaining_tasks = 0;
-    work_semephore = CreateSemaphoreA(0, 0, n_max_workers, NULL);
-    for(int i = 0; i < n_max_workers+1; i++)
-    {
-        DWORD thread_id;
-        if(i == 0)
-        {
-            main_context  = create_thread_context(0);
-            continue;
-        }
+    // work_stack = (work_task*) stalloc(1024*sizeof(work_task));
+    // n_work_entries = 0;
+    // n_remaining_tasks = 0;
+    // work_semephore = CreateSemaphoreA(0, 0, n_max_workers, NULL);
+    // for(int i = 0; i < n_max_workers+1; i++)
+    // {
+    //     DWORD thread_id;
+    //     if(i == 0)
+    //     {
+    //         main_context  = create_thread_context(0);
+    //         continue;
+    //     }
 
-        HANDLE thread_handle = CreateThread(0, 0, thread_proc, (void*) (uint64) i, 0, &thread_id);
-        CloseHandle(thread_handle);
-    }
+    //     HANDLE thread_handle = CreateThread(0, 0, thread_proc, (void*) (uint64) i, 0, &thread_id);
+    //     CloseHandle(thread_handle);
+    // }
 
-    waterfall = load_audio_file(manager, "../sounds/water_flow.wav");
-    jump_sound = load_audio_file(manager, "../sounds/Meat_impacts_0.wav");
+    waterfall = load_audio_file(manager, "data/sounds/water_flow.wav");
+    jump_sound = load_audio_file(manager, "data/sounds/Meat_impacts_0.wav");
     // play_sound(&ad, &waterfall, 1.0);
 
     int grid_width = 100;
     int grid_height = 100;
     real grid_size = 10.0;
     int n_ground_circles = (grid_width+1)*(grid_height+1);
-    circle_render_info* ground_circles = (circle_render_info*) permalloc(manager, sizeof(circle_render_info)*n_ground_circles);
+    circle_render_info* ground_circles = (circle_render_info*) stalloc(sizeof(circle_render_info)*n_ground_circles);
 
     for(int x = 0; x <= grid_width; x++)
     {

@@ -1,6 +1,8 @@
 #ifndef GRAPHICS
 #define GRAPHICS
 
+#define GLSL_VERSION "430"
+
 #include <gl/gl.h>
 #include <utils/logging.h>
 #include <utils/misc.h>
@@ -147,7 +149,7 @@ int prepass_resolution_y = resolution_y/2;
 
 GLuint lightprobe_color_textures[2];
 GLuint lightprobe_depth_textures[2];
-#include "shaders/include/lightprobe_header.glsl" //lightprobe constants
+#include "../shaders/include/lightprobe_header.glsl" //lightprobe constants
 
 GLuint probe_rays_buffer;
 
@@ -183,11 +185,11 @@ font_info init_font(memory_manager* manager, char* font_filename, real font_size
             .font_size = font_size,
             .first_unicode_codepoint_in_range = 0,
             .num_chars = 256,
-            .chardata_for_range = (stbtt_packedchar*) permalloc(manager, sizeof(stbtt_packedchar)*256),
+            .chardata_for_range = (stbtt_packedchar*) stalloc(sizeof(stbtt_packedchar)*256),
         },
     };
 
-    uint8* pixels = (uint8*) reserve_block(manager, 4*sq(font_resolution));
+    uint8* pixels = (uint8*) stalloc(4*sq(font_resolution));
 
     error = stbtt_PackBegin(&spc, pixels, font_resolution, font_resolution, 0, 1, 0);
     assert(error);
@@ -204,13 +206,15 @@ font_info init_font(memory_manager* manager, char* font_filename, real font_size
     glBindTexture(GL_TEXTURE_2D, font_texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, font_resolution, font_resolution, 0, GL_RED, GL_UNSIGNED_BYTE, pixels);
 
-    unreserve_block(manager);
+    stunalloc(pixels);
 
     return {font_texture, ranges[0].chardata_for_range, font_size};
 }
 
-void gl_init_general_buffers(memory_manager* manager)
+void gl_init_buffers()
 {
+    memory_manager* manager = get_context()->manager;
+
     glGenTextures(1, &prepass_x_texture);
     glBindTexture(GL_TEXTURE_2D, prepass_x_texture);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB32F, prepass_resolution_x, prepass_resolution_y);
@@ -248,7 +252,7 @@ void gl_init_general_buffers(memory_manager* manager)
     }
 
     glGenTextures(len(lightprobe_x_textures), lightprobe_x_textures);
-    real_3* image = (real_3*) permalloc(manager, lightprobes_h*lightprobes_w*sizeof(real_3));
+    real_3* image = (real_3*) stalloc(lightprobes_h*lightprobes_w*sizeof(real_3));
     for(int j = 0; j < lightprobes_w*lightprobes_h; j++)
     {
         image[j] = {(lightprobe_spacing/2)+lightprobe_spacing*(j%lightprobes_per_axis), (lightprobe_spacing/2)+lightprobe_spacing*((j/lightprobes_per_axis)%lightprobes_per_axis), (lightprobe_spacing/2)+lightprobe_spacing*(j/sq(lightprobes_per_axis))};
@@ -430,7 +434,7 @@ void gl_init_general_buffers(memory_manager* manager)
     glBindTexture(GL_TEXTURE_2D, spritesheet_texture);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8I, 4096, 4096);
 
-    byte* blue_noise_data = stbi_load("HDR_RGBA_0.png", &blue_noise_w, &blue_noise_h, 0, 4);
+    byte* blue_noise_data = stbi_load("data/HDR_RGBA_0.png", &blue_noise_w, &blue_noise_h, 0, 4);
     glGenTextures(1, &blue_noise_texture);
     glBindTexture(GL_TEXTURE_2D, blue_noise_texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, blue_noise_w, blue_noise_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, blue_noise_data);
@@ -464,7 +468,18 @@ struct sprite_info
 #define add_interleaved_attribute(dim, gl_type, do_normalize, stride, divisor) \
     add_attribute_common(dim, gl_type, do_normalize, stride, dim*gl_get_type_size(gl_type), divisor);
 
-#include "generated_shader_list.h"
+char* shader_path = "shaders/";
+
+#include "preprocess_shaders.h"
+
+#define add_shader(program, filename) GLuint program;
+#include "shader_list.h"
+
+void gl_init_shaders()
+{
+    #define add_shader(program, filename) program = load_shader(filename);
+    #include "shader_list.h"
+}
 
 void draw_to_screen(GLuint texture)
 {
@@ -1059,7 +1074,7 @@ void resize_form_storage(memory_manager* manager, cuboid_space* form_space, cpu_
     if(new_size == fc->storage_size) return;
 
     size_t new_size_total = new_size.x*new_size.y*new_size.z;
-    uint8* new_materials = dynamic_alloc(manager->first_region, new_size_total);
+    uint8* new_materials = dynamic_alloc(new_size_total);
 
     memset(new_materials, 0, new_size_total);
     for(int z = 0; z < fc->storage_size.z; z++)
@@ -2007,7 +2022,8 @@ void simulate_bodies(memory_manager* manager, world* w, gpu_form_data* forms_gpu
     size_t body_indices_size = sizeof(int)*n_max_body_indices;
     size_t collision_grid_size = sizeof(int_2)*collision_cells_per_axis*collision_cells_per_axis*collision_cells_per_axis;
 
-    byte* data = reserve_block(manager, collision_grid_size+sizeof(int)+body_indices_size);
+    byte* memory = stalloc(collision_grid_size+sizeof(int)+body_indices_size);
+    byte* data = memory;
 
     int_2* collision_grid = (int_2*) data;
     data += collision_grid_size;
@@ -2037,9 +2053,9 @@ void simulate_bodies(memory_manager* manager, world* w, gpu_form_data* forms_gpu
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, collision_grid_size+(1+(*n_body_indices))*sizeof(int), collision_grid);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, collision_grid_buffer);
 
-    unreserve_block(manager);
+    stunalloc(memory);
 
-    uint* body_chunks = (uint*) reserve_block(manager, w->n_bodies*8*4*sizeof(uint));
+    uint* body_chunks = (uint*) stalloc(w->n_bodies*8*4*sizeof(uint));
     uint n_body_chunks = 0;
     for(int b = 0; b < w->n_bodies; b++)
     {
@@ -2069,7 +2085,7 @@ void simulate_bodies(memory_manager* manager, world* w, gpu_form_data* forms_gpu
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (1+4*n_body_chunks)*sizeof(uint), body_chunks);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, body_chunks_buffer);
 
-    unreserve_block(manager);
+    stunalloc(body_chunks);
 
     glDispatchCompute(n_body_chunks,1,1);
 
@@ -2112,7 +2128,7 @@ void sync_joint_voxels(memory_manager* manager, world* w)
 
     glUniform1i(uniform_i++, w->n_joints);
 
-    gpu_body_joint* joint_data = (gpu_body_joint*) reserve_block(manager, sizeof(gpu_body_joint)*w->n_joints);
+    gpu_body_joint* joint_data = (gpu_body_joint*) stalloc(sizeof(gpu_body_joint)*w->n_joints);
     for(int j = 0; j < w->n_joints; j++)
     {
         joint_data[j] = {};
@@ -2130,7 +2146,7 @@ void sync_joint_voxels(memory_manager* manager, world* w)
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(joint_data[0])*w->n_joints, joint_data);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, joint_buffer);
 
-    unreserve_block(manager);
+    stunalloc(joint_data);
 
     glDispatchCompute((w->n_joints+3)/4,1,1);
 
@@ -2188,7 +2204,8 @@ void simulate_body_physics(memory_manager* manager, world* w, render_data* rd)
 
     size_t body_updates_size = sizeof(body_update)*w->n_bodies;
 
-    byte* data = reserve_block(manager, body_updates_size);
+    byte* memory = stalloc(body_updates_size);
+    byte* data = memory;
 
     body_update* body_updates = (body_update*) data;
     data += body_updates_size;
@@ -2275,7 +2292,7 @@ void simulate_body_physics(memory_manager* manager, world* w, render_data* rd)
         }
     }
 
-    unreserve_block(manager);
+    stunalloc(memory);
 }
 
 void update_joint_fragments(memory_manager* manager, world* w)
@@ -2314,7 +2331,7 @@ void update_joint_fragments(memory_manager* manager, world* w)
 
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
-    joint_update* joint_updates = (joint_update*) reserve_block(manager, sizeof(joint_update)*w->n_joints);
+    joint_update* joint_updates = (joint_update*) stalloc(sizeof(joint_update)*w->n_joints);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, joint_updates_buffer);
     glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(joint_update)*w->n_joints, joint_updates);
@@ -2378,7 +2395,7 @@ void update_joint_fragments(memory_manager* manager, world* w)
         }
     }
 
-    unreserve_block(manager);
+    stunalloc(joint_updates);
 
     //TODO: need to do endpoints as well
 

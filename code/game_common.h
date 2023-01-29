@@ -1122,7 +1122,7 @@ void warm_start_joints(world* w)
 
 void iterate_joints(memory_manager* manager, world* w, bool use_integral)
 {
-    int* perm = (int*) reserve_block(manager, sizeof(int)*w->n_joints);
+    int* perm = (int*) stalloc(sizeof(int)*w->n_joints);
     for(int i = 0; i < w->n_joints; i++) perm[i] = i;
 
     for(int j = 0; j < w->n_joints; j++)
@@ -1266,12 +1266,12 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
         assert(parent_gpu->omega.x == parent_gpu->omega.x);
     }
 
-    unreserve_block(manager);
+    stunalloc(perm);
 }
 
 void iterate_joints_positions(memory_manager* manager, world* w, bool use_integral)
 {
-    int* perm = (int*) reserve_block(manager, sizeof(int)*w->n_joints);
+    int* perm = (int*) stalloc(sizeof(int)*w->n_joints);
     for(int i = 0; i < w->n_joints; i++) perm[i] = i;
 
     for(int j = 0; j < w->n_joints; j++)
@@ -1400,7 +1400,7 @@ void iterate_joints_positions(memory_manager* manager, world* w, bool use_integr
         assert(parent_gpu->omega.x == parent_gpu->omega.x);
     }
 
-    unreserve_block(manager);
+    stunalloc(perm);
 }
 
 real_3 calculate_contact_impulse(contact_point* contact, real_3 u, real_3 normal, real_3x3 invK)
@@ -1454,7 +1454,7 @@ void iterate_contact_points(memory_manager* manager, world* w, render_data* rd)
     static int frame_number = 0;
     frame_number++;
 
-    int* perm = (int*) reserve_block(manager, sizeof(int)*w->n_contacts);
+    int* perm = (int*) stalloc(sizeof(int)*w->n_contacts);
     for(int i = 0; i < w->n_contacts; i++) perm[i] = i;
 
     for(int i = 0; i < w->n_contacts; i++)
@@ -1573,7 +1573,7 @@ void iterate_contact_points(memory_manager* manager, world* w, render_data* rd)
         }
     next_contact_jump:;
     }
-    unreserve_block(manager);
+    stunalloc(perm);
 }
 
 void iterate_contact_points_positions(memory_manager* manager, world* w, render_data* rd)
@@ -1583,7 +1583,7 @@ void iterate_contact_points_positions(memory_manager* manager, world* w, render_
     static int frame_number = 0;
     frame_number++;
 
-    int* perm = (int*) reserve_block(manager, sizeof(int)*w->n_contacts);
+    int* perm = (int*) stalloc(sizeof(int)*w->n_contacts);
     for(int i = 0; i < w->n_contacts; i++) perm[i] = i;
 
     for(int i = 0; i < w->n_contacts; i++)
@@ -1690,7 +1690,7 @@ void iterate_contact_points_positions(memory_manager* manager, world* w, render_
         // }
     next_contact_jump_pos:;
     }
-    unreserve_block(manager);
+    stunalloc(perm);
 }
 
 void iterate_gravity(int iterations, gpu_body_data* bodies_gpu, int n_bodies)

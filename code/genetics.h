@@ -822,7 +822,7 @@ void do_edit_window(memory_manager* manager, render_data* ui, user_input* input,
                     *form_cpu = {};
                     *form_gpu = {};
                     form_cpu->gpu_data = form_gpu;
-                    form_cpu->materials = dynamic_alloc(manager->first_region, total_size);
+                    form_cpu->materials = dynamic_alloc(total_size);
                     gew->active_material = gew->active_cell_material;
                     for(int i = 0; i < total_size; i++) form_cpu->materials[i] = gew->active_material;
                     // form_cpu->materials[0] = gew->active_material;

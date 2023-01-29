@@ -77,7 +77,7 @@ riff_chunk read_riff_chunk(memory_manager* manager, file_t file, size_t offset)
     offset += sizeof(out.tag);
     read_from_disk(&out.size, file, offset, sizeof(out.size));
     offset += sizeof(out.size);
-    out.data = permalloc(manager, out.size);
+    out.data = stalloc(out.size);
     read_from_disk(out.data, file, offset, out.size);
     return out;
 }
@@ -129,7 +129,7 @@ sound load_wav(memory_manager* manager, char* filename)
 
     size_t buffer_size = file_size-offset;
     sound out = {
-        .buffer = (int16*) permalloc(manager, buffer_size),
+        .buffer = (int16*) stalloc(buffer_size),
         .buffer_length = buffer_size/sizeof(int16),
     };
     read_from_disk(out.buffer, file, offset, buffer_size);

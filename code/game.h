@@ -106,7 +106,7 @@ void create_body_endpoint_from_form_endpoint(brain* br, form_endpoint* ep)
 void creature_from_genome(memory_manager* manager, world* w, genome* g, brain* br)
 {
     br->n_max_bodies = g->n_forms+4;
-    br->body_ids = (int*) dynamic_alloc(manager->first_region, sizeof(int)*br->n_max_bodies);
+    br->body_ids = (int*) dynamic_alloc(sizeof(int)*br->n_max_bodies);
 
     for(int f = 0; f < g->n_forms; f++)
     {
@@ -132,8 +132,8 @@ void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, i
 
     int_3 active_data_size = {(int(pos.x)%16+size.x+15)/16, (int(pos.y)%16+size.y+15)/16, (int(pos.z)%16+size.z+15)/16};
 
-    byte* data = reserve_block(manager, size.x*size.y*size.z*4*sizeof(uint8)
-                               + active_data_size.x*active_data_size.y*active_data_size.z*sizeof(uint));
+    byte* data = stalloc(size.x*size.y*size.z*4*sizeof(uint8)
+                         + active_data_size.x*active_data_size.y*active_data_size.z*sizeof(uint));
     uint8* materials_data = (uint8*) data;
     uint* active_data = (uint*) (data+size.x*size.y*size.z*4*sizeof(uint8));
     for(int i = 0; i < active_data_size.x*active_data_size.y*active_data_size.z; i++)
@@ -160,7 +160,7 @@ void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, i
                     active_data_size.x, active_data_size.y, active_data_size.z,
                     GL_RED_INTEGER, GL_UNSIGNED_INT,
                     active_data);
-    unreserve_block(manager);
+    stunalloc(data);
 }
 
 void spawn_particles(real_3 x, real_3 x_dot)
@@ -444,7 +444,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
             if(br->n_bodies >= br->n_max_bodies)
             {
                 br->n_max_bodies = br->n_bodies+1 + 4;
-                int* new_body_ids = (int*) dynamic_alloc(manager->first_region, sizeof(int)*br->n_max_bodies);
+                int* new_body_ids = (int*) dynamic_alloc(sizeof(int)*br->n_max_bodies);
                 memcpy(new_body_ids, br->body_ids, sizeof(int)*br->n_bodies);
                 dynamic_free(br->body_ids);
                 br->body_ids = new_body_ids;
@@ -853,15 +853,15 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     }
     // }
 
-    for(int wc = 0; wc < n_worker_contexts; wc++)
-    {
-        // for(int i = 0; i < AUDIO_BUFFER_MAX_LEN; i++)
-        // {
-        //     int buffer_index = (ad->samples_played+i)%ad->buffer_length;
-        //     ad->buffer[buffer_index] += worker_context_list[wc]->audio_buffer[i];
-        // }
-        memset(worker_context_list[wc]->audio_buffer, 0, AUDIO_BUFFER_MAX_SIZE);
-    }
+    // for(int wc = 0; wc < n_worker_contexts; wc++)
+    // {
+    //     // for(int i = 0; i < AUDIO_BUFFER_MAX_LEN; i++)
+    //     // {
+    //     //     int buffer_index = (ad->samples_played+i)%ad->buffer_length;
+    //     //     ad->buffer[buffer_index] += worker_context_list[wc]->audio_buffer[i];
+    //     // }
+    //     memset(worker_context_list[wc]->audio_buffer, 0, AUDIO_BUFFER_MAX_SIZE);
+    // }
 
     real_4x4 translate_to_player = {
         1, 0, 0, -camera_pos.x,
@@ -915,7 +915,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     .coefficients = player->surface_coefficients,
     // };
 
-    while(n_remaining_tasks) pop_work(main_context);
+    // while(n_remaining_tasks) pop_work(main_context);
 }
 
 #endif //GAME
