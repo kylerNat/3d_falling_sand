@@ -10,9 +10,9 @@
 
 const real dt = 1.0/60.0;
 
-void set_chunk_voxel(world* w, chunk* c, real_3 pos, uint16 material)
+void set_room_voxel(world* w, room* c, real_3 pos, uint16 material)
 {
-    // pos = clamp_per_axis(pos, 0, chunk_size-1);
+    // pos = clamp_per_axis(pos, 0, room_size-1);
 
     uint16 materials_data[3] = {material, 0, 0};
     glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
@@ -34,8 +34,7 @@ void set_chunk_voxel(world* w, chunk* c, real_3 pos, uint16 material)
 
 int create_body_from_form(world* w, genome* g, brain* br, int form_id)
 {
-    cpu_form_data* form_cpu = &g->forms_cpu[form_id];
-    gpu_form_data* form_gpu = &g->forms_gpu[form_id];
+    form_t* form = &g->forms[form_id];
 
     int b = new_body_index(w);
     cpu_body_data* body_cpu = &w->bodies_cpu[b];
@@ -45,32 +44,31 @@ int create_body_from_form(world* w, genome* g, brain* br, int form_id)
     body_cpu->form_id = form_id;
     body_gpu->brain_id = br->id;
 
-    body_cpu->is_root = form_cpu->is_root;
+    body_cpu->is_root = form->is_root;
     if(body_cpu->is_root) br->root_id = body_cpu->id;
     body_cpu->root = br->root_id;
 
-    int pad = 1;
-    int_3 padding = {pad, pad, pad};
-    body_gpu->form_offset = form_gpu->x_origin+padding;
     body_gpu->orientation = {1,0,0,0};
 
     //TODO: actually calculate these
     body_gpu->m = 0.01;
     body_cpu->I = real_identity_3(10.0);
-    body_cpu->invI = inverse(body_cpu->I);
     update_inertia(body_cpu, body_gpu);
 
-    body_gpu->cell_material_id = form_gpu->cell_material_id;
+    body_gpu->cell_material_id = form->cell_material_id;
 
     body_gpu->substantial = true;
 
-    body_gpu->form_lower  = form_gpu->materials_origin+form_gpu->material_bounds.l;
-    body_gpu->form_upper  = form_gpu->materials_origin+form_gpu->material_bounds.u;
-    int_3 form_size = body_gpu->form_upper-body_gpu->form_lower;
+    int_3 form_size = form->region.u-form->region.l;
 
-    load_empty_body_to_gpu(&w->body_space, body_cpu, body_gpu, form_size);
+    int pad = 0;
+    int_3 padding = {pad, pad, pad};
+    int_3 size = form_size + 2*padding;
+    body_cpu->materials = (body_cell*) dynamic_alloc(size.x*size.y*size.z*sizeof(body_cell));
+    body_cpu->region = {form->region.l-padding, form->region.u+padding};
+    body_gpu->x_cm = 0.5*real_cast(body_cpu->region.l)+0.5*real_cast(body_cpu->region.u);
 
-    body_gpu->form_origin = form_gpu->materials_origin+form_gpu->x_origin-body_gpu->form_offset-body_gpu->texture_region.l;
+    //TODO: make sure body_cpu->materials is unallocated on body deletion
 
     return body_cpu->id;
 }
@@ -126,9 +124,9 @@ void creature_from_genome(memory_manager* manager, world* w, genome* g, brain* b
     }
 }
 
-void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, int_3 size, uint8_4 voxel)
+void set_room_region(memory_manager* manager, world* w, room* c, real_3 pos, int_3 size, uint8_4 voxel)
 {
-    // pos = clamp_per_axis(pos, 0, chunk_size-1);
+    // pos = clamp_per_axis(pos, 0, room_size-1);
 
     int_3 active_data_size = {(int(pos.x)%16+size.x+15)/16, (int(pos.y)%16+size.y+15)/16, (int(pos.z)%16+size.z+15)/16};
 
@@ -146,8 +144,8 @@ void set_chunk_region(memory_manager* manager, world* w, chunk* c, real_3 pos, i
         materials_data[4*i+2] = voxel[2];
         materials_data[4*i+3] = voxel[3];
     }
-    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
     glActiveTexture(GL_TEXTURE0 + 0);
+    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
     glTexSubImage3D(GL_TEXTURE_3D, 0,
                     pos.x, pos.y, pos.z,
                     size.z, size.y, size.z,
@@ -181,7 +179,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     if(w->edit_mode)
     {
-        do_edit_window(manager, ui, input, &w->gew, &w->form_space);
+        do_edit_window(ui, input, &w->gew);
         real_4 cursor_color = {1,1,1,1};
         if(input->active_ui_element.type != ui_form_voxel)
             draw_circle(ui, {input->mouse.x, input->mouse.y, 0}, 0.01, cursor_color);
@@ -406,29 +404,29 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         }
         body_cpu->form_id = new_form_id;
 
-        cpu_form_data* form_cpu = &g->forms_cpu[new_form_id];
-        gpu_form_data* form_gpu = &g->forms_gpu[new_form_id];
+        form_t* form = &g->forms[new_form_id];
 
-        body_gpu->is_mutating = form_gpu->is_mutating;
-        if(form_gpu->is_mutating)
-        {
-            int_3 padding = {1,1,1};
-            //form_offset: body->texture_region.l -> O
-            //form_gpu->x_origin: form->materials_origin -> O
-            int_3 offset = (form_gpu->x_origin-body_gpu->form_offset)+padding;
-            int_3 new_size = form_gpu->material_bounds.u-form_gpu->material_bounds.l+2*padding;
-            new_size.x = 4*((new_size.x+3)/4);
-            //TODO: this does not detect a region change if one side is deleted and the other side is extended
-            if(new_size != body_gpu->texture_region.u-body_gpu->texture_region.l)
-            {
-                log_output("resizing body storage ", body_gpu->texture_region.l, ", ", body_gpu->texture_region.u, "\n");
-                resize_body_storage(&w->body_space, body_cpu, body_gpu, offset, new_size);
-                log_output("resized body storage ", body_gpu->texture_region.l, ", ", body_gpu->texture_region.u, "\n");
-            }
-            body_gpu->form_origin = form_gpu->materials_origin+form_gpu->x_origin-body_gpu->form_offset-body_gpu->texture_region.l;
-            body_gpu->form_lower  = form_gpu->materials_origin+form_gpu->material_bounds.l;
-            body_gpu->form_upper  = form_gpu->materials_origin+form_gpu->material_bounds.u;
-        }
+        // body_gpu->is_mutating = form->is_mutating;
+        //TODO: redo this
+        // if(form->is_mutating)
+        // {
+        //     int_3 padding = {1,1,1};
+        //     //form_offset: body->texture_region.l -> O
+        //     //form->x_origin: form->materials_origin -> O
+        //     int_3 offset = (form->x_origin-body_gpu->form_offset)+padding;
+        //     int_3 new_size = form->material_bounds.u-form->material_bounds.l+2*padding;
+        //     new_size.x = 4*((new_size.x+3)/4);
+        //     //TODO: this does not detect a region change if one side is deleted and the other side is extended
+        //     if(new_size != body_gpu->texture_region.u-body_gpu->texture_region.l)
+        //     {
+        //         log_output("resizing body storage ", body_gpu->texture_region.l, ", ", body_gpu->texture_region.u, "\n");
+        //         resize_body_storage(&w->body_space, body_cpu, body_gpu, offset, new_size);
+        //         log_output("resized body storage ", body_gpu->texture_region.l, ", ", body_gpu->texture_region.u, "\n");
+        //     }
+        //     body_gpu->form_origin = form->materials_origin+form->x_origin-body_gpu->form_offset-body_gpu->texture_region.l;
+        //     body_gpu->form_lower  = form->materials_origin+form->material_bounds.l;
+        //     body_gpu->form_upper  = form->materials_origin+form->material_bounds.u;
+        // }
     }
 
     for(int brain_index = 0; brain_index < w->n_brains; brain_index++)
@@ -477,7 +475,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         g->is_mutating = false;
     }
 
-    static bool step_mode = true;
+    static bool step_mode = false;
     step_mode = step_mode!=is_pressed(VK_OEM_PERIOD, input);
     if(step_mode ? is_pressed('M', input) : !is_down('M', input))
     {
@@ -494,7 +492,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         {
             cpu_body_data* body_cpu = &w->bodies_cpu[b];
             gpu_body_data* body_gpu = &w->bodies_gpu[b];
-            update_bounding_box(body_gpu);
+            update_bounding_box(body_cpu, body_gpu);
             if(!body_gpu->substantial) continue;
             int_3 lower = int_cast(body_gpu->box.l/collision_cell_size);
             int_3 upper = int_cast(body_gpu->box.u/collision_cell_size);
@@ -509,10 +507,10 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
                     }
         }
 
-        simulate_bodies(manager, w, w->gew.active_genome->forms_gpu, w->gew.active_genome->n_forms);
-        sync_joint_voxels(manager, w);
-        simulate_body_physics(manager, w, rd);
-        update_joint_fragments(manager, w);
+        load_bodies_to_gpu(w);
+        find_body_contacts(manager, w);
+
+        simulate_body_voxels(w, rd);
 
         for(int c = 0; c < w->n_contacts; c++)
         {
@@ -565,6 +563,21 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
             draw_circle(rd, body_gpu->x, 0.1, {1,0,1,1});
             draw_circle(rd, body_gpu->box.l, 0.1, {1,0,0,1});
             draw_circle(rd, body_gpu->box.u, 0.1, {1,0.2,0,1});
+        }
+
+        for(int j = 0; j < w->n_joints; j++)
+        {
+            body_joint* joint = w->joints+j;
+            for(int b = 0; b < 2; b++)
+            {
+                int bid = joint->body_id[b];
+                int bi = get_body_index(w, bid);
+                cpu_body_data* body_cpu = w->bodies_cpu+bi;
+                gpu_body_data* body_gpu = w->bodies_gpu+bi;
+
+                real_3 x = body_gpu->x+apply_rotation(body_gpu->orientation, real_cast(joint->pos[b])-body_gpu->x_cm+(real_3){0.5,0.5,0.5});
+                draw_circle(rd, x, 0.1, {0,0.5,1,1});
+            }
         }
 
         for(int c = 0; c < w->n_contacts; c++)
@@ -787,51 +800,51 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     {
         int brush_size = 50;
         real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
-        pos = clamp_per_axis(pos, 0, chunk_size-brush_size-1);
-        set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,1<<5,0,current_material==4?15:0});
+        pos = clamp_per_axis(pos, 0, room_size-brush_size-1);
+        set_room_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,1<<5,0,current_material==4?15:0});
     }
 
     if(is_down(M3, input) && !w->edit_mode)
     {
         int brush_size = 1;
         real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
-        pos = clamp_per_axis(pos, 0, chunk_size-brush_size-1);
-        set_chunk_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,0,0,current_material==4?15:0});
+        pos = clamp_per_axis(pos, 0, room_size-brush_size-1);
+        set_room_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,0,0,current_material==4?15:0});
     }
 
     // if(is_down('T', input))
     // {
     //     real_3 pos = player->x-placement_dist*camera_z;
-    //     pos = clamp_per_axis(pos, 0, chunk_size-11);
-    //     set_chunk_region(manager, w, w->c, pos, {10,10,10}, 2);
+    //     pos = clamp_per_axis(pos, 0, room_size-11);
+    //     set_room_region(manager, w, w->c, pos, {10,10,10}, 2);
     // }
 
     if(is_down(M4, input))
     {
         // real_3 pos = player->x-placement_dist*camera_z;
-        // pos = clamp_per_axis(pos, 0, chunk_size-1);
-        // set_chunk_voxel(w, w->c, pos, 2);
+        // pos = clamp_per_axis(pos, 0, room_size-1);
+        // set_room_voxel(w, w->c, pos, 2);
 
         real_3 pos = player->x-placement_dist*camera_z;
-        pos = clamp_per_axis(pos, 0, chunk_size-11);
-        set_chunk_region(manager, w, w->c, pos, {10,10,10}, {6, 0, 255, 0});
+        pos = clamp_per_axis(pos, 0, room_size-11);
+        set_room_region(manager, w, w->c, pos, {10,10,10}, {6, 0, 255, 0});
     }
 
     if(is_down(M5, input))
     {
         // real_3 pos = player->x-placement_dist*camera_z;
-        // pos = clamp_per_axis(pos, 0, chunk_size-1);
-        // set_chunk_voxel(w, w->c, pos, 0);
+        // pos = clamp_per_axis(pos, 0, room_size-1);
+        // set_room_voxel(w, w->c, pos, 0);
 
         real_3 pos = player->x-placement_dist*camera_z;
-        pos = clamp_per_axis(pos, 0, chunk_size-11);
-        set_chunk_region(manager, w, w->c, pos, {10,10,10}, {0});
+        pos = clamp_per_axis(pos, 0, room_size-11);
+        set_room_region(manager, w, w->c, pos, {10,10,10}, {0});
     }
 
     // if(is_down(M3, input))
     // {
     //     real_3 pos = player->x-placement_dist*camera_z;
-    //     pos = clamp_per_axis(pos, 0, chunk_size-1);
+    //     pos = clamp_per_axis(pos, 0, room_size-1);
     //     spawn_particles(pos, -1*camera_z);
     // }
 
@@ -916,6 +929,8 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     // };
 
     // while(n_remaining_tasks) pop_work(main_context);
+
+    w->frame_number++;
 }
 
 #endif //GAME

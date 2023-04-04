@@ -133,7 +133,7 @@ struct ray_hit
     real dist;
 };
 
-ray_hit cast_ray(uint8* materials, real_3 ray_dir, real_3 ray_origin, int_3 size, int_3 origin, int max_iterations)
+ray_hit cast_ray(uint8* materials, real_3 ray_dir, real_3 ray_origin, int_3 size, int max_iterations)
 {
     real_3 ray_sign = sign_not_zero_per_axis(ray_dir);
     real_3 inv_ray_dir = divide_components({1,1,1}, ray_dir);
@@ -262,11 +262,7 @@ struct gpu_body_joint
 struct gpu_body_data
 {
     bounding_box texture_region;
-    bounding_box material_bounds;
-    int_3 form_offset;
-    int_3 form_origin;
-    int_3 form_lower;
-    int_3 form_upper;
+    int_3 origin_to_lower;
     real_3 x_cm;
     real_3 x;
     real_3 x_dot;
@@ -278,16 +274,42 @@ struct gpu_body_data
     real_3x3 I;
     real_3x3 invI;
 
-    real_bounding_box box;
+    real_bounding_box box; //world space bounding box
 
     int cell_material_id; //material_id of cell type 0 for this body
     int is_mutating;
     int substantial;
-    int fragment_id;
 
     int brain_id;
 };
 #pragma pack(pop)
+
+#define MAX_DEPTH 32
+
+struct world_cell
+{
+    union
+    {
+        struct
+        {
+            uint8 material;
+            uint8 depth:5;
+            uint8 temperature;
+            uint8 voltage:4;
+            uint8 flow:4;
+        };
+        uint8 data[4];
+        uint32 data32;
+    };
+};
+
+struct body_cell
+{
+    uint8 material;
+    int8 depth;
+    int8 temperature;
+    int8 voltage;
+};
 
 struct cpu_body_data
 {
@@ -297,15 +319,17 @@ struct cpu_body_data
     int genome_id;
     int form_id;
 
-    uint8* materials;
-    int storage_level;
+    body_cell* materials;
+    //NOTE: I think I need to move region into gpu data
+    bounding_box region; //the region that is stored in memory
+
+    int_3 updated_region; //region that needs to get sent to the gpu //TODO: could make this multiple regions if necessary
 
     bool is_root;
     int root;
 
     //these are in body coordinates, while the gpu versions are in world coordinates
     real_3x3 I;
-    real_3x3 invI;
 
     bool has_contact;
     bool phasing;
@@ -313,6 +337,66 @@ struct cpu_body_data
     int first_fragment_index;
     int n_fragments;
 };
+
+void resize_body(cpu_body_data* body_cpu, bounding_box new_region)
+{
+    bounding_box old_region = body_cpu->region;
+    if(old_region == new_region) return;
+
+    int_3 new_size = new_region.u-new_region.l;
+    int_3 old_size = old_region.u-old_region.l;
+
+    int_3 offset = new_region.l-body_cpu->region.l;
+
+    size_t new_size_total = new_size.x*new_size.y*new_size.z*sizeof(body_cell);
+    body_cell* new_materials = (body_cell*) dynamic_alloc(new_size_total);
+
+    //find the union between the old and new regions and copy from old to new within the union
+    int_3 lower = max_per_axis(new_region.l, old_region.l);
+    int_3 upper = min_per_axis(new_region.u, old_region.u);
+
+    memset(new_materials, 0, new_size_total);
+
+    for(int z = lower.z; z < upper.z; z++)
+        for(int y = lower.y; y < upper.y; y++)
+        {
+            int x = lower.x;
+
+            int nx = x-new_region.l.x;
+            int ny = y-new_region.l.y;
+            int nz = z-new_region.l.z;
+
+            int ox = x-old_region.l.x;
+            int oy = y-old_region.l.y;
+            int oz = z-old_region.l.z;
+
+            memcpy(new_materials+index_3D({nx,ny,nz}, new_size), body_cpu->materials+index_3D({ox, oy, oz}, old_size), (upper.x-lower.x)*sizeof(body_cell));
+        }
+
+    dynamic_free(body_cpu->materials);
+
+    body_cpu->region = new_region;
+    body_cpu->materials = new_materials;
+}
+
+body_cell get_cell(cpu_body_data* body_cpu, int_3 pos)
+{
+    if(all_less_than_eq(body_cpu->region.l, pos) && all_less_than(pos, body_cpu->region.u))
+    {
+        return body_cpu->materials[index_3D(pos-body_cpu->region.l, body_cpu->region.u-body_cpu->region.l)];
+    }
+    return {};
+}
+
+void set_cell(cpu_body_data* body_cpu, int_3 pos, body_cell cell)
+{
+    if(!(all_less_than_eq(body_cpu->region.l, pos) && all_less_than(pos, body_cpu->region.u)))
+    {
+        bounding_box new_region = expand_to(body_cpu->region, pos);
+        resize_body(body_cpu, new_region);
+    }
+    body_cpu->materials[index_3D(pos-body_cpu->region.l, body_cpu->region.u-body_cpu->region.l)] = cell;
+}
 
 #define MAX_COYOTE_TIME 6.0f
 
@@ -397,7 +481,7 @@ struct entity
     real_3 x;
     real_3 x_dot;
 };
-#include "chunk.h"
+#include "room.h"
 
 struct debug_menu_t
 {
@@ -461,10 +545,12 @@ struct world
     beam_data* beams;
     int n_beams;
 
-    chunk * c;
+    room * c;
     int8_2 chunk_lookup[2*2*2];
 
     collision_cell* collision_grid;
+
+    int frame_number;
 };
 
 brain* create_brain(world* w)
@@ -603,7 +689,7 @@ void delete_body(world* w, int id)
 }
 
 //NOTE: bounding boxes seem larger than necessary, not sure if it's a bug or just needs voxel-level detection
-void update_bounding_box(gpu_body_data* body_gpu)
+void update_bounding_box(cpu_body_data* body_cpu, gpu_body_data* body_gpu)
 {
     for(int i = 0; i < 3; i++)
     {
@@ -617,13 +703,13 @@ void update_bounding_box(gpu_body_data* body_gpu)
         {
             if(signs[j] > 0)
             {
-                l[j] = body_gpu->material_bounds.l[j];
-                u[j] = body_gpu->material_bounds.u[j];
+                l[j] = body_cpu->region.l[j];
+                u[j] = body_cpu->region.u[j];
             }
             else
             {
-                l[j] = body_gpu->material_bounds.u[j];
-                u[j] = body_gpu->material_bounds.l[j];
+                l[j] = body_cpu->region.u[j];
+                u[j] = body_cpu->region.l[j];
             }
         }
         body_gpu->box.l[i] = apply_rotation(body_gpu->orientation, l-body_gpu->x_cm)[i];
@@ -645,6 +731,16 @@ void update_inertia(cpu_body_data* body_cpu, gpu_body_data* body_gpu)
 voxel_data get_voxel_data(int_3 x);
 
 // int get_body_material();
+
+real_3 cm_to_joint(gpu_body_data* body_gpu, body_joint* joint, int a)
+{
+    return real_cast(joint->pos[a])+(real_3){0.5,0.5,0.5}-body_gpu->x_cm;
+}
+
+real_3 cm_to_endpoint(gpu_body_data* body_gpu, endpoint* ep)
+{
+    return real_cast(ep->pos)+(real_3){0.5,0.5,0.5}-body_gpu->x_cm;
+}
 
 //figure out stuff like which feet to raise or lower
 void plan_brains(world* w, render_data* rd)
@@ -675,7 +771,7 @@ void plan_brains(world* w, render_data* rd)
             gpu_body_data* root_gpu = &w->bodies_gpu[b_root];
             cpu_body_data* root_cpu = &w->bodies_cpu[b_root];
 
-            real_3 r = apply_rotation(body_gpu->orientation, real_cast(ep->pos+body_gpu->form_offset)+(real_3){0.5,0.5,0.5}-body_gpu->x_cm);
+            real_3 r = apply_rotation(body_gpu->orientation, cm_to_endpoint(body_gpu, ep));
 
             if(ep->type == endpoint_foot)
             {
@@ -875,7 +971,7 @@ void iterate_brains(world* w, render_data* rd)
 
             if(!root_gpu->substantial || !body_gpu->substantial) continue;
 
-            real_3 r = apply_rotation(body_gpu->orientation, real_cast(ep->pos+body_gpu->form_offset)+(real_3){0.5,0.5,0.5}-body_gpu->x_cm);
+            real_3 r = apply_rotation(body_gpu->orientation, cm_to_endpoint(body_gpu, ep));
 
             real_3x3 r_dual = {
                 0   ,+r.z,-r.y,
@@ -1015,16 +1111,16 @@ void iterate_brains(world* w, render_data* rd)
                 genome* g = get_genome(w, body_cpu->genome_id);
 
                 int f = body_cpu->form_id;
-                gpu_form_data* form_gpu = &g->forms_gpu[f];
+                form_t* form = &g->forms[f];
 
                 genome* gr = get_genome(w, root_cpu->genome_id);
 
                 int fr = root_cpu->form_id;
-                gpu_form_data* root_form_gpu = &gr->forms_gpu[fr];
+                form_t* root_form = &gr->forms[fr];
 
-                real_3 form_r = apply_rotation(form_gpu->orientation, real_cast(ep->pos)+(real_3){0.5,0.5,0.5}); //from x_cm to foot
-                real_3 form_foot_x = form_r+form_gpu->x;
-                real_3 root_form_x = root_form_gpu->x+apply_rotation(root_form_gpu->orientation, root_gpu->x_cm-real_cast(root_gpu->form_offset));
+                real_3 form_r = apply_rotation(form->orientation, real_cast(ep->pos)+(real_3){0.5,0.5,0.5}); //from x_cm to foot
+                real_3 form_foot_x = form_r+form->x;
+                real_3 root_form_x = root_form->x+apply_rotation(root_form->orientation, root_gpu->x_cm);
                 // real_2 forward_dir = apply_rotation(root_gpu->orientation, (real_3){1,0,0}).xy;
                 real_2 forward_dir = br->look_dir.xy;
                 forward_dir = normalize(forward_dir);
@@ -1101,7 +1197,7 @@ void warm_start_joints(world* w)
             int b = get_body_index(w, joint->body_id[a]);
             gpu_body_data* body = &w->bodies_gpu[b];
             cpu_body_data* body_cpu = &w->bodies_cpu[b];
-            real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+            real_3 r = apply_rotation(body->orientation, cm_to_joint(body, joint, a));
             real s = (a?1:-1);
             body->x_dot += s*deltap/body->m;
             body->omega += s*body->invI*(cross(r, deltap) + deltaL);
@@ -1148,17 +1244,15 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
             genome* g = get_genome(w, child_cpu->genome_id);
 
             int f = child_cpu->form_id;
-            cpu_form_data* child_form_cpu = &g->forms_cpu[f];
-            gpu_form_data* child_form_gpu = &g->forms_gpu[f];
+            form_t* child_form = &g->forms[f];
 
             genome* gp = get_genome(w, parent_cpu->genome_id);
 
             int fp = parent_cpu->form_id;
-            cpu_form_data* parent_form_cpu = &gp->forms_cpu[fp];
-            gpu_form_data* parent_form_gpu = &gp->forms_gpu[fp];
+            form_t* parent_form = &gp->forms[fp];
 
             //targets in parent coordinates
-            quaternion target_rel_orientation = conjugate(parent_form_gpu->orientation)*child_form_gpu->orientation;
+            quaternion target_rel_orientation = conjugate(parent_form->orientation)*child_form->orientation;
 
             //apply small force to bring body to target
             quaternion current_rel_orientation = conjugate(parent_gpu->orientation)*child_gpu->orientation;
@@ -1203,7 +1297,7 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
                     int b = get_body_index(w, joint->body_id[a]);
                     gpu_body_data* body = &w->bodies_gpu[b];
                     cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                    real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+                    real_3 r = apply_rotation(body->orientation, cm_to_joint(body, joint, a));
                     average_joint_pos += r+body->x;
                     real_3 velocity = cross(body->omega, r)+body->x_dot;
                     u += (a?-1:1)*velocity;
@@ -1248,7 +1342,7 @@ void iterate_joints(memory_manager* manager, world* w, bool use_integral)
                     int b = get_body_index(w, joint->body_id[a]);
                     gpu_body_data* body = &w->bodies_gpu[b];
                     cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                    real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+                    real_3 r = apply_rotation(body->orientation, cm_to_joint(body, joint, a));
                     real s = (a?1:-1);
                     body->x_dot += s*deltap/body->m;
                     body->omega += s*body->invI*(cross(r, deltap) + deltaL);
@@ -1306,7 +1400,7 @@ void iterate_joints_positions(memory_manager* manager, world* w, bool use_integr
                     int b = get_body_index(w, joint->body_id[a]);
                     gpu_body_data* body = &w->bodies_gpu[b];
                     cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                    real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+                    real_3 r = apply_rotation(body->orientation, cm_to_joint(body, joint, a));
                     average_joint_pos += r+body->x;
                     mu += 1.0/body->m;
                     reduced_I += body->invI;
@@ -1333,7 +1427,7 @@ void iterate_joints_positions(memory_manager* manager, world* w, bool use_integr
                         int b = get_body_index(w, joint->body_id[a]);
                         gpu_body_data* body = &w->bodies_gpu[b];
                         cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                        real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+                        real_3 r = apply_rotation(body->orientation, cm_to_joint(body, joint, a));
                         real_3 pos = r+body->x;
                         u += (a?-1:1)*pos;
                     }
@@ -1359,7 +1453,7 @@ void iterate_joints_positions(memory_manager* manager, world* w, bool use_integr
                         int b = get_body_index(w, joint->body_id[a]);
                         gpu_body_data* body = &w->bodies_gpu[b];
                         cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                        real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+                        real_3 r = apply_rotation(body->orientation, cm_to_joint(body, joint, a));
                         real s = (a?1:-1);
                         body->x += s*pseudo_force/body->m;
                         real_3 pseudo_omega = body->invI*cross(r, s*pseudo_force);
@@ -1375,7 +1469,7 @@ void iterate_joints_positions(memory_manager* manager, world* w, bool use_integr
                             int b = get_body_index(w, joint->body_id[a]);
                             gpu_body_data* body = &w->bodies_gpu[b];
                             cpu_body_data* body_cpu = &w->bodies_cpu[b];
-                            real_3 r = apply_rotation(body->orientation, real_cast(joint->pos[a]+body->form_offset)+(real_3){0.5,0.5,0.5}-body->x_cm);
+                            real_3 r = apply_rotation(body->orientation, cm_to_joint(body, joint, a));
                             real_3 pos = r+body->x;
                             u += (a?-1:1)*pos;
                         }
@@ -1846,6 +1940,210 @@ void integrate_body_motion(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu,
                 // draw_circle(rd, bodies_gpu[b].x+5*(apply_rotation(bodies_gpu[b].orientation, bodies_cpu[b].invI*L)), 0.2, {1,1,0,1});
             }
         }
+    }
+}
+
+void simulate_body_voxels(world* w, render_data* rd)
+{
+    for(int b = 0; b < w->n_bodies; b++)
+    {
+        gpu_body_data* body_gpu = w->bodies_gpu+b;
+        cpu_body_data* body_cpu = w->bodies_cpu+b;
+        int_3 lower = body_cpu->region.l;
+        int_3 upper = body_cpu->region.u;
+
+        genome* g = get_genome(w, body_cpu->genome_id);
+
+        form_t* form = 0;
+
+        if(g)
+        {
+            form = g->forms+body_cpu->form_id;
+        }
+
+        real_3 x_cm = {};
+
+        body_cpu->I = {};
+        body_gpu->m = 0;
+
+        for(int z = lower.z-1; z < upper.z+1; z++)
+            for(int y = lower.y-1; y < upper.y+1; y++)
+                for(int x = lower.x-1; x < upper.x+1; x++)
+                {
+                    body_cell c = get_cell(body_cpu, {x,y,z});
+                    body_cell original_cell = c;
+
+                    uint8 form_voxel = 0;
+                    if(form)
+                    {
+                        if(is_inside({x,y,z}, form->region))
+                            form_voxel = form->materials[index_3D((int_3){x,y,z}-form->region.l, form->region.u-form->region.l)];
+                    }
+
+                    uint material_id = c.material;
+                    bool is_cell = material_id >= BASE_CELL_MAT;
+
+                    //TODO: reimplement beams and explosions
+
+                    // vec3 voxel_x = apply_rotation(body_orientation(bi), voxel_pos)+body_x(bi);
+                    // //TODO: apply pushback force
+                    // for(int be = 0; be < n_beams; be++)
+                    // {
+                    //     vec3 delta = voxel_x-beam_x(be);
+                    //     vec3 dhat = normalize(beam_d(be));
+                    //     float d = clamp(dot(dhat, delta), 0.0, length(beam_d(be)));
+                    //     vec3 nearest_x = d*dhat+beam_x(be);
+                    //     vec3 r = voxel_x-nearest_x;
+                    //     if(dot(r, r) <= sq(beams[be].r))
+                    //     {
+                    //         temp = clamp(temp+100, 0u, 255u);
+                    //     }
+                    // }
+
+                    if(g)
+                    {
+                        if(is_cell) material_id += body_gpu->cell_material_id;
+                        int cell_id =  c.material-BASE_CELL_MAT;
+
+                        cell_type* ct = g->cell_types + cell_id;
+
+                        bool condition = false;
+                        for(int t = 0; t < ct->n_triggers; t++)
+                        {
+                            trigger_t* trig = ct->triggers+t;
+                            switch(trig->condition)
+                            {
+                                case trig_always:
+                                    condition = true;
+                                    break;
+                                case trig_hot:
+                                    condition = c.temperature > 12;
+                                    break;
+                                case trig_cold:
+                                    condition = c.temperature <= 4;
+                                    break;
+                                case trig_electric:
+                                    condition = c.voltage > 0;
+                                    break;
+                                case trig_contact:
+                                    // condition = trig(c) == i;
+                                    //TODO
+                                    break;
+                                default:
+                                    condition = false;
+                            }
+
+                            if(condition)
+                            {
+                                switch(trig->action)
+                                {
+                                    case act_grow: {
+                                        //TODO:
+                                        break;
+                                    }
+                                    case act_die: {
+                                        c = {};
+                                        break;
+                                    }
+                                    case act_heat: {
+                                        c.temperature++;
+                                        break;
+                                    }
+                                    case act_chill: {
+                                        c.temperature--;
+                                        break;
+                                    }
+                                    case act_electrify: {
+                                        c.voltage = 3;
+                                        break;
+                                    }
+                                    case act_explode: {
+                                        //TODO: EXPLOSIONS!
+                                        break;
+                                    }
+                                    case act_spray: {
+                                        //create particle of type child_material_id, with velocity in the normal direction
+                                        break;
+                                    }
+                                    default: break;
+                                }
+                            }
+                        }
+
+                        bool do_grow = true;
+                        // if(ct->growth_time > 0)
+                        // {
+                        //     int grow_phase = rand(&w->seed, 0, ct->growth_time);
+                        //     do_grow = (w->frame_number+grow_phase)%ct->growth_time == 0;
+                        // }
+
+                        // if(material_id != form_voxel && c.depth == 0 && do_grow)
+                        {
+                            c.material = form_voxel;
+                        }
+                    }
+
+                    body_cell u = get_cell(body_cpu, {x,y,z+1});
+                    body_cell d = get_cell(body_cpu, {x,y,z-1});
+                    body_cell f = get_cell(body_cpu, {x,y+1,z});
+                    body_cell b = get_cell(body_cpu, {x,y-1,z});
+                    body_cell r = get_cell(body_cpu, {x+1,y,z});
+                    body_cell l = get_cell(body_cpu, {x-1,y,z});
+
+                    c.depth = MAX_DEPTH-1;
+                    bool filledness = c.material != 0;
+                    if(((u.material != 0) != filledness) ||
+                       ((d.material != 0) != filledness) ||
+                       ((r.material != 0) != filledness) ||
+                       ((l.material != 0) != filledness) ||
+                       ((f.material != 0) != filledness) ||
+                       ((b.material != 0) != filledness)) c.depth = 0;
+                    else
+                    {
+                        c.depth = min(c.depth, u.depth+1);
+                        c.depth = min(c.depth, d.depth+1);
+                        c.depth = min(c.depth, r.depth+1);
+                        c.depth = min(c.depth, l.depth+1);
+                        c.depth = min(c.depth, f.depth+1);
+                        c.depth = min(c.depth, b.depth+1);
+                    }
+
+                    //TODO: spawn appropiate particles
+                    // if(c.temperature > material_physicals[material_id].melting_point) *c = {};
+                    // if(c.temperature > material_physicals[material_id].boiling_point) *c = {};
+
+                    if(c.material == 0) c.temperature = ROOM_TEMP;
+
+                    real cell_mass = material_physicals[material_id].density;
+                    body_gpu->m += cell_mass;
+
+                    real_3 pos = (real_3){x+0.5,y+0.5,z+0.5};
+
+                    x_cm += cell_mass*pos;
+
+                    real_3 r_cm = pos - body_gpu->x_cm;
+
+                    body_cpu->I += real_identity_3(cell_mass*(0.4*sq(0.5)+normsq(r_cm)));
+                    for(int i = 0; i < 3; i++)
+                        for(int j = 0; j < 3; j++)
+                            body_cpu->I[i][j] += -cell_mass*r_cm[i]*r_cm[j];
+
+                    if(c.material || original_cell.material)
+                        set_cell(body_cpu, {x,y,z}, c);
+                }
+
+        x_cm /= body_gpu->m;
+        body_gpu->x_cm = x_cm;
+
+        if(body_gpu->m == 0)
+        {
+            log_warning("body with 0 mass detected, setting mass and inertia to defaults\n");
+            body_gpu->m = 0.01;
+            body_cpu->I = real_identity_3(100.0);
+            body_gpu->x_cm = 0.5*real_cast(body_cpu->region.l)+0.5*real_cast(body_cpu->region.u);
+        }
+
+        update_inertia(body_cpu, body_gpu);
     }
 }
 

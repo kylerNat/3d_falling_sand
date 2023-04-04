@@ -1,7 +1,3 @@
-#program render_prepass_program
-
-/////////////////////////////////////////////////////////////////
-
 #shader GL_VERTEX_SHADER
 #include "include/header.glsl"
 
@@ -135,30 +131,65 @@ void main()
         vec4 body_orientation = vec4(bodies[b].orientation_r, bodies[b].orientation_x, bodies[b].orientation_y, bodies[b].orientation_z);
         ivec3 body_texture_lower = ivec3(bodies[b].texture_lower_x, bodies[b].texture_lower_y, bodies[b].texture_lower_z);
         ivec3 body_texture_upper = ivec3(bodies[b].texture_upper_x, bodies[b].texture_upper_y, bodies[b].texture_upper_z);
-        ivec3 body_lower = ivec3(bodies[b].lower_x, bodies[b].lower_y, bodies[b].lower_z);
-        ivec3 body_upper = ivec3(bodies[b].upper_x, bodies[b].upper_y, bodies[b].upper_z);
-        ivec3 body_size = body_upper-body_lower;
-        ivec3 body_origin = body_lower+body_texture_lower;
+        ivec3 body_origin_to_lower = ivec3(bodies[b].origin_to_lower_x, bodies[b].origin_to_lower_y, bodies[b].origin_to_lower_z);
+        ivec3 body_size = body_texture_upper-body_texture_lower;
+        ivec3 body_origin = body_texture_lower;
 
         //ray info in the bodies frame
-        vec3 body_pos = apply_rotation(conjugate(body_orientation), pos-body_x) + body_x_cm - body_lower;
+        vec3 body_pos = apply_rotation(conjugate(body_orientation), pos-body_x) + body_x_cm-body_origin_to_lower;
         ivec3 ibody_pos = ivec3(floor(body_pos));
         vec3 body_ray_dir = apply_rotation(conjugate(body_orientation), ray_dir);
 
+        vec3 body_hit_dir = vec3(0,0,0);
         float body_jump_dist = 0.0;
-        if(ibody_pos.x < 0            && body_ray_dir.x > 0) body_jump_dist = max(body_jump_dist, epsilon+(-body_pos.x)/(body_ray_dir.x));
-        if(ibody_pos.x >= body_size.x && body_ray_dir.x < 0) body_jump_dist = max(body_jump_dist, epsilon+(body_size.x-body_pos.x)/(body_ray_dir.x));
-        if(ibody_pos.y < 0            && body_ray_dir.y > 0) body_jump_dist = max(body_jump_dist, epsilon+(-body_pos.y)/(body_ray_dir.y));
-        if(ibody_pos.y >= body_size.y && body_ray_dir.y < 0) body_jump_dist = max(body_jump_dist, epsilon+(body_size.y-body_pos.y)/(body_ray_dir.y));
-        if(ibody_pos.z < 0            && body_ray_dir.z > 0) body_jump_dist = max(body_jump_dist, epsilon+(-body_pos.z)/(body_ray_dir.z));
-        if(ibody_pos.z >= body_size.z && body_ray_dir.z < 0) body_jump_dist = max(body_jump_dist, epsilon+(body_size.z-body_pos.z)/(body_ray_dir.z));
+        if(ibody_pos.x < 0            && body_ray_dir.x > 0) {
+            float new_jump_dist = epsilon+(-body_pos.x)/(body_ray_dir.x);
+            if(new_jump_dist > body_jump_dist){
+                body_hit_dir = vec3(1,0,0);
+                body_jump_dist = new_jump_dist;
+            }
+        }
+        if(ibody_pos.x >= body_size.x && body_ray_dir.x < 0) {
+            float new_jump_dist = epsilon+(body_size.x-body_pos.x)/(body_ray_dir.x);
+            if(new_jump_dist > body_jump_dist){
+                body_hit_dir = vec3(1,0,0);
+                body_jump_dist = new_jump_dist;
+            }
+        }
+        if(ibody_pos.y < 0            && body_ray_dir.y > 0) {
+            float new_jump_dist = epsilon+(-body_pos.y)/(body_ray_dir.y);
+            if(new_jump_dist > body_jump_dist){
+                body_hit_dir = vec3(0,1,0);
+                body_jump_dist = new_jump_dist;
+            }
+        }
+        if(ibody_pos.y >= body_size.y && body_ray_dir.y < 0) {
+            float new_jump_dist = epsilon+(body_size.y-body_pos.y)/(body_ray_dir.y);
+            if(new_jump_dist > body_jump_dist){
+                body_hit_dir = vec3(0,1,0);
+                body_jump_dist = new_jump_dist;
+            }
+        }
+        if(ibody_pos.z < 0            && body_ray_dir.z > 0) {
+            float new_jump_dist = epsilon+(-body_pos.z)/(body_ray_dir.z);
+            if(new_jump_dist > body_jump_dist){
+                body_hit_dir = vec3(0,0,1);
+                body_jump_dist = new_jump_dist;
+            }
+        }
+        if(ibody_pos.z >= body_size.z && body_ray_dir.z < 0) {
+            float new_jump_dist = epsilon+(body_size.z-body_pos.z)/(body_ray_dir.z);
+            if(new_jump_dist > body_jump_dist){
+                body_hit_dir = vec3(0,0,1);
+                body_jump_dist = new_jump_dist;
+            }
+        }
 
         body_pos += body_jump_dist*body_ray_dir;
 
         vec3 body_hit_pos;
         float body_hit_dist;
         ivec3 body_hit_cell;
-        vec3 body_hit_dir;
         vec3 body_normal;
         uvec4 body_voxel;
         bool body_hit = cast_ray(body_materials, body_ray_dir, body_pos, body_size, body_origin, 0, false, body_hit_pos, body_hit_dist, body_hit_cell, body_hit_dir, body_normal, body_voxel, 100);
@@ -167,7 +198,7 @@ void main()
         if(body_hit && (!hit || new_dist < hit_dist))
         {
             hit = true;
-            hit_pos = apply_rotation(body_orientation, body_hit_pos+body_lower-body_x_cm)+body_x;
+            hit_pos = apply_rotation(body_orientation, body_hit_pos-body_x_cm+body_origin_to_lower)+body_x;
             hit_dist = new_dist;
             hit_cell = body_hit_cell;
             hit_dir = body_hit_dir;
@@ -175,7 +206,7 @@ void main()
             voxel = body_voxel;
             if(voxel.r >= BASE_CELL_MAT) voxel.r += bodies[b].cell_material_id;
             voxel_orientation = body_orientation;
-            voxel_x = apply_rotation(body_orientation, vec3(body_hit_cell+body_lower)-body_x_cm+0.5)+body_x;
+            voxel_x = apply_rotation(body_orientation, vec3(body_hit_cell)-body_x_cm+body_origin_to_lower+0.5)+body_x;
         }
     }
 

@@ -2,7 +2,10 @@
 #define MATERIALS
 
 #define N_MAX_MATERIALS 2048
-//material_id's only go up to 256, but materials for cell type's can have different properties for different materials
+//material_id's only go up to 256, but materials for cell type's can have different properties for each body
+
+#define BASE_CELL_MAT 128
+#define ROOM_TEMP 100
 
 struct material_visual_info
 {
@@ -38,13 +41,9 @@ struct material_physical_info
     real conductivity;
     real work_function;
 
-    //trigger info
-    real growth_time;
-    real n_triggers;
-    real trigger_info[15]; //3 uint8's packed into a 24 bit uint then converted to a float
-
     //TODO: chance to disappear
 };
+
 #define N_PHYSICAL_PROPERTIES (sizeof(material_physical_info)/sizeof(float))
 
 material_visual_info material_visuals[N_MAX_MATERIALS] = {
@@ -79,7 +78,7 @@ material_physical_info material_physicals[N_MAX_MATERIALS] = {
 };
 
 material_visual_info base_cell_visual = {.base_color = {1, 1, 1}, .roughness = 0.3f, .metalicity = 0.0f, .opacity = 1.0f};
-material_physical_info base_cell_physical = {.density = 0.001, .hardness = 1, .friction = 10, .restitution = 0.5, .melting_point = 200, .boiling_point = 250, .growth_time = 1};
+material_physical_info base_cell_physical = {.density = 0.001, .hardness = 1, .friction = 10, .restitution = 0.5, .melting_point = 200, .boiling_point = 250};
 
 GLuint material_visual_properties_texture;
 GLuint material_physical_properties_texture;

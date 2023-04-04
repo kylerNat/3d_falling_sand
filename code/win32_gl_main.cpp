@@ -801,7 +801,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .seed = 128924,
         // .player = {.x = {211.1,200.1,32.1}, .x_dot = {0,0,0}},
         // .player = {.x = {289.1,175.1, 302.1}, .x_dot = {0,0,0}},
-        .player = {.x = {chunk_size/2+45.1, chunk_size/2+25.1, 42.1}, .x_dot = {0,0,0}},
+        .player = {.x = {room_size/2+45.1, room_size/2+25.1, 42.1}, .x_dot = {0,0,0}},
 
         .body_table = (index_table_entry*) stalloc_clear(sizeof(index_table_entry)*n_max_bodies),
         .n_max_bodies = n_max_bodies,
@@ -874,7 +874,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .beams = (beam_data*) stalloc_clear(4096*sizeof(beam_data)),
         .n_beams = 0,
 
-        .c = (chunk*) stalloc(8*sizeof(chunk)),
+        .c = (room*) stalloc(8*sizeof(room)),
         .chunk_lookup = {},
 
         .collision_grid = (collision_cell*) stalloc_clear(sizeof(collision_cell)*collision_cells_per_axis*collision_cells_per_axis*collision_cells_per_axis),
@@ -887,8 +887,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     genome* g = create_genome(&w);
     {
         g->form_id_updates = (int*) stalloc(1024*sizeof(int));
-        g->forms_cpu = (cpu_form_data*) stalloc(1024*sizeof(cpu_form_data));
-        g->forms_gpu = (gpu_form_data*) stalloc(1024*sizeof(gpu_form_data));
+        g->forms = (form_t*) stalloc(1024*sizeof(form_t));
         g->n_forms = 0;
         g->joints = (form_joint*) stalloc(1024*sizeof(form_joint));
         g->n_joints = 0;
@@ -912,47 +911,47 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE, &max_3d_texture_size);
     log_output("GL_MAX_3D_TEXTURE_SIZE: ", max_3d_texture_size, "\n");
 
-    chunk* c = w.c;
+    room* c = w.c;
 
-    c->materials = (uint16*) stalloc(sizeof(uint16)*chunk_size*chunk_size*chunk_size);
+    c->materials = (uint16*) stalloc(sizeof(uint16)*room_size*room_size*room_size);
 
-    for(int z = 0; z < chunk_size; z++)
-        for(int y = 0; y < chunk_size; y++)
-            for(int x = 0; x < chunk_size; x++)
+    for(int z = 0; z < room_size; z++)
+        for(int y = 0; y < room_size; y++)
+            for(int x = 0; x < room_size; x++)
             {
                 int material = 0;
                 int height = 20;
-                real rsq = sq(x-chunk_size/2)+sq(y-chunk_size/2);
+                real rsq = sq(x-room_size/2)+sq(y-room_size/2);
                 // height += 0.03*rsq*(exp(-0.0005*rsq));
                 int ramp_height = 20;
                 // height += clamp(ramp_height-abs(y-128), 0, ramp_height);
                 if(sqrt(rsq) < 80 && z < height+ramp_height-5) material = 2;
                 if(sqrt(rsq) < 80 && z < 20) material = 5;
                 height += clamp((float) ramp_height-abs(sqrt(rsq)-80), 0.0, (float) ramp_height);
-                height += max((y*(x-400)/chunk_size), 0);
+                height += max((y*(x-400)/room_size), 0);
                 if(z < height) material = 1;
-                // else if(z < chunk_size-1) material = (randui(&w.seed)%prob)==0;
-                // if(x == chunk_size/2+0 && y == chunk_size/2+0) material = 2;
-                // if(x == chunk_size/2+0 && y == chunk_size/2-1) material = 2;
-                // if(x == chunk_size/2-1 && y == chunk_size/2-1) material = 2;
-                // if(x == chunk_size/2-1 && y == chunk_size/2+0) material = 2;
+                // else if(z < room_size-1) material = (randui(&w.seed)%prob)==0;
+                // if(x == room_size/2+0 && y == room_size/2+0) material = 2;
+                // if(x == room_size/2+0 && y == room_size/2-1) material = 2;
+                // if(x == room_size/2-1 && y == room_size/2-1) material = 2;
+                // if(x == room_size/2-1 && y == room_size/2+0) material = 2;
 
                 if(z <= 5) material = 3;
-                if(z > chunk_size-10) material = 3;
+                if(z > room_size-10) material = 3;
 
                 int door_width = 40;
                 //outer walls
-                if(abs(x-chunk_size/2) > door_width/2 && abs(y-chunk_size/2) > door_width/2 ||
+                if(abs(x-room_size/2) > door_width/2 && abs(y-room_size/2) > door_width/2 ||
                    x <            5 ||
-                   x > chunk_size-5 ||
+                   x > room_size-5 ||
                    y <            5 ||
-                   y > chunk_size-5)
+                   y > room_size-5)
                 {
                     if(y <= 10) material = 3;
                     if(x <= 10) material = 3;
-                    if(chunk_size-y <= 10) material = 3;
-                    if(chunk_size-x <= 10) material = 3;
-                    // if(chunk_size-z <= 10) material = 3;
+                    if(room_size-y <= 10) material = 3;
+                    if(room_size-x <= 10) material = 3;
+                    // if(room_size-z <= 10) material = 3;
                 }
 
                 int glass_thickness = 3;
@@ -961,20 +960,20 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
                 //inner walls
                 int wall_thickness = 20;
-                if((abs(x-chunk_size/2) < wall_thickness/2 || abs(y-chunk_size/2) < wall_thickness/2) &&
-                   !(abs(x-chunk_size*1/4) < door_width/2 || abs(y-chunk_size*1/4) < door_width/2
-                     || abs(x-chunk_size*3/4) < door_width/2 || abs(y-chunk_size*3/4) < door_width/2 || x > 400))
+                if((abs(x-room_size/2) < wall_thickness/2 || abs(y-room_size/2) < wall_thickness/2) &&
+                   !(abs(x-room_size*1/4) < door_width/2 || abs(y-room_size*1/4) < door_width/2
+                     || abs(x-room_size*3/4) < door_width/2 || abs(y-room_size*3/4) < door_width/2 || x > 400))
                 {
                      material = 3;
                 }
 
-                if(abs(z-chunk_size/2) < 5) material = 3;
-                if(abs(z-chunk_size/2) < 5 && z < chunk_size/2 && x > chunk_size/2) material = 5;
+                if(abs(z-room_size/2) < 5) material = 3;
+                if(abs(z-room_size/2) < 5 && z < room_size/2 && x > room_size/2) material = 5;
 
                 real spiral_height = 300;
                 if(rsq > sq(80) && rsq < sq(120))
                 {
-                    if(abs((float)(fmod(z-(spiral_height/(2.0*pi))*(pi+atan2(y-chunk_size/2,x-chunk_size/2)), spiral_height/2))) < 3)
+                    if(abs((float)(fmod(z-(spiral_height/(2.0*pi))*(pi+atan2(y-room_size/2,x-room_size/2)), spiral_height/2))) < 3)
                         material = 3;
                     else if(z >= height)
                         material = 0;
@@ -982,27 +981,27 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
                 if(z == height+10 && x < 50 && y < 50) material = 3;
 
-                // if(y == chunk_size/2 && abs(x-chunk_size/2) <= 2*(i) && x%2 == 0) material = 3;
-                if(y == chunk_size*3/4 && x == chunk_size*3/4+20 && z < 50) material = 3;
+                // if(y == room_size/2 && abs(x-room_size/2) <= 2*(i) && x%2 == 0) material = 3;
+                if(y == room_size*3/4 && x == room_size*3/4+20 && z < 50) material = 3;
 
                 // if(material == 0) material = 2;
 
                 // if(material == 0) material = 2*((randui(&w.seed)%10000)==0); //"rain"
-                c->materials[x+chunk_size*y+chunk_size*chunk_size*z] = material;
+                c->materials[x+room_size*y+room_size*room_size*z] = material;
             }
 
-    load_chunk_to_gpu(c);
+    load_room_to_gpu(c);
 
     for(int i = 0; i < 3; i++)
     {
         int b = new_body_index(&w);
         int_3 unpadded_size = {12,12,12};
-        int_3 size = unpadded_size+(int_3){4,2,2};
-        w.bodies_gpu[b].material_bounds = {{0,0,0}, size};
-        w.bodies_cpu[b].materials = (uint8*) stalloc(size.x*size.y*size.z*sizeof(uint8));
+        // int_3 size = unpadded_size+(int_3){4,2,2};
+        int_3 size = unpadded_size;
+        w.bodies_cpu[b].region = {{}, size};
+        w.bodies_cpu[b].materials = (body_cell*) dynamic_alloc(size.x*size.y*size.z*sizeof(body_cell));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(unpadded_size);
-        w.bodies_gpu[b].form_offset = {0,0,0};
-        w.bodies_gpu[b].x = {chunk_size*3/4-5*b, chunk_size/2, 50};
+        w.bodies_gpu[b].x = {room_size*3/4-5*b, room_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
         // w.bodies_gpu[b].omega = {0.0,-0.5,0.0};
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
@@ -1046,7 +1045,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
                     // if(abs(y - 12) > 2 || abs(x - 12) > 2) material = 0;
 
-                    w.bodies_cpu[b].materials[index_3D({x,y,z}, size)] = material;
+                    w.bodies_cpu[b].materials[index_3D({x,y,z}, size)] = {.material = material};
                 }
     }
 
@@ -1066,94 +1065,83 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     int head_id;
     for(int i = 0; i < 8; i++) //limbs
     {
-        cpu_form_data* form_cpu = &g->forms_cpu[g->n_forms  ];
-        gpu_form_data* form_gpu = &g->forms_gpu[g->n_forms++];
+        form_t* form = &g->forms[g->n_forms++];
 
-        form_gpu->x_origin = {0,0,0};
-        form_gpu->x = {};
-        form_gpu->orientation = {1,0,0,0};
+        form->x = {};
+        form->orientation = {1,0,0,0};
 
-        form_gpu->cell_material_id = 0;
+        form->cell_material_id = 0;
 
-        form_cpu->gpu_data = form_gpu;
-        form_cpu->int_orientation = 0;
-        form_cpu->theta = 2;
+        form->int_orientation = 0;
+        form->theta = 2;
         if(i == 4 || i == 6)
         {
-            form_cpu->theta = 1;
-            form_cpu->phi = (6+2*i)%8;
+            form->theta = 1;
+            form->phi = (6+2*i)%8;
         }
 
-        form_cpu->storage_size = {limb_length,1,1};
-        int total_size = axes_product(form_cpu->storage_size);
-        form_cpu->materials = (uint8*) dynamic_alloc(total_size);
-        memset(form_cpu->materials, 0, total_size);
+        int_3 size = {limb_length,1,1};
+        int total_size = axes_product(size);
+        form->materials = (uint8*) dynamic_alloc(total_size);
+        memset(form->materials, 0, total_size);
 
-        for(int x = 0; x < form_cpu->storage_size.x; x++)
-            for(int y = 0; y < form_cpu->storage_size.y; y++)
-                for(int z = 0; z < form_cpu->storage_size.z; z++)
+        for(int x = 0; x < size.x; x++)
+            for(int y = 0; y < size.y; y++)
+                for(int z = 0; z < size.z; z++)
                 {
                     int m = 128;
-                    form_cpu->materials[index_3D({x,y,z}, form_cpu->storage_size)] = m;
+                    form->materials[index_3D({x,y,z}, size)] = m;
                 }
 
-        load_form_to_gpu(&w.form_space, form_cpu, form_gpu);
+        form->region = {{}, size};
     }
 
     head_id = g->n_forms;
     {
-        cpu_form_data* form_cpu = &g->forms_cpu[g->n_forms  ];
-        gpu_form_data* form_gpu = &g->forms_gpu[g->n_forms++];
+        form_t* form = &g->forms[g->n_forms++];
 
-        form_cpu->is_root = true;
+        form->is_root = true;
 
-        form_gpu->x_origin = {0,0,0};
-        form_gpu->x = {};
-        form_gpu->orientation = {1,0,0,0};
+        form->x = {};
+        form->orientation = {1,0,0,0};
 
-        form_gpu->cell_material_id = 0;
+        form->cell_material_id = 0;
 
-        form_cpu->gpu_data = form_gpu;
-        form_cpu->int_orientation = 0;
-        form_cpu->theta = 0;
+        form->int_orientation = 0;
+        form->theta = 0;
 
-        form_cpu->storage_size = {head_size,head_size,head_size};
-        form_cpu->storage_size.x = 4*((form_cpu->storage_size.x+3)/4);
-        int total_size = axes_product(form_cpu->storage_size);
-        form_cpu->materials = (uint8*) dynamic_alloc(total_size);
-        memset(form_cpu->materials, 0, total_size);
+        int_3 size = {head_size,head_size,head_size};
+        int total_size = axes_product(size);
+        form->materials = (uint8*) dynamic_alloc(total_size);
+        memset(form->materials, 0, total_size);
 
         for(int x = 0; x < head_size; x++)
             for(int y = 0; y < head_size; y++)
                 for(int z = 0; z < head_size; z++)
                 {
                     int m = 128;
-                    form_cpu->materials[index_3D({x,y,z}, form_cpu->storage_size)] = m;
+                    form->materials[index_3D({x,y,z}, size)] = m;
                 }
 
-        load_form_to_gpu(&w.form_space, form_cpu, form_gpu);
+        form->region = {{}, size};
     }
 
     body_id = g->n_forms;
     {
-        cpu_form_data* form_cpu = &g->forms_cpu[g->n_forms  ];
-        gpu_form_data* form_gpu = &g->forms_gpu[g->n_forms++];
+        form_t* form = &g->forms[g->n_forms++];
 
-        form_gpu->x_origin = {0,0,0};
-        form_gpu->x = {};
-        form_gpu->orientation = {1,0,0,0};
+        form->x = {};
+        form->orientation = {1,0,0,0};
 
-        form_gpu->cell_material_id = 0;
+        form->cell_material_id = 0;
 
-        form_cpu->gpu_data = form_gpu;
-        form_cpu->int_orientation = 0;
-        form_cpu->theta = -2;
+        form->int_orientation = 0;
+        form->theta = -2;
 
-        form_cpu->storage_size = {body_length,body_width,body_depth};
-        form_cpu->storage_size.x = 4*((form_cpu->storage_size.x+3)/4);
-        int total_size = axes_product(form_cpu->storage_size);
-        form_cpu->materials = (uint8*) dynamic_alloc(total_size);
-        memset(form_cpu->materials, 0, total_size);
+        int_3 size = {body_length,body_width,body_depth};
+        int total_size = axes_product(size);
+        form->materials = (uint8*) dynamic_alloc(total_size);
+        memset(form->materials, 0, total_size);
 
         for(int x = 0; x < body_length; x++)
             for(int y = 0; y < body_width; y++)
@@ -1161,20 +1149,18 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 {
                     int material = 0;
                     if(x < shoulder_length || (z == 0 && y == body_width/2)) material = body_material;
-                    form_cpu->materials[index_3D({x,y,z}, form_cpu->storage_size)] = material;
+                    form->materials[index_3D({x,y,z}, size)] = material;
                 }
-
-        load_form_to_gpu(&w.form_space, form_cpu, form_gpu);
+        form->region = {{}, size};
     }
 
     {
         int b = new_body_index(&w);
         int_3 size = {20,10,5};
-        w.bodies_gpu[b].material_bounds = {{0,0,0}, size};
-        w.bodies_cpu[b].materials = (uint8*) stalloc(size.x*size.y*size.z*sizeof(uint8));
+        w.bodies_cpu[b].region = {{}, size};
+        w.bodies_cpu[b].materials = (body_cell*) dynamic_alloc(size.x*size.y*size.z*sizeof(body_cell));
         w.bodies_gpu[b].x_cm = 0.5*real_cast(size);
-        w.bodies_gpu[b].form_offset = {0,0,0};
-        w.bodies_gpu[b].x = {chunk_size*3/4-0.5*b, chunk_size/2, 50};
+        w.bodies_gpu[b].x = {room_size*3/4-0.5*b, room_size/2, 50};
         w.bodies_gpu[b].x_dot = {0,0,0};
         w.bodies_gpu[b].omega = {0.0,0.0,0.0};
         w.bodies_gpu[b].orientation = {1,0,0,0};
@@ -1197,7 +1183,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 {
                     int material = 3;
                     if(x == size.x-1 || y == size.y-1 || z == size.z-1) material = 0;
-                    w.bodies_cpu[b].materials[x+y*size.x+z*size.x*size.y] = material;
+                    w.bodies_cpu[b].materials[x+y*size.x+z*size.x*size.y] = {.material = material};
                     real m = 0.001;
                     w.bodies_gpu[b].m += m;
 
@@ -1289,11 +1275,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     for(int bi = 0; bi < br->n_bodies; bi++)
     {
         int b = get_body_index(&w, br->body_ids[bi]);
-        cpu_body_data* body_cpu = &w.bodies_cpu[b];
-        gpu_body_data* body_gpu = &w.bodies_gpu[b];
-
-        int_3 pos = body_gpu->texture_region.l+(int_3){1,1,1};
-        int_3 size = body_gpu->texture_region.u-body_gpu->texture_region.l-(int_3){2,2,2};
+        cpu_body_data* body_cpu = w.bodies_cpu+b;
+        gpu_body_data* body_gpu = w.bodies_gpu+b;
 
         uint8_4 materials_data = {128,0,0,0};
 
@@ -1304,15 +1287,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         //                 GL_RGBA_INTEGER, GL_UNSIGNED_BYTE,
         //                 &materials_data);
 
-        glClearTexSubImage(body_materials_textures[current_body_materials_texture], 0, pos.x, pos.y, pos.z, size.x, size.y, size.z, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, &materials_data);
-
-        body_gpu->x_cm = 0.5*real_cast(size);
+        body_gpu->x_cm = 0.5*real_cast(body_cpu->region.l)+0.5*real_cast(body_cpu->region.u);
 
         body_gpu->m = 0;
         body_cpu->I = {};
-        for(int z = 0; z < size.z; z++)
-            for(int y = 0; y < size.y; y++)
-                for(int x = 0; x < size.x; x++)
+        for(int z = body_cpu->region.l.z; z < body_cpu->region.u.z; z++)
+            for(int y = body_cpu->region.l.y; y < body_cpu->region.u.y; y++)
+                for(int x = body_cpu->region.l.x; x < body_cpu->region.u.x; x++)
                 {
                     real m = 0.001;
                     body_gpu->m += m;
@@ -1323,9 +1304,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     for(int i = 0; i < 3; i++)
                         for(int j = 0; j < 3; j++)
                             body_cpu->I[i][j] += -m*r[i]*r[j];
-                }
 
-        body_gpu->material_bounds = {{1,1,1}, size+(int_3){1,1,1}};
+                    body_cpu->materials[index_3D((int_3){x,y,z}-body_cpu->region.l, body_cpu->region.u-body_cpu->region.l)] = {BASE_CELL_MAT};
+                }
+        update_inertia(body_cpu, body_gpu);
 
         body_gpu->substantial = true;
     }
@@ -1362,14 +1344,11 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     for(int b = 0; b < w.n_bodies; b++)
     {
-        w.bodies_gpu[b].x = {chunk_size/2+15.1*(1+b), chunk_size/2+95.1, 42.1};
-        w.bodies_cpu[b].invI = inverse(w.bodies_cpu[b].I);
+        w.bodies_gpu[b].x = {room_size/2+15.1*(1+b), room_size/2+95.1, 42.1};
 
         w.bodies_gpu[b].old_x = w.bodies_gpu[b].x;
         w.bodies_gpu[b].old_orientation = w.bodies_gpu[b].orientation;
         update_inertia(&w.bodies_cpu[b], &w.bodies_gpu[b]);
-
-        load_body_to_gpu(&w.body_space, &w.bodies_cpu[b], &w.bodies_gpu[b]);
     }
 
     // CreateDirectory(w.tim.savedir, 0);
@@ -1540,6 +1519,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     bool step_mode = false;
 
+    world_cell* cells = (world_cell*) calloc(room_size*room_size*room_size, sizeof(world_cell));
+    rle_run* cell_runs = (rle_run*) calloc(room_size*room_size*room_size, sizeof(rle_run));
+    byte* compressed_cells = (byte*) calloc(room_size*room_size*room_size, sizeof(world_cell));
+
     real Deltat = 0;
     //TODO: make render loop evenly sample inputs when vsynced
     while(update_window(&wnd))
@@ -1588,12 +1571,35 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
             // if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
 
+            if(is_pressed('L', &wnd.input))
+            {
+                LARGE_INTEGER time0;
+                LARGE_INTEGER time1;
+                QueryPerformanceCounter(&time0);
+
+                // download_world_cells(cells);
+                // QueryPerformanceCounter(&time1);
+                // real download_time = ((real) (time1.QuadPart-time0.QuadPart))/(wnd.timer_frequency.QuadPart);
+                // size_t compressed_size = compress_world_cells(cells, compressed_cells);
+                // QueryPerformanceCounter(&time0);
+                // real compression_time = ((real) (time0.QuadPart-time1.QuadPart))/(wnd.timer_frequency.QuadPart);
+                // log_output("downloading world cells took ", download_time, "s, compression took ", compression_time, "s\n");
+                // size_t raw_size = room_size*room_size*room_size*sizeof(world_cell);
+                // log_output("downloaded and compressed world cells to ", 100.0f*compressed_size/raw_size,"%, from ", raw_size,  " bytes to ", compressed_size, " bytes\n");
+
+                size_t encoded_size = encode_world_cells(cell_runs);
+                download_world_cells(cells);
+                QueryPerformanceCounter(&time1);
+                real download_time = ((real) (time1.QuadPart-time0.QuadPart))/(wnd.timer_frequency.QuadPart);
+                log_output("downloading rlencoded world cells took ", download_time, "s and ", encoded_size," bytes\n");
+            }
+
             step_mode = step_mode != is_pressed(VK_OEM_COMMA, &wnd.input);
             if(step_mode ? is_pressed('Z', &wnd.input) : !is_down('Z', &wnd.input))
             {
                 simulate_particles();
                 update_beams(&w);
-                simulate_chunk_atomic(&w, 1);
+                simulate_world_cells(&w, 1);
             }
 
             if(is_pressed('P', &wnd.input)) do_draw_lightprobes = !do_draw_lightprobes;
@@ -1622,7 +1628,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
         if(!is_down('B', &wnd.input))
         {
-            render_prepass(rd.camera_axes, rd.camera_pos, (int_3){chunk_size, chunk_size, chunk_size}, (int_3){0,0,0}, w.bodies_gpu, w.n_bodies);
+            render_prepass(rd.camera_axes, rd.camera_pos, (int_3){room_size, room_size, room_size}, (int_3){0,0,0}, w.bodies_gpu, w.n_bodies);
 
             glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
@@ -1641,7 +1647,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
             glDrawBuffers(1, buffers);
 
-            // render_chunk(w.c, rd.camera_axes, rd.camera_pos, w.bodies_gpu, w.n_bodies);
+            // render_room(w.c, rd.camera_axes, rd.camera_pos, w.bodies_gpu, w.n_bodies);
 
             // for(int b = 0; b < w.n_bodies; b++)
             // {
@@ -1673,7 +1679,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         if(w.edit_mode)
         {
             glDisable(GL_DEPTH_TEST);
-            render_editor_voxels(w.gew.camera_axes, w.gew.camera_pos, &w.gew);
+            render_editor_voxels(w.gew.camera_axes, w.gew.camera_pos, &w.gew, &w.form_space);
             glEnable(GL_DEPTH_TEST);
         }
 

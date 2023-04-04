@@ -79,22 +79,22 @@ void main()
 
     for(int f = 0; f < n_forms; f++)
     {
-        ivec3 form_x_origin = ivec3(forms[f].x_origin_x, forms[f].x_origin_y, forms[f].x_origin_z);
         vec3 form_x = vec3(forms[f].x_x, forms[f].x_y, forms[f].x_z);
         vec4 form_orientation = vec4(forms[f].orientation_r, forms[f].orientation_x, forms[f].orientation_y, forms[f].orientation_z);
-        ivec3 form_lower = ivec3(forms[f].lower_x,
+        ivec3 form_texture_lower = ivec3(forms[f].lower_x,
                                  forms[f].lower_y,
                                  forms[f].lower_z);
-        ivec3 form_upper = ivec3(forms[f].upper_x,
+        ivec3 form_texture_upper = ivec3(forms[f].upper_x,
                                  forms[f].upper_y,
                                  forms[f].upper_z);
-        ivec3 form_size = form_upper-form_lower;
-        ivec3 form_origin = ivec3(forms[f].materials_origin_x,
-                                  forms[f].materials_origin_y,
-                                  forms[f].materials_origin_z)+form_lower;
+        ivec3 form_origin_to_lower = ivec3(forms[f].origin_to_lower_x,
+                                           forms[f].origin_to_lower_y,
+                                           forms[f].origin_to_lower_z);
+        ivec3 form_size = form_texture_upper-form_texture_lower;
+        ivec3 form_origin = form_texture_lower;
 
         //ray info in the forms frame
-        vec3 form_pos = apply_rotation(conjugate(form_orientation), pos-form_x) + form_x_origin - form_lower;
+        vec3 form_pos = apply_rotation(conjugate(form_orientation), pos-form_x)-form_origin_to_lower;
         ivec3 iform_pos = ivec3(floor(form_pos));
         vec3 form_ray_dir = apply_rotation(conjugate(form_orientation), ray_dir);
 
@@ -120,9 +120,9 @@ void main()
         if(form_hit && (!hit || form_jump_dist+form_hit_dist < hit_dist))
         {
             hit = true;
-            hit_pos = apply_rotation(form_orientation, form_hit_pos-form_x_origin)+form_x;
+            hit_pos = apply_rotation(form_orientation, form_hit_pos)+form_x;
             hit_dist = form_jump_dist+form_hit_dist;
-            hit_cell = form_hit_cell;
+            hit_cell = form_hit_cell+form_origin_to_lower;
             hit_dir = form_hit_dir;
             hit_form = f;
             normal = apply_rotation(form_orientation, form_normal);

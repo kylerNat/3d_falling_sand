@@ -21,7 +21,7 @@ void STB_assert(int x)
 
 #include "graphics_common.h"
 #include "game_common.h"
-#include "chunk.h"
+#include "room.h"
 
 #include "materials.h"
 
@@ -45,7 +45,11 @@ void APIENTRY gl_error_callback(GLenum source, GLenum type, GLuint id, GLenum se
             log_warning("LOW: ");
             break;
         default:
+            #ifdef SHOW_GL_NOTICES
             log_output("NOTICE: ");
+            #else
+            return;
+            #endif
             break;
     }
     log_output(message, "\n\n");
@@ -90,14 +94,14 @@ GLuint blob_bottom_texture;
 GLuint frame_buffer;
 
 #define active_regions_width 16
-#define active_regions_size (chunk_size/active_regions_width)
+#define active_regions_size (room_size/active_regions_width)
 
 GLuint active_regions_textures[2];
 int current_active_regions_texture = 0;
 
 GLuint occupied_regions_texture;
 #define occupied_regions_width 16
-#define occupied_regions_size (chunk_size/occupied_regions_width)
+#define occupied_regions_size (room_size/occupied_regions_width)
 
 #define N_MAX_BODIES 4096
 #define N_MAX_CONTACTS (N_MAX_BODIES*32)
@@ -108,6 +112,8 @@ GLuint body_updates_buffer;
 GLuint joint_updates_buffer;
 GLuint contacts_buffer;
 GLuint collision_grid_buffer;
+
+GLuint world_cell_encoding_buffer;
 
 GLuint joint_buffer;
 
@@ -345,7 +351,7 @@ void gl_init_buffers()
     for(int i = 0; i < len(materials_textures); i++)
     {
         glBindTexture(GL_TEXTURE_3D, materials_textures[i]);
-        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGBA8UI, chunk_size, chunk_size, chunk_size);
+        glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGBA8UI, room_size, room_size, room_size);
     }
 
     glGenTextures(len(body_materials_textures), body_materials_textures);
@@ -397,6 +403,10 @@ void gl_init_buffers()
     size_t body_indices_size = sizeof(int)*n_max_body_indices;
     size_t collision_grid_size = sizeof(int_2)*collision_cell_size*collision_cell_size*collision_cell_size;
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, collision_grid_size+body_indices_size, 0, GL_DYNAMIC_STORAGE_BIT);
+
+    glGenBuffers(1, &world_cell_encoding_buffer);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, world_cell_encoding_buffer);
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, ((1+room_size*room_size)*sizeof(int)+2*room_size*room_size*room_size*sizeof(rle_run)), 0, GL_CLIENT_STORAGE_BIT);
 
     glGenBuffers(1, &joint_buffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, joint_buffer);
@@ -1030,93 +1040,12 @@ void render_world(real_3x3 camera_axes, real_3 camera_pos)
     glEnable(GL_BLEND);
 }
 
-void update_bounding_box(cpu_form_data* form_cpu, gpu_form_data* form_gpu)
+void render_editor_voxels(real_3x3 camera_axes, real_3 camera_pos, genedit_window* gew, cuboid_space* form_space)
 {
-    bounding_box b = {form_cpu->storage_size, {0,0,0}};
-    for(int z = 0; z < form_cpu->storage_size.z; z++)
-        for(int y = 0; y < form_cpu->storage_size.y; y++)
-            for(int x = 0; x < form_cpu->storage_size.x; x++)
-            {
-                if(form_cpu->materials[index_3D({x,y,z}, form_cpu->storage_size)]) b = expand_to(b, {x,y,z});
-            }
-
-    form_gpu->material_bounds = b;
-}
-
-void load_form_to_gpu(cuboid_space* form_space, cpu_form_data* fc, gpu_form_data* fg)
-{
-    //TODO: defrag if this fails
-    bounding_box region = add_region(form_space, fc->storage_size);
-    assert((region.u != (int_3){0,0,0}));
-    fg->materials_origin = region.l;
-    update_bounding_box(fc, fg);
-
-    glBindTexture(GL_TEXTURE_3D, form_materials_texture);
-    glTexSubImage3D(GL_TEXTURE_3D, 0,
-                    fg->materials_origin.x, fg->materials_origin.y, fg->materials_origin.z,
-                    fc->storage_size.x, fc->storage_size.y, fc->storage_size.z,
-                    GL_RED_INTEGER, GL_UNSIGNED_BYTE,
-                    fc->materials);
-}
-
-void reload_form_to_gpu(cpu_form_data* fc, gpu_form_data* fg)
-{
-    glBindTexture(GL_TEXTURE_3D, form_materials_texture);
-    glTexSubImage3D(GL_TEXTURE_3D, 0,
-                    fg->materials_origin.x, fg->materials_origin.y, fg->materials_origin.z,
-                    fc->storage_size.x, fc->storage_size.y, fc->storage_size.z,
-                    GL_RED_INTEGER, GL_UNSIGNED_BYTE,
-                    fc->materials);
-}
-
-void resize_form_storage(memory_manager* manager, cuboid_space* form_space, cpu_form_data* fc, gpu_form_data* fg, int_3 offset, int_3 new_size)
-{
-    if(new_size == fc->storage_size) return;
-
-    size_t new_size_total = new_size.x*new_size.y*new_size.z;
-    uint8* new_materials = dynamic_alloc(new_size_total);
-
-    memset(new_materials, 0, new_size_total);
-    for(int z = 0; z < fc->storage_size.z; z++)
-        for(int y = 0; y < fc->storage_size.y; y++)
-        {
-            int x = 0;
-            int nx = x+offset.x;
-            int ny = y+offset.y;
-            int nz = z+offset.z;
-            memcpy(new_materials+nx+new_size.x*(ny+new_size.y*nz), fc->materials+x+fc->storage_size.x*(y+fc->storage_size.y*z), fc->storage_size.x);
-        }
-
-    // for(int z = 0; z < new_size.z; z++)
-    //     for(int y = 0; y < new_size.y; y++)
-    //         for(int x = 0; x < new_size.x; x++)
-    //         {
-    //             new_materials[x+new_size.x*(y+new_size.y*z)] = 0;
-    //         }
-    // for(int z = 0; z < fc->storage_size.z; z++)
-    //     for(int y = 0; y < fc->storage_size.y; y++)
-    //         for(int x = 0; x < fc->storage_size.x; x++)
-    //         {
-    //             int nx = x+offset.x;
-    //             int ny = y+offset.y;
-    //             int nz = z+offset.z;
-    //             new_materials[nx+new_size.x*(ny+new_size.y*nz)] = fc->materials[x+fc->storage_size.x*(y+fc->storage_size.y*z)];
-    //             assert(nx+new_size.x*(ny+new_size.y*nz) < new_size_total);
-    //         }
-
-    dynamic_free(fc->materials);
-    fc->storage_size = new_size;
-    fc->materials = new_materials;
-
-    free_region(form_space, {fg->materials_origin, fg->materials_origin+fc->storage_size});
-    load_form_to_gpu(form_space, fc, fg);
-}
-
-void render_editor_voxels(real_3x3 camera_axes, real_3 camera_pos, genedit_window* gew)
-{
-    glUseProgram(render_editor_voxels_program);
-
     genome* gn = gew->active_genome;
+    if(!gn) return;
+
+    glUseProgram(render_editor_voxels_program);
 
     int texture_i = 0;
     int uniform_i = 0;
@@ -1142,6 +1071,35 @@ void render_editor_voxels(real_3x3 camera_axes, real_3 camera_pos, genedit_windo
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
 
+    //load form materials to gpu
+    form_space->n_free_regions = 0;
+    form_space->free_regions[form_space->n_free_regions++] = {{0,0,0}, form_space->max_size};
+
+    gpu_form_data* forms_gpu = (gpu_form_data*) stalloc(gn->n_forms*sizeof(gpu_form_data));
+    for(int f = 0; f < gn->n_forms; f++)
+    {
+        form_t* form = gn->forms+f;
+
+        int_3 size = form->region.u-form->region.l;
+
+        forms_gpu[f] = {
+            .texture_region = add_region(form_space, size),
+            .origin_to_lower = form->region.l,
+            .x = form->x,
+            .orientation = form->orientation,
+            .cell_material_id = form->cell_material_id,
+        };
+
+        assert((forms_gpu[f].texture_region.u != (int_3){0,0,0})); //TODO: defrag add_region fails
+
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexSubImage3D(GL_TEXTURE_3D, 0,
+                        forms_gpu[f].texture_region.l.x, forms_gpu[f].texture_region.l.y, forms_gpu[f].texture_region.l.z,
+                        size.x, size.y, size.z,
+                        GL_RED_INTEGER, GL_UNSIGNED_BYTE,
+                        form->materials);
+    }
+
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
     glBindTexture(GL_TEXTURE_2D, blue_noise_texture);
@@ -1158,8 +1116,10 @@ void render_editor_voxels(real_3x3 camera_axes, real_3 camera_pos, genedit_windo
     glUniform3iv(uniform_i++, 1, (int*) &gew->active_cell);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, form_buffer);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(gn->forms_gpu[0])*gn->n_forms, gn->forms_gpu);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(forms_gpu[0])*gn->n_forms, forms_gpu);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, form_buffer);
+
+    stunalloc(forms_gpu);
 
     size_t offset = 0;
     int layout_location = 0;
@@ -1697,7 +1657,7 @@ void update_beams(world* w)
     if(w->n_beams == 0) return;
     glUseProgram(update_beams_program);
 
-    load_chunk_to_gpu(w->c);
+    load_room_to_gpu(w->c);
 
     int texture_i = 0;
     int image_i = 0;
@@ -1747,11 +1707,11 @@ void update_beams(world* w)
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 }
 
-void simulate_chunk_atomic(world* w, int update_cells)
+void simulate_world_cells(world* w, int update_cells)
 {
     glUseProgram(simulate_chunk_atomic_program);
 
-    load_chunk_to_gpu(w->c);
+    load_room_to_gpu(w->c);
 
     int texture_i = 0;
     int image_i = 0;
@@ -1821,17 +1781,22 @@ void simulate_chunk_atomic(world* w, int update_cells)
     current_materials_texture = 1-current_materials_texture;
 }
 
-void mipmap_chunk(int min_level, int max_level)
+size_t encode_world_cells(rle_run* data)
 {
-    glUseProgram(mipmap_chunk_program);
+    glUseProgram(encode_world_cells_program);
 
     int texture_i = 0;
     int image_i = 0;
     int uniform_i = 0;
+    int ssbo_i = 0;
 
-    int layer_number_uniform = uniform_i++;
-
-    int mip_level_uniform = uniform_i++;
+    glUniform1i(uniform_i++, texture_i);
+    glActiveTexture(GL_TEXTURE0+texture_i++);
+    glBindTexture(GL_TEXTURE_2D, material_physical_properties_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
     glUniform1i(uniform_i++, texture_i);
     glActiveTexture(GL_TEXTURE0+texture_i++);
@@ -1842,60 +1807,48 @@ void mipmap_chunk(int min_level, int max_level)
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
 
-    glUniform1i(uniform_i++, texture_i);
-    glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_3D, active_regions_textures[current_active_regions_texture]);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, world_cell_encoding_buffer);
+    int clear = 0;
+    glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32I, 0, sizeof(int), GL_RED_INTEGER, GL_INT, &clear);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, world_cell_encoding_buffer);
 
-    size_t offset = 0;
-    int layout_location = 0;
+    glDispatchCompute(64,64,1);
 
-    GLuint vertex_buffer = gl_general_buffers[0];
-    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
-    real vb[] = {0,0,
-        0,1,
-        1,1,
-        1,0};
-    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vb), (void*) vb);
-    add_contiguous_attribute(2, GL_FLOAT, false, 0, sizeof(vb)); //vertex positions
+    glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32I, 0, sizeof(int), GL_RED_INTEGER, GL_INT, &clear);
 
-    real region_pos[2*32*32] = {};
-    for(int i = 0; i < 32*32; i++)
-    {
-        region_pos[2*i+0] = i%32;
-        region_pos[2*i+1] = (i/32)%32;
-    }
-    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(region_pos), (void*) region_pos);
-    add_interleaved_attribute(2, GL_FLOAT, false, 2*sizeof(region_pos[0]), 1);
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
+    glUseProgram(encode_world_cells_scan_program);
+    glDispatchCompute(64,64,1);
 
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_BLEND);
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
-    for(int mip_level = min_level; mip_level < max_level; mip_level++)
-    {
-        glUniform1i(mip_level_uniform, mip_level);
+    int runs_size = 0;
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, sizeof(int)*room_size*room_size, sizeof(int), &runs_size);
+    uint data_size = 4*runs_size;
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, sizeof(int)*(room_size*room_size+1), data_size, data);
+    return data_size;
+}
 
-        uint mip_scale = (1<<mip_level);
-        glViewport(0, 0, chunk_size/mip_scale, chunk_size/mip_scale);
-        log_output("level ", mip_level, ": ", mip_scale, "\n");
+//NOTE: the RLE function above is faster and smaller so that should be prefered
+void download_world_cells(world_cell* data)
+{
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_3D, materials_textures[1-current_materials_texture]);
+    glGetTexImage(GL_TEXTURE_3D, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, data);
+    glBindTexture(GL_TEXTURE_3D, 0);
+}
 
-        for(int l = 0; l < chunk_size/mip_scale; l++)
-        {
-            log_output("   layer ", l, "\n");
-            glUniform1i(layer_number_uniform, l);
-
-            glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                      materials_textures[current_materials_texture], mip_level, l);
-
-            glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, 32*32);
-        }
-    }
-
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
+void upload_world_cells(world_cell* data)
+{
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
+    glTexSubImage3D(GL_TEXTURE_3D, 0,
+                    0, 0, 0,
+                    room_size, room_size, room_size,
+                    GL_RED_INTEGER, GL_UNSIGNED_SHORT,
+                    data);
+    glBindTexture(GL_TEXTURE_3D, 0);
 }
 
 void simulate_particles()
@@ -1943,7 +1896,34 @@ void simulate_particles()
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 }
 
-void simulate_bodies(memory_manager* manager, world* w, gpu_form_data* forms_gpu, int n_forms)
+void load_bodies_to_gpu(world* w)
+{
+    //clear body space and reallocate things,
+    //TODO: have some persistance so only regions with body cells that have changed need to be reuploaded
+    w->body_space.n_free_regions = 0;
+    w->body_space.free_regions[w->body_space.n_free_regions++] = {{0,0,0}, w->body_space.max_size};
+
+    for(int b = 0; b < w->n_bodies; b++)
+    {
+        gpu_body_data* body_gpu = w->bodies_gpu+b;
+        cpu_body_data* body_cpu = w->bodies_cpu+b;
+
+        int_3 size = body_cpu->region.u-body_cpu->region.l;
+        body_gpu->texture_region = add_region(&w->body_space, size);
+        body_gpu->origin_to_lower = body_cpu->region.l;
+
+        // log_output("loading body ", body_cpu->id, " to gpu in region (", body_gpu->texture_region.l, "," , body_gpu->texture_region.u, ")\n");
+
+        glBindTexture(GL_TEXTURE_3D, body_materials_textures[current_body_materials_texture]);
+        glTexSubImage3D(GL_TEXTURE_3D, 0,
+                        body_gpu->texture_region.l.x, body_gpu->texture_region.l.y, body_gpu->texture_region.l.z,
+                        size.x, size.y, size.z,
+                        GL_RGBA_INTEGER, GL_UNSIGNED_BYTE,
+                        body_cpu->materials);
+    }
+}
+
+void find_body_contacts(memory_manager* manager, world* w)
 {
     glUseProgram(simulate_body_program);
 
@@ -2064,8 +2044,8 @@ void simulate_bodies(memory_manager* manager, world* w, gpu_form_data* forms_gpu
 
         const int pad = 1;
         int_3 padding = {pad, pad, pad};
-        int_3 lower = body_gpu->texture_region.l + max_per_axis(body_gpu->material_bounds.l-padding, (int_3){0,0,0});
-        int_3 upper = min_per_axis(body_gpu->texture_region.l+body_gpu->material_bounds.u+padding, body_gpu->texture_region.u);
+        int_3 lower = body_gpu->texture_region.l;
+        int_3 upper = body_gpu->texture_region.u;
 
         for(int x = lower.x; x <= upper.x; x+=body_chunk_size)
         for(int y = lower.y; y <= upper.y; y+=body_chunk_size)
@@ -2098,309 +2078,145 @@ void simulate_bodies(memory_manager* manager, world* w, gpu_form_data* forms_gpu
     glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, sizeof(int), sizeof(contact_point)*w->n_contacts, w->contacts);
 }
 
-void sync_joint_voxels(memory_manager* manager, world* w)
-{
-    glUseProgram(sync_joint_voxels_program);
+// void simulate_body_physics(memory_manager* manager, world* w, render_data* rd)
+// {
+//     glUseProgram(simulate_body_physics_program);
 
-    int texture_i = 0;
-    int image_i = 0;
-    int uniform_i = 0;
+//     int texture_i = 0;
+//     int image_i = 0;
+//     int uniform_i = 0;
 
-    static int frame_number = 0;
-    glUniform1i(uniform_i++, frame_number++);
+//     static int frame_number = 0;
+//     glUniform1i(uniform_i++, frame_number++);
 
-    glUniform1i(uniform_i++, texture_i);
-    glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_2D, material_physical_properties_texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+//     glUniform1i(uniform_i++, texture_i);
+//     glActiveTexture(GL_TEXTURE0+texture_i++);
+//     glBindTexture(GL_TEXTURE_2D, material_physical_properties_texture);
+//     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+//     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+//     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+//     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
-    glUniform1i(uniform_i++, image_i);
-    glBindImageTexture(image_i++, body_materials_textures[current_body_materials_texture], 0, true, 0, GL_READ_WRITE, GL_RGBA8UI);
+//     glUniform1i(uniform_i++, texture_i);
+//     glActiveTexture(GL_TEXTURE0+texture_i++);
+//     glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+//     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, body_buffer);
+//     glUniform1i(uniform_i++, image_i);
+//     glBindImageTexture(image_i++, body_materials_textures[current_body_materials_texture], 0, true, 0, GL_READ_WRITE, GL_RGBA8UI);
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_updates_buffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, body_updates_buffer);
+//     int ssbo_i = 0;
 
-    glUniform1i(uniform_i++, w->n_joints);
+//     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
+//     // glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(bodies_gpu[0])*n_bodies, bodies_gpu);
+//     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, body_buffer);
 
-    gpu_body_joint* joint_data = (gpu_body_joint*) stalloc(sizeof(gpu_body_joint)*w->n_joints);
-    for(int j = 0; j < w->n_joints; j++)
-    {
-        joint_data[j] = {};
-        for(int i = 0; i < 2; i++)
-        {
-            int b = get_body_index(w, w->joints[j].body_id[i]);
-            joint_data[j].body_index[i] = b;
-            joint_data[j].texture_pos[i] = w->joints[j].pos[i]+w->bodies_gpu[b].form_offset+w->bodies_gpu[b].texture_region.l;
-            joint_data[j].axis[i] = w->joints[j].axis[i];
-            // log_output("joint ", j, " body ", w->joints[j].body_id[i], " texture_pos = ", joint_data[j].texture_pos[i], "\n");
-        }
-    }
+//     size_t offset = 0;
+//     int layout_location = 0;
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, joint_buffer);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(joint_data[0])*w->n_joints, joint_data);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, joint_buffer);
+//     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_updates_buffer);
+//     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, body_updates_buffer);
 
-    stunalloc(joint_data);
+//     glDispatchCompute(w->n_bodies,1,1);
 
-    glDispatchCompute((w->n_joints+3)/4,1,1);
+//     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT|GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
-    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+//     size_t body_updates_size = sizeof(body_update)*w->n_bodies;
 
-    glBindImageTexture(0, 0, 0, true, 0, GL_READ_WRITE, GL_RGBA8UI);
-}
+//     byte* memory = stalloc(body_updates_size);
+//     byte* data = memory;
 
-void simulate_body_physics(memory_manager* manager, world* w, render_data* rd)
-{
-    glUseProgram(simulate_body_physics_program);
+//     body_update* body_updates = (body_update*) data;
+//     data += body_updates_size;
 
-    int texture_i = 0;
-    int image_i = 0;
-    int uniform_i = 0;
+//     glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_updates_buffer);
+//     glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(body_update)*w->n_bodies, body_updates);
 
-    static int frame_number = 0;
-    glUniform1i(uniform_i++, frame_number++);
+//     int n_bodies = w->n_bodies;
+//     for(int b = n_bodies-1; b >= 0; b--)
+//     {
+//         cpu_body_data* body_cpu = &w->bodies_cpu[b];
+//         gpu_body_data* body_gpu = &w->bodies_gpu[b];
+//         if(body_updates[b].n_fragments == 0 || body_updates[b].m < 0.0015)
+//         {
+//             body_gpu->substantial = false;
+//             if(body_cpu->form_id == 0)
+//             {
+//                 delete_body(w, body_cpu->id);
+//                 continue;
+//             }
+//         }
+//         else
+//         {
+//             body_gpu->substantial = true;
+//             body_gpu->m = body_updates[b].m;
+//             real_3 new_x_cm = body_updates[b].x_cm;
+//             real_3 deltax_cm = new_x_cm-body_gpu->x_cm;
+//             body_gpu->x_cm = new_x_cm;
+//             body_gpu->x += apply_rotation(body_gpu->orientation, deltax_cm);
+//             body_cpu->I = {
+//                 body_updates[b].I_xx, body_updates[b].I_xy, body_updates[b].I_xz,
+//                 body_updates[b].I_xy, body_updates[b].I_yy, body_updates[b].I_yz,
+//                 body_updates[b].I_xz, body_updates[b].I_yz, body_updates[b].I_zz,
+//             };
+//             //parallel axis theorem to recenter inertia about center of mass
+//             body_cpu->I -= real_identity_3(body_gpu->m*(0.4*sq(0.5)+normsq(body_gpu->x_cm)));
+//             for(int i = 0; i < 3; i++)
+//                 for(int j = 0; j < 3; j++)
+//                     body_cpu->I[i][j] -= -body_gpu->m*body_gpu->x_cm[i]*body_gpu->x_cm[j];
+//             body_cpu->invI = inverse(body_cpu->I);
+//             update_inertia(body_cpu, body_gpu);
 
-    glUniform1i(uniform_i++, texture_i);
-    glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_2D, material_physical_properties_texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+//             body_gpu->fragment_id = 1;
+//         }
 
-    glUniform1i(uniform_i++, texture_i);
-    glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_3D, materials_textures[current_materials_texture]);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+//         body_gpu->material_bounds.l = body_updates[b].lower;
+//         body_gpu->material_bounds.u = body_updates[b].upper;
 
-    glUniform1i(uniform_i++, image_i);
-    glBindImageTexture(image_i++, body_materials_textures[current_body_materials_texture], 0, true, 0, GL_READ_WRITE, GL_RGBA8UI);
+//         for(int i = 1; i < body_updates[b].n_fragments; i++)
+//         {
+//             int bi = new_body_index(w);
+//             cpu_body_data* new_body_cpu = &w->bodies_cpu[bi];
+//             gpu_body_data* new_body_gpu = &w->bodies_gpu[bi];
 
-    int ssbo_i = 0;
+//             if(i == 1) body_cpu->first_fragment_index = w->n_body_fragments;
+//             body_cpu->n_fragments++;
+//             w->body_fragments[w->n_body_fragments++] = new_body_cpu->id;
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_buffer);
-    // glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(bodies_gpu[0])*n_bodies, bodies_gpu);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, body_buffer);
+//             new_body_gpu->brain_id = body_gpu->brain_id;
+//             new_body_cpu->genome_id = body_cpu->genome_id;
+//             new_body_cpu->form_id = body_cpu->form_id;
+//             new_body_cpu->is_root = body_cpu->is_root;
+//             new_body_cpu->root = body_cpu->root;
+//             new_body_cpu->I = body_cpu->I;
+//             new_body_cpu->invI = body_cpu->invI;
+//             new_body_cpu->storage_level = sm_gpu;
+//             //TODO: actually figure out which fragment should keep the form, need to check based on joints
 
-    size_t offset = 0;
-    int layout_location = 0;
+//             *new_body_gpu = *body_gpu;
+//             new_body_gpu->fragment_id = i+1;
+//             int_3 size = body_gpu->texture_region.u-body_gpu->texture_region.l;
+//             new_body_gpu->texture_region = add_region(&w->body_space, size);
+//             new_body_gpu->form_origin += body_gpu->texture_region.l-new_body_gpu->texture_region.l;
+//             new_body_gpu->form_lower = {0,0,0};
+//             new_body_gpu->form_upper = {0,0,0};
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_updates_buffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, body_updates_buffer);
+//             int_3 src_pos = body_gpu->texture_region.l;
+//             int_3 dst_pos = new_body_gpu->texture_region.l;
+//             glCopyImageSubData(body_materials_textures[current_body_materials_texture], GL_TEXTURE_3D, 0,
+//                                src_pos.x, src_pos.y, src_pos.z,
+//                                body_materials_textures[current_body_materials_texture], GL_TEXTURE_3D, 0,
+//                                dst_pos.x, dst_pos.y, dst_pos.z,
+//                                size.x, size.y, size.z);
+//         }
+//     }
 
-    glDispatchCompute(w->n_bodies,1,1);
-
-    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT|GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-
-    size_t body_updates_size = sizeof(body_update)*w->n_bodies;
-
-    byte* memory = stalloc(body_updates_size);
-    byte* data = memory;
-
-    body_update* body_updates = (body_update*) data;
-    data += body_updates_size;
-
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, body_updates_buffer);
-    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(body_update)*w->n_bodies, body_updates);
-
-    int n_bodies = w->n_bodies;
-    for(int b = n_bodies-1; b >= 0; b--)
-    {
-        cpu_body_data* body_cpu = &w->bodies_cpu[b];
-        gpu_body_data* body_gpu = &w->bodies_gpu[b];
-        if(body_updates[b].n_fragments == 0 || body_updates[b].m < 0.0015)
-        {
-            body_gpu->substantial = false;
-            if(body_cpu->form_id == 0)
-            {
-                delete_body(w, body_cpu->id);
-                continue;
-            }
-        }
-        else
-        {
-            body_gpu->substantial = true;
-            body_gpu->m = body_updates[b].m;
-            real_3 new_x_cm = body_updates[b].x_cm;
-            real_3 deltax_cm = new_x_cm-body_gpu->x_cm;
-            body_gpu->x_cm = new_x_cm;
-            body_gpu->x += apply_rotation(body_gpu->orientation, deltax_cm);
-            body_cpu->I = {
-                body_updates[b].I_xx, body_updates[b].I_xy, body_updates[b].I_xz,
-                body_updates[b].I_xy, body_updates[b].I_yy, body_updates[b].I_yz,
-                body_updates[b].I_xz, body_updates[b].I_yz, body_updates[b].I_zz,
-            };
-            //parallel axis theorem to recenter inertia about center of mass
-            body_cpu->I -= real_identity_3(body_gpu->m*(0.4*sq(0.5)+normsq(body_gpu->x_cm)));
-            for(int i = 0; i < 3; i++)
-                for(int j = 0; j < 3; j++)
-                    body_cpu->I[i][j] -= -body_gpu->m*body_gpu->x_cm[i]*body_gpu->x_cm[j];
-            body_cpu->invI = inverse(body_cpu->I);
-            update_inertia(body_cpu, body_gpu);
-
-            body_gpu->fragment_id = 1;
-        }
-
-        body_gpu->material_bounds.l = body_updates[b].lower;
-        body_gpu->material_bounds.u = body_updates[b].upper;
-
-        for(int i = 1; i < body_updates[b].n_fragments; i++)
-        {
-            int bi = new_body_index(w);
-            cpu_body_data* new_body_cpu = &w->bodies_cpu[bi];
-            gpu_body_data* new_body_gpu = &w->bodies_gpu[bi];
-
-            if(i == 1) body_cpu->first_fragment_index = w->n_body_fragments;
-            body_cpu->n_fragments++;
-            w->body_fragments[w->n_body_fragments++] = new_body_cpu->id;
-
-            new_body_gpu->brain_id = body_gpu->brain_id;
-            new_body_cpu->genome_id = body_cpu->genome_id;
-            new_body_cpu->form_id = body_cpu->form_id;
-            new_body_cpu->is_root = body_cpu->is_root;
-            new_body_cpu->root = body_cpu->root;
-            new_body_cpu->I = body_cpu->I;
-            new_body_cpu->invI = body_cpu->invI;
-            new_body_cpu->storage_level = sm_gpu;
-            //TODO: actually figure out which fragment should keep the form, need to check based on joints
-
-            *new_body_gpu = *body_gpu;
-            new_body_gpu->fragment_id = i+1;
-            int_3 size = body_gpu->texture_region.u-body_gpu->texture_region.l;
-            new_body_gpu->texture_region = add_region(&w->body_space, size);
-            new_body_gpu->form_origin += body_gpu->texture_region.l-new_body_gpu->texture_region.l;
-            new_body_gpu->form_lower = {0,0,0};
-            new_body_gpu->form_upper = {0,0,0};
-
-            int_3 src_pos = body_gpu->texture_region.l;
-            int_3 dst_pos = new_body_gpu->texture_region.l;
-            glCopyImageSubData(body_materials_textures[current_body_materials_texture], GL_TEXTURE_3D, 0,
-                               src_pos.x, src_pos.y, src_pos.z,
-                               body_materials_textures[current_body_materials_texture], GL_TEXTURE_3D, 0,
-                               dst_pos.x, dst_pos.y, dst_pos.z,
-                               size.x, size.y, size.z);
-        }
-    }
-
-    stunalloc(memory);
-}
-
-void update_joint_fragments(memory_manager* manager, world* w)
-{
-    glUseProgram(update_joint_fragments_program);
-
-    int texture_i = 0;
-    int image_i = 0;
-    int uniform_i = 0;
-
-    static int frame_number = 0;
-    glUniform1i(uniform_i++, frame_number++);
-
-    glUniform1i(uniform_i++, texture_i);
-    glActiveTexture(GL_TEXTURE0+texture_i++);
-    glBindTexture(GL_TEXTURE_2D, material_physical_properties_texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-
-    glUniform1i(uniform_i++, image_i);
-    glBindImageTexture(image_i++, body_materials_textures[current_body_materials_texture], 0, true, 0, GL_READ_ONLY, GL_RGBA8UI);
-
-    glUniform1i(uniform_i++, w->n_joints);
-
-    int ssbo_i = 0;
-
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, joint_buffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, joint_buffer);
-
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, joint_updates_buffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssbo_i++, joint_updates_buffer);
-
-    glDispatchCompute((w->n_joints+3)/4,1,1);
-
-    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-
-    joint_update* joint_updates = (joint_update*) stalloc(sizeof(joint_update)*w->n_joints);
-
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, joint_updates_buffer);
-    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(joint_update)*w->n_joints, joint_updates);
-
-    for(int j = w->n_joints-1; j >= 0; j--)
-    {
-        for(int i = 0; i < 2; i++)
-        {
-            int b = get_body_index(w, w->joints[j].body_id[i]);
-            cpu_body_data* body_cpu = &w->bodies_cpu[b];
-            gpu_body_data* body_gpu = &w->bodies_gpu[b];
-            int fragment_id = joint_updates[j].fragment_id[i];
-            if(fragment_id == 0 || b == -1)
-            { //no fragment is connected to the joint
-                // if(body_cpu->form_id != 0)
-                // { //create empty body for the joint
-                //     int bi = new_body_index(w);
-                //     cpu_body_data* new_body_cpu = &w->bodies_cpu[bi];
-                //     gpu_body_data* new_body_gpu = &w->bodies_gpu[bi];
-
-                //     new_body_cpu->brain_id = body_cpu->brain_id;
-                //     new_body_cpu->genome_id = body_cpu->genome_id;
-                //     new_body_cpu->form_id = body_cpu->form_id;
-                //     new_body_cpu->is_root = body_cpu->is_root;
-                //     new_body_cpu->root = body_cpu->root;
-                //     new_body_cpu->I = body_cpu->I;
-                //     new_body_cpu->invI = body_cpu->invI;
-                //     new_body_cpu->storage_level = sm_gpu;
-
-                //     *new_body_gpu = *body_gpu;
-                //     new_body_gpu->fragment_id = i+1;
-                //     int_3 size = body_gpu->texture_region.u-body_gpu->texture_region.l;
-                //     new_body_gpu->texture_region = add_region(&w->body_space, size);
-                //     // new_body_gpu->form_origin += body_gpu->texture_region.l-new_body_gpu->texture_region.l;
-                //     new_body_gpu->form_lower = {0,0,0};
-                //     new_body_gpu->form_upper = {0,0,0};
-
-                //     new_body_gpu->substantial = false;
-                //     new_body_gpu->material_bounds = {};
-
-                //     int_3 pos = new_body_gpu->texture_region.l;
-                //     uint clear = 0;
-                //     glClearTexSubImage(body_materials_textures[current_body_materials_texture], 0,
-                //                        pos.x, pos.y, pos.z,
-                //                        size.x, size.y, size.z,
-                //                        GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, &clear);
-                //     //TODO: need to re-create other joints
-                // }
-                // else
-                { //delete the joint
-                    log_output("deleting joint ", j, "\n");
-                    w->joints[j] = w->joints[--w->n_joints];
-                    break;
-                }
-            }
-            else if(fragment_id != 1)
-            {
-                log_output("swapping joint ", j, " to connect to fragment ", fragment_id, "\n");
-                w->joints[j].body_id[i] = w->body_fragments[body_cpu->first_fragment_index+fragment_id-2];
-            }
-        }
-    }
-
-    stunalloc(joint_updates);
-
-    //TODO: need to do endpoints as well
-
-    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-}
+//     stunalloc(memory);
+// }
 
 // void compute_body_bounding_box(gpu_body_data* b)
 // {
@@ -2452,10 +2268,10 @@ voxel_data get_voxel_data(int_3 x)
 {
     int_2 data[27];
     int_3 dim = {3,3,3};
-    x = clamp_per_axis(x, 1, chunk_size-2);
+    x = clamp_per_axis(x, 1, room_size-2);
 
     glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer);
-    // glViewport(0, 0, chunk_size, chunk_size);
+    // glViewport(0, 0, room_size, room_size);
 
     for(int z = 0; z < dim.z; z++)
     {

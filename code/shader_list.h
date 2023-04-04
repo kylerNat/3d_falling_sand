@@ -18,11 +18,9 @@ add_shader(draw_particles_program, "shaders/draw_particles.glsl");
 add_shader(draw_beams_program, "shaders/draw_beams.glsl");
 add_shader(update_beams_program, "shaders/update_beams.glsl");
 add_shader(simulate_chunk_atomic_program, "shaders/simulate_chunk_atomic.glsl");
-add_shader(mipmap_chunk_program, "shaders/mipmap_chunk.glsl");
+add_shader(encode_world_cells_program, "shaders/encode_world_cells.glsl");
+add_shader(encode_world_cells_scan_program, "shaders/encode_world_cells_scan.glsl");
 add_shader(simulate_particles_program, "shaders/simulate_particles.glsl");
 add_shader(simulate_body_program, "shaders/simulate_body.glsl");
-add_shader(sync_joint_voxels_program, "shaders/sync_joint_voxels.glsl");
-add_shader(simulate_body_physics_program, "shaders/simulate_body_physics.glsl");
-add_shader(update_joint_fragments_program, "shaders/update_joint_fragments.glsl");
 
 #undef add_shader

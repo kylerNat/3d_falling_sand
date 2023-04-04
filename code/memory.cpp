@@ -20,7 +20,7 @@ byte* stalloc(size_t size)
 
     if(manager->current->used+size > manager->current->available)
     {
-        assert(memory_stack_size >= size);
+        assert(memory_stack_size >= size, "attempted to allocate ", size, "bytes. stalloc can only allocate up to ", memory_stack_size, "bytes");
         if(!manager->current->next) manager->current->next = allocate_new_stack(memory_stack_size);
         manager->current = manager->current->next;
     }

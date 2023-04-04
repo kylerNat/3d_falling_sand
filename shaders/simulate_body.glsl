@@ -98,243 +98,9 @@ void main()
     int bi = int(body_chunks[body_chunk_id].body_id);
     uvec3 origin = uvec3(body_chunks[body_chunk_id].origin_x, body_chunks[body_chunk_id].origin_y, body_chunks[body_chunk_id].origin_z);
 
-    int pad = 1;
     ivec3 pos = ivec3(origin+gl_LocalInvocationID);
     // if(any(greaterThan(pos, body_texture_lower(bi)+body_upper(bi)))) return;
-    if(any(greaterThanEqual(pos, body_texture_upper(bi)))) return;
-
-    // if(bi == 0 && layer == 0 && gl_VertexID == 0)
-    // {
-    //     int dead_index = atomicAdd(n_dead_particles, -1)-1;
-    //     //this assumes particle creation and destruction never happen simutaneously
-    //     uint p = dead_particles[dead_index];
-    //     particles[p].voxel_data = 3|(2<<(6+8))|(8<<(2+16))|(15<<24);
-    //     particles[p].x = bodies[bi].x_x;
-    //     particles[p].y = bodies[bi].x_y;
-    //     particles[p].z = bodies[bi].x_z;
-    //     particles[p].x_dot = bodies[bi].x_dot_x;
-    //     particles[p].y_dot = bodies[bi].x_dot_y;
-    //     particles[p].z_dot = bodies[bi].x_dot_z+5;
-    //     particles[p].alive = true;
-    // }
-
-    //+,0,-,0
-    //0,+,0,-
-    // int rot = (frame_number+layer)%4;
-    // uint rot = (2*(pos.x+pos.y+pos.z))%4;
-    uint rot = 0;
-    int i = 0;
-    ivec2 dir = ivec2(((rot&1)*(2-rot)), (1-(rot&1))*(1-rot));
-
-    ivec3 pu = ivec3(pos.x, pos.y, pos.z+1);
-    ivec3 pd = ivec3(pos.x, pos.y, pos.z-1);
-    ivec3 pr = ivec3(pos.x+dir.x, pos.y+dir.y, pos.z);
-    ivec3 pl = ivec3(pos.x-dir.x, pos.y-dir.y, pos.z);
-    ivec3 pf = ivec3(pos.x-dir.y, pos.y+dir.x, pos.z);
-    ivec3 pb = ivec3(pos.x+dir.y, pos.y-dir.x, pos.z);
-
-    uvec4 c  = texelFetch(body_materials, ivec3(pos.x, pos.y, pos.z), 0);
-    uvec4 u  = texelFetch(body_materials, pu, 0);
-    uvec4 d  = texelFetch(body_materials, pd, 0);
-    uvec4 r  = texelFetch(body_materials, pr, 0);
-    uvec4 l  = texelFetch(body_materials, pl, 0);
-    uvec4 f  = texelFetch(body_materials, pf, 0);
-    uvec4 b  = texelFetch(body_materials, pb, 0);
-
-    if(body_fragment_id(bi) > 0)
-    {
-        if(floodfill(c) != body_fragment_id(bi)) c = uvec4(0);
-        if(floodfill(u) != body_fragment_id(bi)
-           || any(lessThan(pu, body_texture_lower(bi)))
-           || any(greaterThanEqual(pu, body_texture_upper(bi)))) u = uvec4(0);
-        if(floodfill(d) != body_fragment_id(bi)
-           || any(lessThan(pd, body_texture_lower(bi)))
-           || any(greaterThanEqual(pd, body_texture_upper(bi)))) d = uvec4(0);
-        if(floodfill(r) != body_fragment_id(bi)
-           || any(lessThan(pr, body_texture_lower(bi)))
-           || any(greaterThanEqual(pr, body_texture_upper(bi)))) r = uvec4(0);
-        if(floodfill(l) != body_fragment_id(bi)
-           || any(lessThan(pl, body_texture_lower(bi)))
-           || any(greaterThanEqual(pl, body_texture_upper(bi)))) l = uvec4(0);
-        if(floodfill(f) != body_fragment_id(bi)
-           || any(lessThan(pf, body_texture_lower(bi)))
-           || any(greaterThanEqual(pf, body_texture_upper(bi)))) f = uvec4(0);
-        if(floodfill(b) != body_fragment_id(bi)
-           || any(lessThan(pb, body_texture_lower(bi)))
-           || any(greaterThanEqual(pb, body_texture_upper(bi)))) b = uvec4(0);
-    }
-
-    ivec3 form_pos = pos+body_form_origin(bi);
-    uint form_voxel = 0;
-    if(all(greaterThanEqual(form_pos, body_form_lower(bi))) && all(lessThan(form_pos, body_form_upper(bi))))
-        form_voxel = texelFetch(form_materials, form_pos, 0).r;
-
-    int spawned_cell = 0;
-
-    uint temp = temp(c);
-    uint volt = 0;
-    uint trig = 0;
-
-    uint mid = mat(c); //material id
-    bool is_cell = mid >= BASE_CELL_MAT;
-    if(is_cell) mid += body_cell_material_id(bi);
-
-    for(int i = 0; i < n_triggers(mid); i++)
-    {
-        uint trigger_data = trigger_info(mid, i);
-        uint condition_type = trigger_data&0xFF;
-        uint action_type = (trigger_data>>8)&0xFF;
-        uint trigger_material = trigger_data>>16;
-        bool condition = false;
-        switch(condition_type)
-        {
-            case trig_always:
-                condition = true;
-                break;
-            case trig_hot:
-                condition = temp > 12;
-                break;
-            case trig_cold:
-                condition = temp <= 4;
-                break;
-            case trig_electric:
-                condition = volt > 0;
-                break;
-            case trig_contact:
-                condition = trig(c) == i;
-                break;
-            default:
-                condition = false;
-        }
-
-        if(condition)
-        {
-            switch(action_type)
-            {
-                case act_grow: {
-                    trig = i+1;
-                    break;
-                }
-                case act_die: {
-                    c = uvec4(0);
-                    break;
-                }
-                case act_heat: {
-                    temp++;
-                    break;
-                }
-                case act_chill: {
-                    temp--;
-                    break;
-                }
-                case act_electrify: {
-                    volt = 3;
-                    break;
-                }
-                case act_explode: {
-                    //TODO: EXPLOSIONS!
-                    break;
-                }
-                case act_spray: {
-                    //create particle of type child_material_id, with velocity in the normal direction
-                    break;
-                }
-                default: break;
-            }
-            break;
-        }
-    }
-
-    //check if this cell is empty, on the surface, and is filled in the body map
-    //then check for neighbors that are trying to grow
-    if(body_is_mutating(bi)==1 && mid != form_voxel)
-    {
-        c = uvec4(0);
-    }
-
-    vec3 voxel_pos = pos-body_texture_lower(bi)-body_x_cm(bi)+0.5;
-
-    //TODO: seed this in a way that is independent of internal engine variables, use displacement from nucleus or something
-    // int grow_phase = int(length(voxel_pos));
-    uint grow_phase = rand(rand(rand(pos.z)+pos.y)+pos.x);
-
-    if(mid != form_voxel && form_voxel != 0 && depth(c) == 0 && (frame_number+grow_phase)%growth_time(form_voxel) == 0)
-    {
-        c.r = form_voxel;
-    }
-    else if(mid == 0 && all(greaterThan(pos-origin, ivec3(0))) && all(lessThan(pos-origin, ivec3(32-1))))
-    {
-        uvec4 growing_cell = uvec4(0);
-        if(trig(l) != 0)      growing_cell = l;
-        else if(trig(r) != 0) growing_cell = r;
-        else if(trig(u) != 0) growing_cell = u;
-        else if(trig(d) != 0) growing_cell = d;
-        else if(trig(f) != 0) growing_cell = f;
-        else if(trig(b) != 0) growing_cell = b;
-
-        uint growing_mat = mat(growing_cell); //material id
-        if(growing_mat != 0)
-        {
-            bool is_cell = growing_mat >= BASE_CELL_MAT;
-            if(is_cell) growing_mat += body_cell_material_id(bi);
-
-            uint trigger_data = trigger_info(growing_mat, trig(growing_cell)-1);
-            uint condition_type = trigger_data&0xFF;
-            uint action_type = (trigger_data>>8)&0xFF;
-            uint trigger_material = trigger_data>>16;
-
-            if(action_type == act_grow)
-                c.r = mat(growing_cell)+1;
-            else
-                c.r = trigger_material;
-        }
-    }
-
-    vec3 voxel_x = apply_rotation(body_orientation(bi), voxel_pos)+body_x(bi);
-    //TODO: apply pushback force
-    for(int be = 0; be < n_beams; be++)
-    {
-        vec3 delta = voxel_x-beam_x(be);
-        vec3 dhat = normalize(beam_d(be));
-        float d = clamp(dot(dhat, delta), 0.0, length(beam_d(be)));
-        vec3 nearest_x = d*dhat+beam_x(be);
-        vec3 r = voxel_x-nearest_x;
-        if(dot(r, r) <= sq(beams[be].r))
-        {
-            temp = clamp(temp+100, 0u, 255u);
-        }
-    }
-
-    if(float(temp) > melting_point(mat(c))) c.r = 0;
-    if(float(temp) > boiling_point(mat(c))) c.r = 0;
-
-    if(mat(c) == 0) temp = room_temp;
-
-    uvec4 out_voxel = c;
-
-    int depth = MAX_DEPTH-1;
-    bool filledness = mat(c) != 0;
-    if(((mat(u) != 0) != filledness) ||
-       ((mat(d) != 0) != filledness) ||
-       ((mat(r) != 0) != filledness) ||
-       ((mat(l) != 0) != filledness) ||
-       ((mat(f) != 0) != filledness) ||
-       ((mat(b) != 0) != filledness)) depth = 0;
-    else
-    {
-        depth = min(depth, depth(u)+1);
-        depth = min(depth, depth(d)+1);
-        depth = min(depth, depth(r)+1);
-        depth = min(depth, depth(l)+1);
-        depth = min(depth, depth(f)+1);
-        depth = min(depth, depth(b)+1);
-    }
-
-    out_voxel.g = uint(depth);
-
-    out_voxel.b = temp;
-
-    out_voxel.a = volt | (trig << 4);
+    if(any(greaterThan(pos, body_texture_upper(bi)))) return;
 
     //check 2x2x2 to determine if this corner is on the boundary
     bool inside = false;
@@ -347,11 +113,11 @@ void main()
             {
                 ivec3 p = ivec3(pos.x-x, pos.y-y, pos.z-z);
                 uvec4 vox;
-                if(any(lessThan(p, body_texture_lower(bi)+body_lower(bi))) || any(greaterThanEqual(p, body_texture_lower(bi)+body_upper(bi))))
+                if(any(lessThan(p, body_texture_lower(bi))) || any(greaterThanEqual(p, body_texture_upper(bi))))
                     vox = uvec4(0);
                 else
                     vox = texelFetch(body_materials, p, 0);
-                if(mat(vox) != 0 && (body_fragment_id(bi) == 0 || floodfill(vox) == body_fragment_id(bi)))
+                if(mat(vox) != 0)
                 {
                     inside = true;
                     corner_voxel = vox;
@@ -364,7 +130,7 @@ void main()
 
     if(inside && outside)
     {
-        vec3 body_coord = pos-body_texture_lower(bi);
+        vec3 body_coord = pos-body_texture_lower(bi)+body_origin_to_lower(bi);
         vec3 r = body_coord-body_x_cm(bi);
 
         vec3 world_coord = apply_rotation(body_orientation(bi), r)+body_x(bi);
@@ -396,14 +162,14 @@ void main()
             int bi1 = collision_indices[ci];
         // for(int bi1 = 0; bi1 < n_bodies; bi1++)
         // {
-            if(bi1 == bi || body_is_substantial(bi) == 0 || body_fragment_id(bi)!=1 || body_fragment_id(bi1)!=1 || (body_brain_id(bi) != 0 && (body_brain_id(bi1) == body_brain_id(bi)))) continue;
+            if(bi1 == bi || body_is_substantial(bi) == 0 || (body_brain_id(bi) != 0 && (body_brain_id(bi1) == body_brain_id(bi)))) continue;
             //working in the frame of body bi1
             vec4 rel_orientation = qmult(conjugate(body_orientation(bi1)), body_orientation(bi));
             vec3 rel_x = apply_rotation(conjugate(body_orientation(bi1)), body_x(bi)-body_x(bi1));
             vec3 body1_coord = apply_rotation(rel_orientation, r)+rel_x+body_x_cm(bi1);
 
             ivec3 body1_pos = ivec3(body1_coord);
-            if(any(lessThan(body1_pos, body_lower(bi1))) || any(greaterThanEqual(body1_pos, body_upper(bi1)))) continue;
+            if(any(lessThan(body1_pos, vec3(0))) || any(greaterThanEqual(body1_pos, body_texture_upper(bi1)-body_texture_lower(bi1)))) continue;
             ivec3 pos1 = body1_pos+body_texture_lower(bi1);
             uvec4 body1_voxel = texelFetch(body_materials, pos1, 0);
 
@@ -423,6 +189,4 @@ void main()
             }
         }
     }
-
-    imageStore(body_materials_out, pos, out_voxel);
 }

@@ -57,7 +57,7 @@ void goto_next_line(char*& code)
 #define MAX_FILE_NAME_LENGTH 1024
 #define MAX_SHADER_SIZE 1024*1024
 
-#define MAX_DEPTH 10
+#define MAX_INCLUDE_DEPTH 10
 
 local char* program_name;
 local char* shader_typename;
@@ -138,7 +138,7 @@ void end_shader()
             }
         }
         *d++ = 0;
-        log_error("could not compile ", program_name, ":", shader_names[n_shaders], ":\n", processed_info_log);
+        log_error("could not compile shader ", program_name, ":", shader_names[n_shaders], ":\n\n", processed_info_log);
     }
     glAttachShader(current_program, shaders[n_shaders]);
 
@@ -195,7 +195,7 @@ void end_program()
         }
         *d++ = 0;
 
-        log_error("could not compile ", program_name, "\n", processed_info_log);
+        log_error("could not compile program ", program_name, "\n", processed_info_log);
     }
 }
 
@@ -207,12 +207,12 @@ void insert_line_directive()
 void process_file(char* filename, int depth, char* parent_filename)
 {
     file_number = max_file_number++;
-    line_number = 0;
+    line_number = 1;
     insert_line_directive();
 
-    if(depth > MAX_DEPTH)
+    if(depth > MAX_INCLUDE_DEPTH)
     {
-        log_output("error: max #include depth(", MAX_DEPTH, ") exceeded\n");
+        log_output("error: max #include depth(", MAX_INCLUDE_DEPTH, ") exceeded\n");
         exit(1);
     }
 
@@ -234,7 +234,7 @@ void process_file(char* filename, int depth, char* parent_filename)
 
     char* s = in;
 
-    skip_whitespace_and_newline(s);
+    // skip_whitespace_and_newline(s);
 
     while(*(s))
     {
@@ -249,12 +249,12 @@ void process_file(char* filename, int depth, char* parent_filename)
                     char* include_filename_source_start = s+1;
                     while(*(++s) != '"');
                     size_t include_filename_length = s-include_filename_source_start-1;
-                    *s++ = 0;
+                    *(s++) = 0;
                     sprintf(include_filename, "%s%s", shader_path, include_filename_source_start);
                     int old_line_number = line_number;
                     int old_file_number = file_number;
                     process_file(include_filename, depth+1, filename);
-                    line_number = old_line_number+1;
+                    line_number = old_line_number;
                     file_number = old_file_number;
                     insert_line_directive();
                     continue;
@@ -268,10 +268,11 @@ void process_file(char* filename, int depth, char* parent_filename)
                     while(*(++s) != ' ');
                     char* shader_typename = s+1;
                     while(*(++s) != '\n');
-                    *s++ = 0;
+                    *(s++) = 0;
                     line_number++;
                     if(writing_shader) end_shader();
                     start_shader(shader_typename);
+                    insert_line_directive();
                     continue;
                 }
             }

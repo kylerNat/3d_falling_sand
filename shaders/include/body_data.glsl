@@ -6,12 +6,7 @@ struct body
 {
     int texture_lower_x; int texture_lower_y; int texture_lower_z;
     int texture_upper_x; int texture_upper_y; int texture_upper_z;
-    int lower_x; int lower_y; int lower_z;
-    int upper_x; int upper_y; int upper_z;
-    int form_offset_x; int form_offset_y; int form_offset_z;
-    int form_origin_x; int form_origin_y; int form_origin_z;
-    int form_lower_x; int form_lower_y; int form_lower_z;
-    int form_upper_x; int form_upper_y; int form_upper_z;
+    int origin_to_lower_x; int origin_to_lower_y; int origin_to_lower_z;
     float x_cm_x; float x_cm_y; float x_cm_z;
     float x_x; float x_y; float x_z;
     float x_dot_x; float x_dot_y; float x_dot_z;
@@ -37,7 +32,6 @@ struct body
     int cell_material_id;
     int is_mutating;
     int substantial;
-    int fragment_id;
 
     int brain_id;
 };
@@ -57,20 +51,11 @@ ivec3 body_texture_upper(int b)
     return ivec3(bodies[b].texture_upper_x, bodies[b].texture_upper_y, bodies[b].texture_upper_z);
 }
 
-ivec3 body_lower(int b)
+ivec3 body_origin_to_lower(int b)
 {
-    return ivec3(bodies[b].lower_x, bodies[b].lower_y, bodies[b].lower_z);
+    return ivec3(bodies[b].origin_to_lower_x, bodies[b].origin_to_lower_y, bodies[b].origin_to_lower_z);
 }
 
-ivec3 body_upper(int b)
-{
-    return ivec3(bodies[b].upper_x, bodies[b].upper_y, bodies[b].upper_z);
-}
-
-ivec3 body_form_offset(int b)
-{
-    return ivec3(bodies[b].form_offset_x, bodies[b].form_offset_y, bodies[b].form_offset_z);
-}
 vec3 body_x_cm(int b)
 {
     return vec3(bodies[b].x_cm_x, bodies[b].x_cm_y, bodies[b].x_cm_z);
@@ -135,21 +120,6 @@ vec3 body_boxu(int b)
     return vec3(bodies[b].boxu_x, bodies[b].boxu_y, bodies[b].boxu_z);
 }
 
-ivec3 body_form_origin(int b)
-{
-    return ivec3(bodies[b].form_origin_x, bodies[b].form_origin_y, bodies[b].form_origin_z);
-}
-
-ivec3 body_form_lower(int b)
-{
-    return ivec3(bodies[b].form_lower_x, bodies[b].form_lower_y, bodies[b].form_lower_z);
-}
-
-ivec3 body_form_upper(int b)
-{
-    return ivec3(bodies[b].form_upper_x, bodies[b].form_upper_y, bodies[b].form_upper_z);
-}
-
 int body_cell_material_id(int b)
 {
     return bodies[b].cell_material_id;
@@ -163,11 +133,6 @@ int body_is_mutating(int b)
 int body_is_substantial(int b)
 {
     return bodies[b].substantial;
-}
-
-int body_fragment_id(int b)
-{
-    return bodies[b].fragment_id;
 }
 
 int body_brain_id(int b)
