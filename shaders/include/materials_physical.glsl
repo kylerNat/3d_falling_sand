@@ -12,11 +12,10 @@
 #define       depth(vox) (int(vox.g&0x1F))
 #define       phase(vox) ((vox.g>>5)&0x3) //in world
 #define   transient(vox) (vox.g>>7) //in world
-#define   floodfill(vox) (vox.g>>5) //in bodies
+#define    selected(vox) (vox.a) //in editor
 #define        temp(vox) (vox.b)
 #define        volt(vox) (vox.a&0xF)
 #define        flow(vox) (vox.a>>4) //in world
-#define        trig(vox) (vox.a>>4) //in bodies
 #endif
 
 #define signed_depth(vox) ((mat(vox) == 0) ? (1+depth(vox)) : (-depth(vox)))
@@ -24,8 +23,7 @@
 
 #define solidity(vox) ((mat(vox)==0?0:1|(phase(vox)==phase_solid||phase(vox)==phase_sand ? 2:0))*(1-transient(vox)))
 
-#define MAX_DEPTH 32
-#define SURF_DEPTH 16
+#define MAX_DEPTH 16
 
 #define phase_gas    0
 #define phase_solid  1

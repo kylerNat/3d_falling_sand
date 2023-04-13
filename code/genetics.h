@@ -101,11 +101,6 @@ struct form_t
             int8 theta;
             int8 phi;
         };
-        struct
-        {
-            int8_2 mn;
-            int8_2 thetaphi;
-        };
         uint32 int_orientation;
     };
 
@@ -315,6 +310,8 @@ gene_data gene_list[] =
     {.type = gene_active, .name = "Die", .sprite_filename = "ui/genes/die.png",
      .growth_time = 0, .life_cost = 0, .action_id = act_die},
     {.type = gene_active, .name = "Grow Next", .sprite_filename = "ui/genes/grow.png",
+     .growth_time = 0, .life_cost = 10, .action_id = act_grow},
+    {.type = gene_active, .name = "Spray", .sprite_filename = "ui/genes/grow.png",
      .growth_time = 0, .life_cost = 10, .action_id = act_grow},
 };
 

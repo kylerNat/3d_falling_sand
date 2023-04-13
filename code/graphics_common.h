@@ -62,6 +62,8 @@ int window_height = 720;
 
 struct render_data
 {
+    real fov;
+
     real_4x4 camera;
     real_3 camera_pos;
     real_3x3 camera_axes;
@@ -119,5 +121,48 @@ void draw_text(render_data* rd, char* text, real_3 x, real_4 color)
     rd->next_text += strlen(text)+1;
 }
 
+void update_camera_matrix(render_data* rd)
+{
+    real screen_dist = 1.0/tan(rd->fov/2);
+
+    real_4x4 translate = {
+        1, 0, 0, -rd->camera_pos.x,
+        0, 1, 0, -rd->camera_pos.y,
+        0, 0, 1, -rd->camera_pos.z,
+        0, 0, 0, 1,
+    };
+
+    real_4x4 rotate = {
+        rd->camera_axes[0][0], rd->camera_axes[0][1], rd->camera_axes[0][2], 0,
+        rd->camera_axes[1][0], rd->camera_axes[1][1], rd->camera_axes[1][2], 0,
+        rd->camera_axes[2][0], rd->camera_axes[2][1], rd->camera_axes[2][2], 0,
+        0, 0, 0, 1,
+    };
+
+    real n = 0.1;
+    real f = 1000.0;
+
+    real_4x4 perspective = {
+        (screen_dist*window_height)/window_width, 0, 0, 0,
+        0, screen_dist, 0, 0,
+        0, 0, (f+n)/(f-n), (2*f*n)/(f-n),
+        0, 0, -1, 0,
+    };
+
+    rd->camera = translate*rotate*perspective;
+}
+
+void start_frame(render_data* rd)
+{
+
+    rd->n_circles = 0;
+    rd->n_total_line_points = 0;
+    rd->n_lines = 0;
+    rd->n_line_points[0] = 0;
+    rd->log_pos = 0;
+    rd->debug_log[0] = 0;
+    rd->next_text = rd->text_data;
+    rd->n_texts = 0;
+}
 
 #endif //GRAPHICS_COMMON

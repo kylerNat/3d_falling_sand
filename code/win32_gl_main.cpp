@@ -874,6 +874,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .beams = (beam_data*) stalloc_clear(4096*sizeof(beam_data)),
         .n_beams = 0,
 
+        .rays_in = (ray_in*) stalloc_clear(4096*sizeof(ray_in)),
+        .rays_out = (ray_out*) stalloc_clear(4096*sizeof(ray_out)),
+        .n_rays = 0,
+
         .c = (room*) stalloc(8*sizeof(room)),
         .chunk_lookup = {},
 
@@ -991,6 +995,14 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             }
 
     load_room_to_gpu(c);
+
+    world_cell* cells = (world_cell*) calloc(room_size*room_size*room_size, sizeof(world_cell));
+    rle_run* rle_cells = (rle_run*) calloc(room_size*room_size*room_size, sizeof(rle_run));
+    byte* compressed_cells = (byte*) calloc(room_size*room_size*room_size, sizeof(world_cell));
+    size_t compressed_size = 0;
+
+    size_t encoded_size = encode_world_cells(rle_cells);
+    compressed_size = compress_world_cells(rle_cells, encoded_size, compressed_cells);
 
     for(int i = 0; i < 3; i++)
     {
@@ -1519,10 +1531,6 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     bool step_mode = false;
 
-    world_cell* cells = (world_cell*) calloc(room_size*room_size*room_size, sizeof(world_cell));
-    rle_run* cell_runs = (rle_run*) calloc(room_size*room_size*room_size, sizeof(rle_run));
-    byte* compressed_cells = (byte*) calloc(room_size*room_size*room_size, sizeof(world_cell));
-
     real Deltat = 0;
     //TODO: make render loop evenly sample inputs when vsynced
     while(update_window(&wnd))
@@ -1546,32 +1554,19 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         QueryPerformanceCounter(&wnd.this_time);
         {
             while(Deltat > dt) Deltat -= dt;
-            rd.n_circles = 0;
-            rd.n_circles = 0;
-            rd.n_total_line_points = 0;
-            rd.n_lines = 0;
-            rd.n_line_points[0] = 0;
-            rd.log_pos = 0;
-            rd.debug_log[0] = 0;
-            rd.next_text = rd.text_data;
-            rd.n_texts = 0;
 
-            ui.n_circles = 0;
-            ui.n_total_line_points = 0;
-            ui.n_lines = 0;
-            ui.n_line_points[0] = 0;
-            ui.log_pos = 0;
-            ui.debug_log[0] = 0;
-            ui.next_text = ui.text_data;
-            ui.n_texts = 0;
+            start_frame(&rd);
+            start_frame(&ui);
 
             update_sounds(&ad);
 
-            update_and_render(manager, &w, &rd, &ui, &ad, &wnd.input);
+            update_game(manager, &w, &rd, &ui, &ad, &wnd.input);
+
+            update_camera_matrix(&rd);
 
             // if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
 
-            if(is_pressed('L', &wnd.input))
+            if(is_down('K', &wnd.input))
             {
                 LARGE_INTEGER time0;
                 LARGE_INTEGER time1;
@@ -1582,28 +1577,129 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 // real download_time = ((real) (time1.QuadPart-time0.QuadPart))/(wnd.timer_frequency.QuadPart);
                 // size_t compressed_size = compress_world_cells(cells, compressed_cells);
                 // QueryPerformanceCounter(&time0);
-                // real compression_time = ((real) (time0.QuadPart-time1.QuadPart))/(wnd.timer_frequency.QuadPart);
-                // log_output("downloading world cells took ", download_time, "s, compression took ", compression_time, "s\n");
-                // size_t raw_size = room_size*room_size*room_size*sizeof(world_cell);
-                // log_output("downloaded and compressed world cells to ", 100.0f*compressed_size/raw_size,"%, from ", raw_size,  " bytes to ", compressed_size, " bytes\n");
 
-                size_t encoded_size = encode_world_cells(cell_runs);
-                download_world_cells(cells);
+                size_t encoded_size = encode_world_cells(rle_cells);
                 QueryPerformanceCounter(&time1);
                 real download_time = ((real) (time1.QuadPart-time0.QuadPart))/(wnd.timer_frequency.QuadPart);
-                log_output("downloading rlencoded world cells took ", download_time, "s and ", encoded_size," bytes\n");
+                compressed_size = compress_world_cells(rle_cells, encoded_size, compressed_cells);
+                QueryPerformanceCounter(&time0);
+                real compression_time = ((real) (time0.QuadPart-time1.QuadPart))/(wnd.timer_frequency.QuadPart);
+                log_output("downloading rlencoded world cells took ", download_time, "s, compression took ", compression_time, "s\n");
+                size_t raw_size = room_size*room_size*room_size;
+                log_output("downloaded and compressed world cells to ", 100.0f*compressed_size/encoded_size,"%, from ", encoded_size,  " bytes to ", compressed_size, " bytes\n");
+
+                // total_run_length = encoded_size/2
+                // for(int i = 0; i < ; i++)
+                // {
+                //     rle_cells[i].
+                // }
             }
 
-            step_mode = step_mode != is_pressed(VK_OEM_COMMA, &wnd.input);
-            if(step_mode ? is_pressed('Z', &wnd.input) : !is_down('Z', &wnd.input))
+            if(is_pressed('L', &wnd.input))
             {
-                simulate_particles();
-                update_beams(&w);
-                simulate_world_cells(&w, 1);
+                LARGE_INTEGER time0;
+                LARGE_INTEGER time1;
+                QueryPerformanceCounter(&time0);
+
+                size_t size = decompress_world_cells(rle_cells, compressed_cells, compressed_size);
+                QueryPerformanceCounter(&time1);
+                real decompression_time = ((real) (time1.QuadPart-time0.QuadPart))/(wnd.timer_frequency.QuadPart);
+                decode_world_cells(rle_cells, size);
+                QueryPerformanceCounter(&time0);
+                real upload_time = ((real) (time0.QuadPart-time1.QuadPart))/(wnd.timer_frequency.QuadPart);
+                log_output("uploading rlencoded world cells took ", upload_time, "s, decompression took ", decompression_time, "s\n");
+                // for(int i = 0; i < 16; i++) simulate_world_cells(&w, 1);
+            }
+
+            cast_rays(&w);
+
+            if(is_pressed(VK_OEM_3, &wnd.input))
+            {
+                if(w.world_edit_mode)
+                {
+                    size_t encoded_size = encode_world_cells(rle_cells);
+                    compressed_size = compress_world_cells(rle_cells, encoded_size, compressed_cells);
+                }
+                size_t size = decompress_world_cells(rle_cells, compressed_cells, compressed_size);
+                decode_world_cells(rle_cells, size);
+
+                w.world_edit_mode = !w.world_edit_mode;
+            }
+
+            if(w.world_edit_mode)
+            {
+                ray_out ro = w.rays_out[w.world_editor.ray_id];
+                w.world_editor.gpu_data.selection_mode = 0;
+                if(ro.material >= 0)
+                {
+                    bool activate_selected_region = false;
+
+                    if(is_down(M1, &wnd.input))
+                    {
+                        if(!w.world_editor.selection_active)
+                        {
+                            w.world_editor.selection_active = true;
+                            w.world_editor.selection_start = ro.pos;
+                        }
+                        activate_selected_region = true;
+                    }
+                    else
+                    {
+                        if(w.world_editor.selection_active)
+                        {
+                            w.world_editor.gpu_data.selection_mode = 1;
+                            w.world_editor.selection_active = false;
+                            activate_selected_region = true;
+                        }
+                        else
+                        {
+                            w.world_editor.gpu_data.new_selection = {};
+                        }
+                    }
+
+                    if(activate_selected_region)
+                    {
+                        int_3 sel_l = min_per_axis(w.world_editor.selection_start, ro.pos);
+                        int_3 sel_u = max_per_axis(w.world_editor.selection_start, ro.pos)+(int_3){1,1,1};
+                        w.world_editor.gpu_data.new_selection = {sel_l, sel_u};
+
+                        int_3 size = sel_u-sel_l;
+                        int_3 active_data_size = {(sel_l.x%16+size.x+15)/16, (sel_l.y%16+size.y+15)/16, (sel_l.z%16+size.z+15)/16};
+                        size_t active_data_size_total = active_data_size.x*active_data_size.y*active_data_size.z*sizeof(uint);
+                        uint* active_data = (uint*) stalloc(active_data_size_total);
+                        memset(active_data, 0xFF, active_data_size_total);
+                        glBindTexture(GL_TEXTURE_3D, active_regions_textures[current_active_regions_texture]);
+                        glTexSubImage3D(GL_TEXTURE_3D, 0,
+                                        sel_l.x/16, sel_l.y/16, sel_l.z/16,
+                                        active_data_size.x, active_data_size.y, active_data_size.z,
+                                        GL_RED_INTEGER, GL_UNSIGNED_INT,
+                                        active_data);
+                        stunalloc(active_data);
+                    }
+                }
+
+                w.world_editor.gpu_data.sel_fill = -1;
+
+                ui.log_pos += sprintf(ui.debug_log+ui.log_pos, "ray cast: %d, (%d, %d, %d), %f\n",
+                                       ro.material,
+                                       ro.pos.x, ro.pos.y, ro.pos.z,
+                                       ro.dist);
+
+                edit_world(&w, w.world_editor.gpu_data);
+            }
+            else
+            {
+                step_mode = step_mode != is_pressed(VK_OEM_COMMA, &wnd.input);
+                if(step_mode ? is_pressed('Z', &wnd.input) : !is_down('Z', &wnd.input))
+                {
+                    simulate_particles();
+                    update_beams(&w);
+                    simulate_world_cells(&w, 1);
+                }
             }
 
             if(is_pressed('P', &wnd.input)) do_draw_lightprobes = !do_draw_lightprobes;
-            if(is_pressed(VK_OEM_3, &wnd.input)) show_fps = !show_fps;
+            if(is_pressed(VK_F1, &wnd.input)) show_fps = !show_fps;
 
             /*NOTE FOR NEXT TIME:
               render at lower resolution, use that for lighting/reflection info,
@@ -1642,7 +1738,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             glViewport(0, 0, resolution_x, resolution_y);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-            render_world(rd.camera_axes, rd.camera_pos);
+            render_world(rd.camera_axes, rd.camera_pos, w.world_edit_mode);
 
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
             glDrawBuffers(1, buffers);

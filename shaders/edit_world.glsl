@@ -1,6 +1,3 @@
-#program simulate_chunk_atomic_program
-/////////////////////////////////////////////////////////////////
-
 #shader GL_COMPUTE_SHADER
 #include "include/header.glsl"
 
@@ -15,36 +12,12 @@ layout(location = 3, rgba8ui) uniform uimage3D materials_out;
 layout(location = 4) uniform usampler3D active_regions_in;
 layout(location = 5) uniform writeonly uimage3D active_regions_out;
 layout(location = 6) uniform writeonly uimage3D occupied_regions_out;
-layout(location = 7) uniform int update_cells;
-layout(location = 8) uniform int n_explosions;
-layout(location = 9) uniform int n_beams;
 
 #define MATERIAL_PHYSICAL_PROPERTIES
 #include "include/materials_physical.glsl"
 
-#include "include/particle_data.glsl"
-#define EXPLOSION_DATA_BINDING 1
-#include "include/explosion_data.glsl"
-#define BEAM_DATA_BINDING 2
-#include "include/beam_data.glsl"
-
-uint rand(uint seed)
-{
-    seed ^= seed<<13;
-    seed ^= seed>>17;
-    seed ^= seed<<5;
-    return seed;
-}
-
-float float_noise(uint seed)
-{
-    return fract(float(int(seed))/1.0e10);
-}
-
-uint conduction_dir(ivec3 pos)
-{
-    return rand(rand(frame_number+rand(rand(rand(pos.z)+pos.y)+pos.x)))%6;
-}
+#define EDITOR_DATA_BINDING 0
+#include "include/editor_data.glsl"
 
 bool c_active = false;
 bool u_active = false;
@@ -57,18 +30,101 @@ bool b_active = false;
 void simulate_voxel(ivec3 pos, ivec3 rpos)
 {
     ivec3 cell_p = pos%16;
-    // ivec3 cell_p = gl_LocalInvocationID.xyz;
-    // ivec3 rpos = gl_WorkGroupID.xyz;
-
-    if(cell_p == ivec3(0,0,0)) imageStore(occupied_regions_out, rpos, uvec4(0,0,0,0));
 
     uvec4 c  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z),0);
-    uvec4 old_voxel  = c;
+    uvec4 old_voxel = c;
 
+    ivec3 pu = ivec3(pos.x, pos.y, pos.z+1);
+    ivec3 pd = ivec3(pos.x, pos.y, pos.z-1);
+    ivec3 pr = ivec3(pos.x+1, pos.y, pos.z);
+    ivec3 pl = ivec3(pos.x-1, pos.y, pos.z);
+    ivec3 pf = ivec3(pos.x, pos.y+1, pos.z);
+    ivec3 pb = ivec3(pos.x, pos.y-1, pos.z);
+
+    uvec4 u  = texelFetch(materials, pu, 0);
+    uvec4 d  = texelFetch(materials, pd, 0);
+    uvec4 r  = texelFetch(materials, pr, 0);
+    uvec4 l  = texelFetch(materials, pl, 0);
+    uvec4 f  = texelFetch(materials, pf, 0);
+    uvec4 b  = texelFetch(materials, pb, 0);
+
+    uvec4 out_voxel = c;
+
+    uint sel = selected(c);
+
+    // if(sel == 1)
+    // {
+    //     uvec4 from = texelFetch(materials, pos+sel_move, 0);
+    //     if(selected(from) == 1) out_voxel = from;
+    //     if(sel_fill >= 0) out_voxel.r = sel_fill;
+    // }
+
+    ivec3 sel_l = ivec3(new_selection.l_x, new_selection.l_y, new_selection.l_z);
+    ivec3 sel_u = ivec3(new_selection.u_x, new_selection.u_y, new_selection.u_z);
+    if(all(greaterThanEqual(pos, sel_l)) && all(lessThan(pos, sel_u)))
+    {
+        if(selection_mode == 1) sel = 1;
+        else if(selection_mode == 2) sel = 0;
+        else sel |= 2;
+    }
+    else sel &= 1;
+
+
+    vec3 x = vec3(pos);
+    for(int i = 0; i < n_strokes; i++)
+    {
+        brush_stroke stroke = strokes[i];
+        vec3 stroke_x = vec3(stroke.x, stroke.y, stroke.z);
+        switch(stroke.shape)
+        {
+            case BS_CUBE:
+            {
+                vec3 deltax = abs(x-stroke_x);
+                if(all(lessThanEqual(deltax, vec3(stroke.r)))) out_voxel.r = stroke.material;
+            }
+            case BS_SPHERE:
+            {
+                vec3 deltax = x-stroke_x;
+                if(dot(deltax, deltax) < stroke.r*stroke.r) out_voxel.r = stroke.material;
+            }
+        }
+    }
+
+    int depth = MAX_DEPTH-1;
+    uint solidity = solidity(c);
+    if((solidity(u) != solidity) ||
+       (solidity(d) != solidity) ||
+       (solidity(r) != solidity) ||
+       (solidity(l) != solidity) ||
+       (solidity(f) != solidity) ||
+       (solidity(b) != solidity)) depth = 0;
+    else
+    {
+        depth = min(depth, depth(u)+1);
+        depth = min(depth, depth(d)+1);
+        depth = min(depth, depth(r)+1);
+        depth = min(depth, depth(l)+1);
+        depth = min(depth, depth(f)+1);
+        depth = min(depth, depth(b)+1);
+    }
+
+    out_voxel.g = uint(depth);
+    out_voxel.a = sel;
+
+    bool changed = old_voxel != out_voxel;
+    if(changed)
+    {
+        c_active = true;
+        u_active = u_active || cell_p.z>=15;
+        d_active = d_active || cell_p.z<= 0;
+        r_active = r_active || cell_p.y>=15;
+        l_active = l_active || cell_p.y<= 0;
+        f_active = f_active || cell_p.x>=15;
+        b_active = b_active || cell_p.x<= 0;
+    }
 
     if(out_voxel.r != 0) imageStore(occupied_regions_out, ivec3(pos.x/16, pos.y/16, pos.z/16), uvec4(1,0,0,0));
 
-    // memoryBarrier();
     imageStore(materials_out, pos, out_voxel);
 }
 
@@ -82,6 +138,9 @@ void main()
     {
         return;
     }
+
+    if(gl_LocalInvocationID == uvec3(0,0,0)) imageStore(occupied_regions_out, rpos, uvec4(0,0,0,0));
+    memoryBarrier();
 
     for(int x = 0; x < subgroup_size; x++)
         for(int y = 0; y < subgroup_size; y++)

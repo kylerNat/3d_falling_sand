@@ -16,10 +16,15 @@ add_shader(move_lightprobes_program, "shaders/move_lightprobes.glsl");
 add_shader(denoise_program, "shaders/denoise.glsl");
 add_shader(draw_particles_program, "shaders/draw_particles.glsl");
 add_shader(draw_beams_program, "shaders/draw_beams.glsl");
+add_shader(cast_rays_program, "shaders/cast_rays.glsl");
 add_shader(update_beams_program, "shaders/update_beams.glsl");
 add_shader(simulate_chunk_atomic_program, "shaders/simulate_chunk_atomic.glsl");
+add_shader(edit_world_program, "shaders/edit_world.glsl");
 add_shader(encode_world_cells_program, "shaders/encode_world_cells.glsl");
 add_shader(encode_world_cells_scan_program, "shaders/encode_world_cells_scan.glsl");
+add_shader(decode_world_cells_scan_program, "shaders/decode_world_cells_scan.glsl");
+add_shader(decode_world_cells_program, "shaders/decode_world_cells.glsl");
+add_shader(decode_world_cells_write_program, "shaders/decode_world_cells_write.glsl");
 add_shader(simulate_particles_program, "shaders/simulate_particles.glsl");
 add_shader(simulate_body_program, "shaders/simulate_body.glsl");
 

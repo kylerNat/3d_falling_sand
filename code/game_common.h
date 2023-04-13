@@ -498,6 +498,56 @@ debug_menu_t debug_menu;
 
 #define debug_menu_active (debug_menu.body_inspector_active)
 
+enum brush_shape
+{
+    bs_cube,
+    bs_sphere,
+    n_brush_shapes
+};
+
+#pragma pack(push, 1)
+struct brush_stroke
+{
+    int material;
+    int shape;
+    real_3 x;
+    real r;
+};
+
+struct ray_in
+{
+    real_3 x;
+    real_3 d;
+    float max_dist;
+    int start_material;
+};
+
+struct ray_out
+{
+    int material; //-1 for no hit
+    int_3 pos;
+    real dist;
+};
+
+struct editor_data_gpu
+{
+    bounding_box new_selection;
+    int selection_mode;
+    int_3 sel_move;
+    int sel_fill;
+    int n_strokes;
+    brush_stroke strokes[512];
+};
+#pragma pack(pop)
+
+struct editor_data
+{
+    editor_data_gpu gpu_data;
+    int ray_id;
+    bool selection_active;
+    int_3 selection_start;
+};
+
 struct world
 {
     uint32 seed;
@@ -538,6 +588,7 @@ struct world
     cuboid_space body_space;
 
     bool edit_mode;
+    bool world_edit_mode;
 
     explosion_data* explosions;
     int n_explosions;
@@ -545,10 +596,16 @@ struct world
     beam_data* beams;
     int n_beams;
 
+    ray_in* rays_in;
+    ray_out* rays_out;
+    int n_rays;
+
     room * c;
     int8_2 chunk_lookup[2*2*2];
 
     collision_cell* collision_grid;
+
+    editor_data world_editor;
 
     int frame_number;
 };
@@ -2145,6 +2202,58 @@ void simulate_body_voxels(world* w, render_data* rd)
 
         update_inertia(body_cpu, body_gpu);
     }
+}
+
+void load_bodies_to_gpu(world* w); //TODO: make include headers or something
+void find_body_contacts(memory_manager* manager, world* w);
+
+void update_bodies(memory_manager* manager, world* w, render_data* rd)
+{
+    //add bodies to collision grid
+    for(int z = 0; z < collision_cells_per_axis; z++)
+        for(int y = 0; y < collision_cells_per_axis; y++)
+            for(int x = 0; x < collision_cells_per_axis; x++)
+            {
+                collision_cell* cell = &w->collision_grid[index_3D({x,y,z}, collision_cells_per_axis)];
+                cell->n_bodies = 0;
+            }
+
+    for(int b = 0; b < w->n_bodies; b++)
+    {
+        cpu_body_data* body_cpu = &w->bodies_cpu[b];
+        gpu_body_data* body_gpu = &w->bodies_gpu[b];
+        update_bounding_box(body_cpu, body_gpu);
+        if(!body_gpu->substantial) continue;
+        int_3 lower = int_cast(body_gpu->box.l/collision_cell_size);
+        int_3 upper = int_cast(body_gpu->box.u/collision_cell_size);
+        lower = clamp_per_axis(lower, 0, collision_cells_per_axis);
+        upper = clamp_per_axis(upper, 0, collision_cells_per_axis);
+        for(int z = lower.z; z <= upper.z; z++)
+            for(int y = lower.y; y <= upper.y; y++)
+                for(int x = lower.x; x <= upper.x; x++)
+                {
+                    collision_cell* cell = &w->collision_grid[index_3D({x,y,z}, collision_cells_per_axis)];
+                    cell->body_indices[cell->n_bodies++] = b;
+                }
+    }
+
+    load_bodies_to_gpu(w);
+    find_body_contacts(manager, w);
+
+    simulate_body_voxels(w, rd);
+
+    for(int c = 0; c < w->n_contacts; c++)
+    {
+        contact_point* contact = &w->contacts[c];
+        int b = contact->body_index[0];
+        cpu_body_data* body_cpu = &w->bodies_cpu[b];
+        body_cpu->has_contact = true;
+        body_cpu->phasing = false;
+    }
+
+    solve_velocity_constraints(manager, w, rd);
+    integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
+    solve_position_constraints(manager, w, rd);
 }
 
 #endif //GAME_COMMON

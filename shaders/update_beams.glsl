@@ -1,7 +1,3 @@
-#program update_beams_program
-
-/////////////////////////////////////////////////////////////////
-
 #shader GL_COMPUTE_SHADER
 #include "include/header.glsl"
 

@@ -1,7 +1,3 @@
-#program render_editor_voxels_program
-
-/////////////////////////////////////////////////////////////////
-
 #shader GL_VERTEX_SHADER
 #include "include/header.glsl"
 

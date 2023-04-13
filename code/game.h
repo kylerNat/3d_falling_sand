@@ -172,17 +172,25 @@ void spawn_particles(real_3 x, real_3 x_dot)
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(particles.n_particles)+sizeof(particle_data)*particles.n_particles, &particles);
 }
 
-void update_and_render(memory_manager* manager, world* w, render_data* rd, render_data* ui, audio_data* ad, user_input* input)
+void update_game(memory_manager* manager, world* w, render_data* rd, render_data* ui, audio_data* ad, user_input* input)
 {
     bool toggle_edit = is_pressed('\t', input);
-    w->edit_mode = w->edit_mode != toggle_edit;
+    static bool camera_lock = false;
+    if(w->world_edit_mode)
+    {
+        camera_lock = camera_lock != toggle_edit;
+        w->edit_mode = false;
+    }
+    else
+    {
+        w->edit_mode = w->edit_mode != toggle_edit;
+        camera_lock = w->edit_mode;
+    }
+    if(!camera_lock) input->mouse = {};
 
     if(w->edit_mode)
     {
         do_edit_window(ui, input, &w->gew);
-        real_4 cursor_color = {1,1,1,1};
-        if(input->active_ui_element.type != ui_form_voxel)
-            draw_circle(ui, {input->mouse.x, input->mouse.y, 0}, 0.01, cursor_color);
     }
     // else
     // {
@@ -193,6 +201,13 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     }
     // }
 
+    if(w->edit_mode || w->world_edit_mode)
+    {
+        real_4 cursor_color = {1,1,1,1};
+        if(input->active_ui_element.type != ui_form_voxel)
+            draw_circle(ui, {input->mouse.x, input->mouse.y, 0}, 0.01, cursor_color);
+    }
+
     entity* player = &w->player;
     // player->x += player->x_dot;
     real_2 walk_inputs = (real_2){
@@ -200,14 +215,20 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         is_down('W', input)-is_down('S', input)
     };
 
+    static int camera_mode = 0;
+    // if(w->world_edit_mode) camera_mode = 3;
+    camera_mode = (camera_mode + is_pressed('V', input))%3;
+
+    real look_sens = 0.8;
+
     // static real theta = pi/6;
     static real theta = pi/2;
     static real phi = -pi/4;
     // static real phi = 0;
-    if(!w->edit_mode && !debug_menu_active)
+    if(!camera_lock && camera_mode != 3 && !debug_menu_active)
     {
-        theta += 0.8*input->dmouse.y;
-        phi -= 0.8*input->dmouse.x;
+        theta += look_sens*input->dmouse.y;
+        phi -= look_sens*input->dmouse.x;
     }
     // theta += 0.3*input->dmouse.y;
     // phi -= 0.3*input->dmouse.x;
@@ -248,23 +269,60 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     player->x_dot.z -= move_accel;
     // }
 
-    static int player_in_head = 0;
+    if(camera_mode == 0) player->x += player->x_dot;
 
-    if(!player_in_head) player->x += player->x_dot;
-
-    real fov = pi*120.0/180.0;
-    real screen_dist = 1.0/tan(fov/2);
-
-    real n = 0.1;
-    real f = 1000.0;
+    rd->fov = pi*120.0/180.0;
 
     real_3 camera_z = {sin(theta)*sin(phi), -sin(theta)*cos(phi), cos(theta)};
-    // real_3 camera_x = normalize(cross({0,0,1}, camera_z));
     real_3 camera_x = {cos(phi),sin(phi),0};
     real_3 camera_y = cross(camera_z, camera_x);
+
+    real_3x3 camera_axes = (real_3x3) {camera_x, camera_y, camera_z};
+
     real_3 camera_pos;
 
-    camera_pos = player->x;
+    static real camera_dist = 10;
+    if(camera_mode == 3)
+    {
+        real speed = 10;
+        if(is_down(VK_CONTROL, input)) speed = 1;
+
+        if(is_down(M3, input))
+        {
+            if(is_down(VK_SHIFT, input))
+            {
+                player->x -= speed*camera_axes*pad_3(input->dmouse);
+            }
+            else
+            {
+                theta += look_sens*input->dmouse.y;
+                phi -= look_sens*input->dmouse.x;
+            }
+        }
+        if(is_down(M2, input))
+        {
+            player->x -= speed*(look_forward*input->dmouse.y + look_side*input->dmouse.x);
+        }
+
+        camera_dist *= pow(0.998, speed*input->mouse_wheel);
+    }
+
+    if(camera_mode == 3) camera_pos = player->x + camera_z*camera_dist;
+    else camera_pos = player->x;
+
+    if(w->world_edit_mode)
+    {
+        float screen_dist = 1.0/tan(rd->fov/2);
+
+        w->world_editor.ray_id = w->n_rays++;
+        real_3 ray_dir = -screen_dist*camera_z+input->mouse.x*camera_x+input->mouse.y*camera_y;
+        w->rays_in[w->world_editor.ray_id] = {
+            .x = camera_pos,
+            .d = ray_dir,
+            .max_dist = 3*512,
+            .start_material = 0,
+        };
+    }
 
     real_3 foot_dist = (real_3){0,0,-15};
 
@@ -299,17 +357,16 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         // w->bodies_gpu[b].x_dot.z += -0.1;
     }
 
-    player_in_head = (player_in_head + is_pressed('V', input))%3;
-
+    bool player_control = camera_mode == 1 || camera_mode == 2;
     {
         brain* br = &w->brains[0];
         // br->target_accel = (real_3){0,0,-0.1*(-0.5+w->bodies_gpu[12].x_dot.z)}; //by default try to counteract gravity
         br->target_accel = (real_3){0,0,0.00}; //by default try to counteract gravity
         // br->target_accel = (real_3){0,0,0}; //by default try to counteract gravity
 
-        if(player_in_head) br->look_dir = -camera_z;
+        if(player_control) br->look_dir = -camera_z;
 
-        br->is_moving = is_down('R', input) || (player_in_head && (walk_dir.x != 0 || walk_dir.y != 0));
+        br->is_moving = is_down('R', input) || (player_control && (walk_dir.x != 0 || walk_dir.y != 0));
         if(br->is_moving)
         {
             real_3 pos = player->x-placement_dist*camera_z;
@@ -318,12 +375,12 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
             // r.z = 0;
             // r = rej(r, w->bodies_cpu[12].contact_normals[0]);
             real_3 target_dir = normalize(r);
-            if(player_in_head)
+            if(player_control)
             {
                 target_dir = walk_dir;
             }
 
-            if(!player_in_head) br->look_dir = target_dir;
+            if(!player_control) br->look_dir = target_dir;
 
             br->target_accel.z += 0.02;
             br->target_accel += 0.02*target_dir;
@@ -336,7 +393,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
             // br->target_accel.z -= 0.01*(w->bodies_gpu[12].x.z-(w->bodies_gpu[5].x.z+16));
         }
         if(is_down('T', input)
-           || (player_in_head && is_down(M2, input)))
+           || (player_control && is_down(M2, input)))
         {
             br->is_moving = true;
             br->target_accel.z += 0.1;
@@ -345,7 +402,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         }
 
         // if(is_down('Y', input)
-        //    || (player_in_head && is_down(' ', input)))
+        //    || (player_control && is_down(' ', input)))
         // {
         //     br->is_moving = true;
         //     if(w->bodies_cpu[12].contact_depths[0] > 5)
@@ -353,7 +410,7 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         // }
 
         br->kick = {};
-        if(player_in_head && is_down(' ', input))
+        if(player_control && is_down(' ', input))
         {
             if(br->kick_frames++ < 5)
                 br->kick += -0.05*camera_z;
@@ -477,53 +534,9 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
 
     static bool step_mode = false;
     step_mode = step_mode!=is_pressed(VK_OEM_PERIOD, input);
-    if(step_mode ? is_pressed('M', input) : !is_down('M', input))
+    if(!w->world_edit_mode && (step_mode ? is_pressed('M', input) : !is_down('M', input)))
     {
-        //add bodies to collision grid
-        for(int z = 0; z < collision_cells_per_axis; z++)
-            for(int y = 0; y < collision_cells_per_axis; y++)
-                for(int x = 0; x < collision_cells_per_axis; x++)
-                {
-                    collision_cell* cell = &w->collision_grid[index_3D({x,y,z}, collision_cells_per_axis)];
-                    cell->n_bodies = 0;
-                }
-
-        for(int b = 0; b < w->n_bodies; b++)
-        {
-            cpu_body_data* body_cpu = &w->bodies_cpu[b];
-            gpu_body_data* body_gpu = &w->bodies_gpu[b];
-            update_bounding_box(body_cpu, body_gpu);
-            if(!body_gpu->substantial) continue;
-            int_3 lower = int_cast(body_gpu->box.l/collision_cell_size);
-            int_3 upper = int_cast(body_gpu->box.u/collision_cell_size);
-            lower = clamp_per_axis(lower, 0, collision_cells_per_axis);
-            upper = clamp_per_axis(upper, 0, collision_cells_per_axis);
-            for(int z = lower.z; z <= upper.z; z++)
-                for(int y = lower.y; y <= upper.y; y++)
-                    for(int x = lower.x; x <= upper.x; x++)
-                    {
-                        collision_cell* cell = &w->collision_grid[index_3D({x,y,z}, collision_cells_per_axis)];
-                        cell->body_indices[cell->n_bodies++] = b;
-                    }
-        }
-
-        load_bodies_to_gpu(w);
-        find_body_contacts(manager, w);
-
-        simulate_body_voxels(w, rd);
-
-        for(int c = 0; c < w->n_contacts; c++)
-        {
-            contact_point* contact = &w->contacts[c];
-            int b = contact->body_index[0];
-            cpu_body_data* body_cpu = &w->bodies_cpu[b];
-            body_cpu->has_contact = true;
-            body_cpu->phasing = false;
-        }
-
-        solve_velocity_constraints(manager, w, rd);
-        integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
-        solve_position_constraints(manager, w, rd);
+        update_bodies(manager, w, rd);
     }
 
     //drawing circles
@@ -692,12 +705,11 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     }
     // }
 
-
     {
         brain* br = &w->brains[0];
         int root_index = get_body_index(w, br->root_id);
-        if(player_in_head == 2) player->x = lerp(player->x, w->bodies_gpu[root_index].x+10.0*camera_z+2*camera_y, 0.8);
-        if(player_in_head == 1) player->x = w->bodies_gpu[root_index].x-5*camera_z;
+        if(camera_mode == 2) player->x = lerp(player->x, w->bodies_gpu[root_index].x+10.0*camera_z+2*camera_y, 0.8);
+        if(camera_mode == 1) player->x = w->bodies_gpu[root_index].x-5*camera_z;
     }
 
     // if(is_pressed('V', input))
@@ -796,75 +808,57 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
         }
     }
 
-    if(is_down(M1, input) && !w->edit_mode && !debug_menu_active)
-    {
-        int brush_size = 50;
-        real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
-        pos = clamp_per_axis(pos, 0, room_size-brush_size-1);
-        set_room_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,1<<5,0,current_material==4?15:0});
-    }
-
-    if(is_down(M3, input) && !w->edit_mode)
-    {
-        int brush_size = 1;
-        real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
-        pos = clamp_per_axis(pos, 0, room_size-brush_size-1);
-        set_room_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,0,0,current_material==4?15:0});
-    }
-
-    // if(is_down('T', input))
+    // if(is_down(M1, input) && !w->edit_mode && !debug_menu_active)
     // {
+    //     int brush_size = 50;
+    //     real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
+    //     pos = clamp_per_axis(pos, 0, room_size-brush_size-1);
+    //     set_room_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,1<<5,0,current_material==4?15:0});
+    // }
+
+    // if(is_down(M3, input) && !w->edit_mode)
+    // {
+    //     int brush_size = 1;
+    //     real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
+    //     pos = clamp_per_axis(pos, 0, room_size-brush_size-1);
+    //     set_room_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,0,0,current_material==4?15:0});
+    // }
+
+    // // if(is_down('T', input))
+    // // {
+    // //     real_3 pos = player->x-placement_dist*camera_z;
+    // //     pos = clamp_per_axis(pos, 0, room_size-11);
+    // //     set_room_region(manager, w, w->c, pos, {10,10,10}, 2);
+    // // }
+
+    // if(is_down(M4, input))
+    // {
+    //     // real_3 pos = player->x-placement_dist*camera_z;
+    //     // pos = clamp_per_axis(pos, 0, room_size-1);
+    //     // set_room_voxel(w, w->c, pos, 2);
+
     //     real_3 pos = player->x-placement_dist*camera_z;
     //     pos = clamp_per_axis(pos, 0, room_size-11);
-    //     set_room_region(manager, w, w->c, pos, {10,10,10}, 2);
+    //     set_room_region(manager, w, w->c, pos, {10,10,10}, {6, 0, 255, 0});
     // }
 
-    if(is_down(M4, input))
-    {
-        // real_3 pos = player->x-placement_dist*camera_z;
-        // pos = clamp_per_axis(pos, 0, room_size-1);
-        // set_room_voxel(w, w->c, pos, 2);
-
-        real_3 pos = player->x-placement_dist*camera_z;
-        pos = clamp_per_axis(pos, 0, room_size-11);
-        set_room_region(manager, w, w->c, pos, {10,10,10}, {6, 0, 255, 0});
-    }
-
-    if(is_down(M5, input))
-    {
-        // real_3 pos = player->x-placement_dist*camera_z;
-        // pos = clamp_per_axis(pos, 0, room_size-1);
-        // set_room_voxel(w, w->c, pos, 0);
-
-        real_3 pos = player->x-placement_dist*camera_z;
-        pos = clamp_per_axis(pos, 0, room_size-11);
-        set_room_region(manager, w, w->c, pos, {10,10,10}, {0});
-    }
-
-    // if(is_down(M3, input))
+    // if(is_down(M5, input))
     // {
+    //     // real_3 pos = player->x-placement_dist*camera_z;
+    //     // pos = clamp_per_axis(pos, 0, room_size-1);
+    //     // set_room_voxel(w, w->c, pos, 0);
+
     //     real_3 pos = player->x-placement_dist*camera_z;
-    //     pos = clamp_per_axis(pos, 0, room_size-1);
-    //     spawn_particles(pos, -1*camera_z);
+    //     pos = clamp_per_axis(pos, 0, room_size-11);
+    //     set_room_region(manager, w, w->c, pos, {10,10,10}, {0});
     // }
 
-    // for(int f = 0; f < AUDIO_BUFFER_MAX_LEN; f++)
-    // {
-    //     real omega = (4+f)*50*2*pi/ad->sample_rate;
-    //     real phi = omega*ad->samples_played;
-    //     complex e = {cos(phi), sin(phi)};
-    //     complex de = {cos(omega), sin(omega)};
-    //     for(int i = 0; i < ad->sample_rate/30; i++)
-    //     {
-    //         uint64 sample_number = ad->samples_played+i;
-    //         int buffer_index = sample_number%ad->buffer_length;
-    //         for(int wc = 0; wc < n_worker_contexts; wc++)
-    //         {
-    //             ad->buffer[buffer_index] += worker_context_list[wc]->audio_buffer[f]*e.x;
-    //         }
-    //         e *= de;
-    //     }
-    // }
+    // // if(is_down(M3, input))
+    // // {
+    // //     real_3 pos = player->x-placement_dist*camera_z;
+    // //     pos = clamp_per_axis(pos, 0, room_size-1);
+    // //     spawn_particles(pos, -1*camera_z);
+    // // }
 
     // for(int wc = 0; wc < n_worker_contexts; wc++)
     // {
@@ -876,57 +870,8 @@ void update_and_render(memory_manager* manager, world* w, render_data* rd, rende
     //     memset(worker_context_list[wc]->audio_buffer, 0, AUDIO_BUFFER_MAX_SIZE);
     // }
 
-    real_4x4 translate_to_player = {
-        1, 0, 0, -camera_pos.x,
-        0, 1, 0, -camera_pos.y,
-        0, 0, 1, -camera_pos.z,
-        0, 0, 0, 1,
-    };
-
-    real_4x4 rotate = {
-        1, 0, 0, 0,
-        0, cos(theta), sin(theta), 0,
-        0, -sin(theta), cos(theta), 0,
-        0, 0, 0, 1,
-    };
-
-    real_4x4 rotate2 = {
-        cos(phi), sin(phi), 0, 0,
-        -sin(phi), cos(phi), 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1,
-    };
-
-    real_4x4 translate = {
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1,
-    };
-
-    // real_4x4 recenter = {
-    //     1, 0, 0, 0,
-    //     0, 1, 0, 0.25,
-    //     0, 0, 1, 0,
-    //     0, 0, 0, 1,
-    // };
-
-    real_4x4 perspective = {
-        (screen_dist*window_height)/window_width, 0, 0, 0,
-        0, screen_dist, 0, 0,
-        0, 0, (f+n)/(f-n), (2*f*n)/(f-n),
-        0, 0, -1, 0,
-    };
-
-    //yeah, the *operator is "broken" for efficiency, although I'm not even SIMDing right now which probably matters more
-    rd->camera = translate_to_player*rotate2*rotate*translate*perspective;//*recenter;
     rd->camera_pos = camera_pos;
-    rd->camera_axes = (real_3x3) {camera_x, camera_y, camera_z};
-
-    // rd->spherical_functions[rd->n_spherical_functions++] = {
-    //     .x = w->creatures[0].x,
-    //     .coefficients = player->surface_coefficients,
-    // };
+    rd->camera_axes = camera_axes;
 
     // while(n_remaining_tasks) pop_work(main_context);
 

@@ -1,6 +1,3 @@
-#program simulate_chunk_atomic_program
-/////////////////////////////////////////////////////////////////
-
 #shader GL_COMPUTE_SHADER
 #include "include/header.glsl"
 
@@ -59,8 +56,6 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
     ivec3 cell_p = pos%16;
     // ivec3 cell_p = gl_LocalInvocationID.xyz;
     // ivec3 rpos = gl_WorkGroupID.xyz;
-
-    if(cell_p == ivec3(0,0,0)) imageStore(occupied_regions_out, rpos, uvec4(0,0,0,0));
 
     uvec4 c  = texelFetch(materials, ivec3(pos.x, pos.y, pos.z),0);
     uvec4 old_voxel  = c;
@@ -366,7 +361,6 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
 
     if(out_voxel.r != 0) imageStore(occupied_regions_out, ivec3(pos.x/16, pos.y/16, pos.z/16), uvec4(1,0,0,0));
 
-    // memoryBarrier();
     imageStore(materials_out, pos, out_voxel);
 }
 
@@ -380,6 +374,9 @@ void main()
     {
         return;
     }
+
+    if(gl_LocalInvocationID == uvec3(0,0,0)) imageStore(occupied_regions_out, rpos, uvec4(0,0,0,0));
+    memoryBarrier();
 
     for(int x = 0; x < subgroup_size; x++)
         for(int y = 0; y < subgroup_size; y++)

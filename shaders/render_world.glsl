@@ -37,6 +37,7 @@ layout(location = 9) uniform sampler2D lightprobe_color;
 layout(location = 10) uniform sampler2D lightprobe_depth;
 layout(location = 11) uniform sampler2D lightprobe_x;
 layout(location = 12) uniform sampler2D blue_noise_texture;
+layout(location = 13) uniform int edit_mode;
 
 #include "include/maths.glsl"
 #include "include/blue_noise.glsl"
@@ -143,28 +144,30 @@ void main()
     //     // frag_color.rgb = max_dir;
     // }
 
-    {
-        uint material_id = voxel.r;
-        float roughness = get_roughness(material_id);
-        vec3 emission = get_emission(material_id);
+    uint material_id = voxel.r;
+    float roughness = get_roughness(material_id);
+    vec3 emission = get_emission(material_id);
 
-        // frag_color.rgb += -(emission)*dot(normal, ray_dir);
-        frag_color.rgb += emission;
+    // frag_color.rgb += -(emission)*dot(normal, ray_dir);
+    frag_color.rgb += emission;
 
-        //TODO: actual blackbody color
-        frag_color.rgb += vec3(1,0.05,0.1)*clamp((1.0/127.0)*(float(temp(voxel))-128), 0.0, 1.0);
+    //TODO: actual blackbody color
+    frag_color.rgb += vec3(1,0.05,0.1)*clamp((1.0/127.0)*(float(temp(voxel))-128), 0.0, 1.0);
 
-        frag_color.rgb += vec3(0.7,0.3,1.0)*clamp((1.0/15.0)*(float(volt(voxel))), 0.0, 1.0);
+    frag_color.rgb += vec3(0.7,0.3,1.0)*clamp((1.0/15.0)*(float(volt(voxel))), 0.0, 1.0);
 
-        vec3 reflection_dir = normal;
-        vec2 sample_depth;
-        frag_color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)
-            *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
-        // frag_color.rgb += sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth); //no materials
-    }
+    vec3 reflection_dir = normal;
+    vec2 sample_depth;
+    frag_color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)
+        *sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
+    // frag_color.rgb += sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth); //no materials
+
     frag_color.rgb *= transmission;
 
     frag_color.rgb = clamp(frag_color.rgb, 0, 1);
+
+    if(edit_mode != 0 && selected(voxel) != 0) frag_color.rgb = 0.5*frag_color.rgb+0.5;
+
     // frag_color.rgb = normal;
     gl_FragDepth = 1.0f/total_dist;
 }
