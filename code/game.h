@@ -1,4 +1,4 @@
-#ifndef GAME
+#ifndef GAME                    //
 #define GAME
 
 #include <maths/maths.h>
@@ -59,7 +59,7 @@ int create_body_from_form(world* w, genome* g, brain* br, int form_id)
 
     body_gpu->substantial = true;
 
-    int_3 form_size = form->region.u-form->region.l;
+    int_3 form_size = dim(form->region);
 
     int pad = 0;
     int_3 padding = {pad, pad, pad};
@@ -174,6 +174,10 @@ void spawn_particles(real_3 x, real_3 x_dot)
 
 void update_game(memory_manager* manager, world* w, render_data* rd, render_data* ui, audio_data* ad, user_input* input)
 {
+    static real theta = pi/2;
+    static real phi = -pi/4;
+    static real_3 camera_pos = {};
+
     bool toggle_edit = is_pressed('\t', input);
     static bool camera_lock = false;
     if(w->world_edit_mode)
@@ -184,13 +188,21 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
     else
     {
         w->edit_mode = w->edit_mode != toggle_edit;
+        if(toggle_edit && w->edit_mode)
+        {
+            w->editor.objects[0].modified_region = {{0,0,0}, {room_size, room_size, room_size}};
+            w->editor.camera_center = camera_pos-rd->camera_axes[2]*w->editor.camera_dist;
+            w->editor.theta = theta;
+            w->editor.phi = phi;
+        }
         camera_lock = w->edit_mode;
     }
     if(!camera_lock) input->mouse = {};
 
     if(w->edit_mode)
     {
-        do_edit_window(ui, input, &w->gew);
+        // do_edit_window(ui, input, &w->gew);
+        update_editor(&w->editor, ui, input);
     }
     // else
     // {
@@ -221,10 +233,6 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
 
     real look_sens = 0.8;
 
-    // static real theta = pi/6;
-    static real theta = pi/2;
-    static real phi = -pi/4;
-    // static real phi = 0;
     if(!camera_lock && camera_mode != 3 && !debug_menu_active)
     {
         theta += look_sens*input->dmouse.y;
@@ -234,8 +242,8 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
     // phi -= 0.3*input->dmouse.x;
 
     // real_3 look_forward = {-sin(phi)*sin(theta), cos(phi)*sin(theta), -cos(theta)};
-    real_3 look_forward = {-sin(phi), cos(phi), 0};
-    real_3 look_side    = {cos(phi), sin(phi), 0};
+    real_3 look_forward = {-cos(phi), -sin(phi), 0};
+    real_3 look_side    = {-sin(phi), cos(phi), 0};
 
     real move_accel = 0.05;
     real move_speed = 1.5;
@@ -273,13 +281,19 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
 
     rd->fov = pi*120.0/180.0;
 
-    real_3 camera_z = {sin(theta)*sin(phi), -sin(theta)*cos(phi), cos(theta)};
-    real_3 camera_x = {cos(phi),sin(phi),0};
+
+    if(w->edit_mode)
+    {
+        theta = w->editor.theta;
+        phi = w->editor.phi;
+        player->x = w->editor.rd.camera_pos;
+    }
+
+    real_3 camera_z = {sin(theta)*cos(phi), sin(theta)*sin(phi), cos(theta)};
+    real_3 camera_x = {-sin(phi),cos(phi),0};
     real_3 camera_y = cross(camera_z, camera_x);
 
     real_3x3 camera_axes = (real_3x3) {camera_x, camera_y, camera_z};
-
-    real_3 camera_pos;
 
     static real camera_dist = 10;
     if(camera_mode == 3)
@@ -310,19 +324,19 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
     if(camera_mode == 3) camera_pos = player->x + camera_z*camera_dist;
     else camera_pos = player->x;
 
-    if(w->world_edit_mode)
-    {
-        float screen_dist = 1.0/tan(rd->fov/2);
+    // if(w->world_edit_mode)
+    // {
+    //     float screen_dist = 1.0/tan(rd->fov/2);
 
-        w->world_editor.ray_id = w->n_rays++;
-        real_3 ray_dir = -screen_dist*camera_z+input->mouse.x*camera_x+input->mouse.y*camera_y;
-        w->rays_in[w->world_editor.ray_id] = {
-            .x = camera_pos,
-            .d = ray_dir,
-            .max_dist = 3*512,
-            .start_material = 0,
-        };
-    }
+    //     w->world_editor.ray_id = w->n_rays++;
+    //     real_3 ray_dir = -screen_dist*camera_z+input->mouse.x*camera_x+input->mouse.y*camera_y;
+    //     w->rays_in[w->world_editor.ray_id] = {
+    //         .x = camera_pos,
+    //         .d = ray_dir,
+    //         .max_dist = 3*512,
+    //         .start_material = 0,
+    //     };
+    // }
 
     real_3 foot_dist = (real_3){0,0,-15};
 
@@ -471,10 +485,10 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
         //     //form_offset: body->texture_region.l -> O
         //     //form->x_origin: form->materials_origin -> O
         //     int_3 offset = (form->x_origin-body_gpu->form_offset)+padding;
-        //     int_3 new_size = form->material_bounds.u-form->material_bounds.l+2*padding;
+        //     int_3 new_size = dim(form->material_bounds)+2*padding;
         //     new_size.x = 4*((new_size.x+3)/4);
         //     //TODO: this does not detect a region change if one side is deleted and the other side is extended
-        //     if(new_size != body_gpu->texture_region.u-body_gpu->texture_region.l)
+        //     if(new_size != dim(body_gpu->texture_region))
         //     {
         //         log_output("resizing body storage ", body_gpu->texture_region.l, ", ", body_gpu->texture_region.u, "\n");
         //         resize_body_storage(&w->body_space, body_cpu, body_gpu, offset, new_size);
@@ -565,7 +579,7 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
 
             //                     if(br->root_id == body_cpu->id)
             //                     {
-            //                         real_3 r_storage = apply_rotation(body_gpu->orientation, -body_gpu->x_cm-real_cast(body_gpu->materials_origin-body_cpu->texture_region.l)+multiply_per_axis(real_cast(body_cpu->texture_region.u-body_cpu->texture_region.l), (real_3){x,y,z}));
+            //                         real_3 r_storage = apply_rotation(body_gpu->orientation, -body_gpu->x_cm-real_cast(body_gpu->materials_origin-body_cpu->texture_region.l)+multiply_per_axis(real_cast(dim(body_cpu->texture_region)), (real_3){x,y,z}));
             //                         draw_circle(rd, body_gpu->x+r_storage , 0.1, {0,0.5,1,1});
             //                     }
             //                 }

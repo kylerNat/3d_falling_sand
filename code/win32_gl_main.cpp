@@ -591,9 +591,12 @@ int update_window(window_t* wnd)
     HDC dc = GetDC(wnd->hwnd);
     SwapBuffers(dc);
 
+    memset(wnd->input.pressed_buttons, 0, sizeof(wnd->input.pressed_buttons));
+    memset(wnd->input.released_buttons, 0, sizeof(wnd->input.released_buttons));
     wnd->input.buttons[M_WHEEL_DOWN/8] &= ~(11<<(M_WHEEL_DOWN%8));
     wnd->input.mouse_wheel = 0;
     wnd->input.dmouse = zero_2;
+    wnd->input.click_blocked = false;
 
     POINT cursor_point;
     RECT window_rect;
@@ -647,15 +650,15 @@ int update_window(window_t* wnd)
                         #ifdef IMGUI_VERSION
                         #define update_numbered_button(N)               \
                             if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_DOWN) \
-                            { wnd->input.buttons[0] |= 1<<M##N;    io.AddMouseButtonEvent(N-1,  true); } \
+                            { wnd->input.pressed_buttons[0] |= 1<<M##N; wnd->input.buttons[0] |= 1<<M##N;    io.AddMouseButtonEvent(N-1,  true); } \
                             else if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_UP) \
-                            { wnd->input.buttons[0] &= ~(1<<M##N); io.AddMouseButtonEvent(N-1, false); }
+                            { wnd->input.released_buttons[0] |= 1<<M##N; wnd->input.buttons[0] &= ~(1<<M##N); io.AddMouseButtonEvent(N-1, false); }
                         #else
                         #define update_numbered_button(N)               \
                             if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_DOWN) \
-                            { wnd->input.buttons[0] |= 1<<M##N; } \
+                            { wnd->input.pressed_buttons[0] |= 1<<M##N; wnd->input.buttons[0] |= 1<<M##N; } \
                             else if(ms.usButtonFlags & RI_MOUSE_BUTTON_##N##_UP) \
-                            { wnd->input.buttons[0] &= ~(1<<M##N); }
+                            { wnd->input.released_buttons[0] |= 1<<M##N; wnd->input.buttons[0] &= ~(1<<M##N); }
                         #endif
 
                         update_numbered_button(1);
@@ -670,10 +673,12 @@ int update_window(window_t* wnd)
                             if((short) ms.usButtonData > 0)
                             {
                                 wnd->input.buttons[1] |= 1<<(M_WHEEL_UP-8);
+                                wnd->input.pressed_buttons[1] |= 1<<(M_WHEEL_UP-8);
                             }
                             else
                             {
                                 wnd->input.buttons[1] |= 1<<(M_WHEEL_DOWN-8);
+                                wnd->input.pressed_buttons[1] |= 1<<(M_WHEEL_DOWN-8);
                             }
                             #ifdef IMGUI_VERSION
                             io.AddMouseWheelEvent(0.0f, ms.usButtonData);
@@ -686,10 +691,12 @@ int update_window(window_t* wnd)
                             if((short) ms.usButtonData > 0)
                             {
                                 wnd->input.buttons[1] |= 1<<(M_WHEEL_RIGHT-8);
+                                wnd->input.pressed_buttons[1] |= 1<<(M_WHEEL_RIGHT-8);
                             }
                             else
                             {
                                 wnd->input.buttons[1] |= 1<<(M_WHEEL_LEFT-8);
+                                wnd->input.pressed_buttons[1] |= 1<<(M_WHEEL_LEFT-8);
                             }
                             #ifdef IMGUI_VERSION
                             io.AddMouseWheelEvent(ms.usButtonData/WHEEL_DELTA, 0.0);
@@ -792,7 +799,10 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     int next_id = 1;
 
-    font_info font = init_font(manager, "C:/windows/fonts/arial.ttf", 24);
+    font_info font = init_font(manager, "C:/windows/fonts/arial.ttf", 16);
+
+    init_materials_list();
+    init_material_properties_textures();
 
     const int n_max_bodies = 1024*1024;
     const int n_max_brains = 128*1024;
@@ -856,10 +866,37 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             .active_cell_material = 128,
         },
 
-        .form_space = {
-            .max_size = {form_texture_size, form_texture_size, form_texture_size},
-            .free_regions = (bounding_box*) stalloc(sizeof(bounding_box)*10000),
-            .n_free_regions = 0,
+        .editor = {
+            .object_table = (index_table_entry*) stalloc(sizeof(index_table_entry)*4096),
+            .n_max_objects = 4096,
+            .next_object_id = 1,
+            .objects = (editor_object*) stalloc(sizeof(editor_object)*4096),
+            .n_objects = 0,
+            .joints = (object_joint*) stalloc(sizeof(object_joint)*4096),
+            .n_joints = 0,
+            .texture_space = {
+                .max_size = {form_texture_size, form_texture_size, form_texture_size},
+                .free_regions = (bounding_box*) stalloc(sizeof(bounding_box)*10000),
+                .n_free_regions = 0,
+            },
+            .selected_object = 0,
+            .current_selection = {},
+
+            .material = 1,
+
+            .camera_dist = 10,
+            .theta = pi/2, .phi = 0,
+
+            .rotate_sensitivity = 1,
+            .pan_sensitivity = 2,
+            .move_sensitivity = 0.5,
+            .zoom_sensitivity = 0.05,
+
+            .rd = {
+                .fov = pi*120.0f/180.0f,
+                .camera_pos = {},
+                .camera_axes = {1,0,0, 0,1,0, 0,0,1},
+            },
         },
 
         .body_space = {
@@ -884,9 +921,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         .collision_grid = (collision_cell*) stalloc_clear(sizeof(collision_cell)*collision_cells_per_axis*collision_cells_per_axis*collision_cells_per_axis),
     };
 
-    w.form_space.free_regions[w.form_space.n_free_regions++] = {{0,0,0}, {form_texture_size, form_texture_size, form_texture_size}};
-
     w.body_space.free_regions[w.body_space.n_free_regions++] = {{0,0,0}, {body_texture_size, body_texture_size, body_texture_size}};
+
+    w.editor.texture_space.free_regions[w.editor.texture_space.n_free_regions++] = {{0,0,0}, {form_texture_size, form_texture_size, form_texture_size}};
 
     genome* g = create_genome(&w);
     {
@@ -903,8 +940,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     for(int i = 0; i < g->n_cell_types; i++)
     {
-        g->cell_types[i].visual = material_visuals+128+i;
-        g->cell_types[i].physical = material_physicals+128+i;
+        g->cell_types[i].mat = materials_list+128+i;
     }
 
     w.gew.active_genome = &w.genomes[0];
@@ -923,25 +959,31 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         for(int y = 0; y < room_size; y++)
             for(int x = 0; x < room_size; x++)
             {
+                int water = get_material_index("AQUA");
+                int sand = get_material_index("SAND");
+                int wall_mat = get_material_index("WALL");
+                int light = get_material_index("LAMP");
+                int glass = get_material_index("GLSS");
+
                 int material = 0;
                 int height = 20;
                 real rsq = sq(x-room_size/2)+sq(y-room_size/2);
                 // height += 0.03*rsq*(exp(-0.0005*rsq));
                 int ramp_height = 20;
                 // height += clamp(ramp_height-abs(y-128), 0, ramp_height);
-                if(sqrt(rsq) < 80 && z < height+ramp_height-5) material = 2;
-                if(sqrt(rsq) < 80 && z < 20) material = 5;
+                if(sqrt(rsq) < 80 && z < height+ramp_height-5) material = water;
+                if(sqrt(rsq) < 80 && z < 20) material = light;
                 height += clamp((float) ramp_height-abs(sqrt(rsq)-80), 0.0, (float) ramp_height);
                 height += max((y*(x-400)/room_size), 0);
-                if(z < height) material = 1;
+                if(z < height) material = sand;
                 // else if(z < room_size-1) material = (randui(&w.seed)%prob)==0;
                 // if(x == room_size/2+0 && y == room_size/2+0) material = 2;
                 // if(x == room_size/2+0 && y == room_size/2-1) material = 2;
                 // if(x == room_size/2-1 && y == room_size/2-1) material = 2;
                 // if(x == room_size/2-1 && y == room_size/2+0) material = 2;
 
-                if(z <= 5) material = 3;
-                if(z > room_size-10) material = 3;
+                if(z <= 5) material = wall_mat;
+                if(z > room_size-10) material = wall_mat;
 
                 int door_width = 40;
                 //outer walls
@@ -951,16 +993,16 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                    y <            5 ||
                    y > room_size-5)
                 {
-                    if(y <= 10) material = 3;
-                    if(x <= 10) material = 3;
-                    if(room_size-y <= 10) material = 3;
-                    if(room_size-x <= 10) material = 3;
-                    // if(room_size-z <= 10) material = 3;
+                    if(y <= 10) material = wall_mat;
+                    if(x <= 10) material = wall_mat;
+                    if(room_size-y <= 10) material = wall_mat;
+                    if(room_size-x <= 10) material = wall_mat;
+                    // if(room_size-z <= 10) material = wall_mat;
                 }
 
                 int glass_thickness = 3;
                 if(x > 400 && y > 400 && z > 100 && z < 200 &&
-                   (x < 400+glass_thickness || y < 400+glass_thickness || z < 100+glass_thickness)) material = 7;
+                   (x < 400+glass_thickness || y < 400+glass_thickness || z < 100+glass_thickness)) material = glass;
 
                 //inner walls
                 int wall_thickness = 20;
@@ -968,25 +1010,25 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                    !(abs(x-room_size*1/4) < door_width/2 || abs(y-room_size*1/4) < door_width/2
                      || abs(x-room_size*3/4) < door_width/2 || abs(y-room_size*3/4) < door_width/2 || x > 400))
                 {
-                     material = 3;
+                     material = wall_mat;
                 }
 
-                if(abs(z-room_size/2) < 5) material = 3;
-                if(abs(z-room_size/2) < 5 && z < room_size/2 && x > room_size/2) material = 5;
+                if(abs(z-room_size/2) < 5) material = wall_mat;
+                if(abs(z-room_size/2) < 5 && z < room_size/2 && x > room_size/2) material = light;
 
                 real spiral_height = 300;
                 if(rsq > sq(80) && rsq < sq(120))
                 {
                     if(abs((float)(fmod(z-(spiral_height/(2.0*pi))*(pi+atan2(y-room_size/2,x-room_size/2)), spiral_height/2))) < 3)
-                        material = 3;
+                        material = wall_mat;
                     else if(z >= height)
                         material = 0;
                 }
 
-                if(z == height+10 && x < 50 && y < 50) material = 3;
+                if(z == height+10 && x < 50 && y < 50) material = wall_mat;
 
-                // if(y == room_size/2 && abs(x-room_size/2) <= 2*(i) && x%2 == 0) material = 3;
-                if(y == room_size*3/4 && x == room_size*3/4+20 && z < 50) material = 3;
+                // if(y == room_size/2 && abs(x-room_size/2) <= 2*(i) && x%2 == 0) material = wall_mat;
+                if(y == room_size*3/4 && x == room_size*3/4+20 && z < 50) material = wall_mat;
 
                 // if(material == 0) material = 2;
 
@@ -995,6 +1037,35 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             }
 
     load_room_to_gpu(c);
+
+    {
+        editor_data* ed = &w.editor;
+        editor_object* o = ed->objects+ed->n_objects++;
+        int_3 size = {512,512,512};
+        int total_size = axes_product(size);
+        *o = {
+            .id = ed->n_objects-1, //TODO
+            .name = "World",
+            .region = {{0,0,0},size},
+            .materials = dynamic_alloc(total_size),
+            .tint = {1,1,1,1},
+            .highlight = {},
+            .x = ed->camera_center,
+            .orientation = {1,0,0,0},
+            .gridlocked = false,
+            .visible = true,
+            .is_world = true,
+        };
+        o->modified_region = o->region;
+        // memset(o->materials, 5, total_size);
+        for(int z = 0; z < size.z; z++)
+            for(int y = 0; y < size.y; y++)
+                for(int x = 0; x < size.x; x++)
+                {
+                    o->materials[index_3D({x,y,z}, size)] = c->materials[index_3D({x,y,z}, room_size)];
+                }
+    }
+
 
     world_cell* cells = (world_cell*) calloc(room_size*room_size*room_size, sizeof(world_cell));
     rle_run* rle_cells = (rle_run*) calloc(room_size*room_size*room_size, sizeof(rle_run));
@@ -1317,7 +1388,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                         for(int j = 0; j < 3; j++)
                             body_cpu->I[i][j] += -m*r[i]*r[j];
 
-                    body_cpu->materials[index_3D((int_3){x,y,z}-body_cpu->region.l, body_cpu->region.u-body_cpu->region.l)] = {BASE_CELL_MAT};
+                    body_cpu->materials[index_3D((int_3){x,y,z}-body_cpu->region.l, dim(body_cpu->region))] = {BASE_CELL_MAT};
                 }
         update_inertia(body_cpu, body_gpu);
 
@@ -1366,39 +1437,19 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
     // CreateDirectory(w.tim.savedir, 0);
     // w.entity_savefile = open_file("entities.dat");
 
-    render_data rd = {
-        .circles = (circle_render_info*) stalloc(1000000*sizeof(circle_render_info)),
-        .n_circles = 0,
-
-        .line_points = (line_render_info*) stalloc(10000*sizeof(line_render_info)),
-        .n_total_line_points = 0,
-        .n_line_points = (uint*) stalloc(1000*sizeof(uint)),
-        .n_lines = 0,
-
-        .debug_log = (char*) stalloc_clear(4096),
-
-        .text_data = (char*) stalloc_clear(65536),
-        .next_text = rd.text_data,
-        .texts = (text_render_info*) stalloc_clear(sizeof(text_render_info)*4096),
-        .n_texts = 0,
-    };
+    render_data rd = {};
+    init_render_data(&rd);
 
     render_data ui = {
-        .circles = (circle_render_info*) stalloc(10000*sizeof(circle_render_info)),
-        .n_circles = 0,
-
-        .line_points = (line_render_info*) stalloc(10000*sizeof(line_render_info)),
-        .n_total_line_points = 0,
-        .n_line_points = (uint*) stalloc(1000*sizeof(uint)),
-        .n_lines = 0,
-
-        .debug_log = (char*) stalloc_clear(4096),
-
-        .text_data = (char*) stalloc_clear(65536),
-        .next_text = ui.text_data,
-        .texts = (text_render_info*) stalloc_clear(sizeof(text_render_info)*4096),
-        .n_texts = 0,
+        .background_color = {0.01,0.01,0.01,1},
+        .foreground_color = {1,1,1,1},
+        .highlight_color = {0.1,0.1,0.1,1},
     };
+    init_render_data(&ui);
+
+    init_render_data(&w.editor.rd);
+
+    load_sprites();
 
     audio_data ad;
     { //create sound device
@@ -1557,12 +1608,14 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
             start_frame(&rd);
             start_frame(&ui);
+            start_frame(&w.editor.rd);
 
             update_sounds(&ad);
 
             update_game(manager, &w, &rd, &ui, &ad, &wnd.input);
 
             update_camera_matrix(&rd);
+            update_camera_matrix(&w.editor.rd);
 
             // if(is_pressed('R', wnd.input)) log_output("position: (", w.player.x.x, ", ", w.player.x.y, ", ", w.player.x.z, ")\n");
 
@@ -1613,79 +1666,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
             cast_rays(&w);
 
-            if(is_pressed(VK_OEM_3, &wnd.input))
+            if(w.edit_mode)
             {
-                if(w.world_edit_mode)
-                {
-                    size_t encoded_size = encode_world_cells(rle_cells);
-                    compressed_size = compress_world_cells(rle_cells, encoded_size, compressed_cells);
-                }
-                size_t size = decompress_world_cells(rle_cells, compressed_cells, compressed_size);
-                decode_world_cells(rle_cells, size);
-
-                w.world_edit_mode = !w.world_edit_mode;
-            }
-
-            if(w.world_edit_mode)
-            {
-                ray_out ro = w.rays_out[w.world_editor.ray_id];
-                w.world_editor.gpu_data.selection_mode = 0;
-                if(ro.material >= 0)
-                {
-                    bool activate_selected_region = false;
-
-                    if(is_down(M1, &wnd.input))
-                    {
-                        if(!w.world_editor.selection_active)
-                        {
-                            w.world_editor.selection_active = true;
-                            w.world_editor.selection_start = ro.pos;
-                        }
-                        activate_selected_region = true;
-                    }
-                    else
-                    {
-                        if(w.world_editor.selection_active)
-                        {
-                            w.world_editor.gpu_data.selection_mode = 1;
-                            w.world_editor.selection_active = false;
-                            activate_selected_region = true;
-                        }
-                        else
-                        {
-                            w.world_editor.gpu_data.new_selection = {};
-                        }
-                    }
-
-                    if(activate_selected_region)
-                    {
-                        int_3 sel_l = min_per_axis(w.world_editor.selection_start, ro.pos);
-                        int_3 sel_u = max_per_axis(w.world_editor.selection_start, ro.pos)+(int_3){1,1,1};
-                        w.world_editor.gpu_data.new_selection = {sel_l, sel_u};
-
-                        int_3 size = sel_u-sel_l;
-                        int_3 active_data_size = {(sel_l.x%16+size.x+15)/16, (sel_l.y%16+size.y+15)/16, (sel_l.z%16+size.z+15)/16};
-                        size_t active_data_size_total = active_data_size.x*active_data_size.y*active_data_size.z*sizeof(uint);
-                        uint* active_data = (uint*) stalloc(active_data_size_total);
-                        memset(active_data, 0xFF, active_data_size_total);
-                        glBindTexture(GL_TEXTURE_3D, active_regions_textures[current_active_regions_texture]);
-                        glTexSubImage3D(GL_TEXTURE_3D, 0,
-                                        sel_l.x/16, sel_l.y/16, sel_l.z/16,
-                                        active_data_size.x, active_data_size.y, active_data_size.z,
-                                        GL_RED_INTEGER, GL_UNSIGNED_INT,
-                                        active_data);
-                        stunalloc(active_data);
-                    }
-                }
-
-                w.world_editor.gpu_data.sel_fill = -1;
-
-                ui.log_pos += sprintf(ui.debug_log+ui.log_pos, "ray cast: %d, (%d, %d, %d), %f\n",
-                                       ro.material,
-                                       ro.pos.x, ro.pos.y, ro.pos.z,
-                                       ro.dist);
-
-                edit_world(&w, w.world_editor.gpu_data);
+                edit_world(&w);
             }
             else
             {
@@ -1706,8 +1689,6 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
               get voxel index of each pixel in low resolution prepass
               check 4 surrounding voxels during high resolution render to figure out which one to render
             */
-
-            memcpy(wnd.input.prev_buttons, wnd.input.buttons, sizeof(wnd.input.buttons));
         }
 
         if(!is_down('N', &wnd.input))
@@ -1738,7 +1719,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             glViewport(0, 0, resolution_x, resolution_y);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-            render_world(rd.camera_axes, rd.camera_pos, w.world_edit_mode);
+            render_world(rd.camera_axes, rd.camera_pos);
 
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
             glDrawBuffers(1, buffers);
@@ -1775,14 +1756,43 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         if(w.edit_mode)
         {
             glDisable(GL_DEPTH_TEST);
-            render_editor_voxels(w.gew.camera_axes, w.gew.camera_pos, &w.gew, &w.form_space);
+            render_editor_voxels(&w.editor);
             glEnable(GL_DEPTH_TEST);
         }
 
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);
         draw_circles(ui.circles, ui.n_circles, ui.camera);
+        draw_rectangles(rd.rectangles, rd.n_rectangles, rd.camera);
+        draw_rectangles(ui.rectangles, ui.n_rectangles, ui.camera);
+        draw_sprites(rd.sprites, rd.n_sprites, rd.camera);
+        draw_sprites(ui.sprites, ui.n_sprites, ui.camera);
+
+        uint line_points_offset = 0;
+        for(int l = 0; l < rd.n_lines; l++)
+        {
+            draw_round_line(manager, rd.line_points+line_points_offset, rd.n_line_points[l], rd.camera);
+            line_points_offset += rd.n_line_points[l];
+        }
+
+        line_points_offset = 0;
+        for(int l = 0; l < ui.n_lines; l++)
+        {
+            draw_round_line(manager, ui.line_points+line_points_offset, ui.n_line_points[l], ui.camera);
+            line_points_offset += ui.n_line_points[l];
+        }
         glEnable(GL_DEPTH_TEST);
+
+        glEnable(GL_CULL_FACE);
+        draw_rings(rd.rings, rd.n_rings, rd.camera, rd.camera_axes, rd.camera_pos);
+        draw_spheres(rd.spheres, rd.n_spheres, rd.camera, rd.camera_axes, rd.camera_pos);
+        draw_line_3ds(rd.line_3ds, rd.n_line_3ds, rd.camera, rd.camera_axes, rd.camera_pos);
+
+        draw_rings(w.editor.rd.rings, w.editor.rd.n_rings, w.editor.rd.camera, w.editor.rd.camera_axes, w.editor.rd.camera_pos);
+        draw_spheres(w.editor.rd.spheres, w.editor.rd.n_spheres, w.editor.rd.camera, w.editor.rd.camera_axes, w.editor.rd.camera_pos);
+        draw_line_3ds(w.editor.rd.line_3ds, w.editor.rd.n_line_3ds, w.editor.rd.camera, w.editor.rd.camera_axes, w.editor.rd.camera_pos);
+
+        glDisable(GL_CULL_FACE);
 
         if(do_draw_lightprobes)
         {
@@ -1790,26 +1800,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
             draw_lightprobes(rd.camera);
         }
 
-        glClear(GL_DEPTH_BUFFER_BIT);
-        draw_particles(rd.camera);
+        // glClear(GL_DEPTH_BUFFER_BIT);
+        // draw_particles(rd.camera);
 
-        draw_beams(rd.camera, rd.camera_axes, &w);
+        // draw_beams(rd.camera, rd.camera_axes, &w);
 
         // draw_circles(ground_circles, n_ground_circles, rd.camera);
-
-        // uint line_points_offset = 0;
-        // for(int l = 0; l < rd.n_lines; l++)
-        // {
-        //     draw_round_line(manager, rd.line_points+line_points_offset, rd.n_line_points[l], rd.camera);
-        //     line_points_offset += rd.n_line_points[l];
-        // }
-
-        // line_points_offset = 0;
-        // for(int l = 0; l < ui.n_lines; l++)
-        // {
-        //     draw_round_line(manager, ui.line_points+line_points_offset, ui.n_line_points[l], ui.camera);
-        //     line_points_offset += ui.n_line_points[l];
-        // }
 
         char frame_time_text[1024];
         real frame_time = ((real) (wnd.this_time.QuadPart - wnd.last_time.QuadPart))/(wnd.timer_frequency.QuadPart);
@@ -1821,15 +1817,16 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, window_width, window_height);
         glDisable(GL_DEPTH_TEST);
-        draw_to_screen(color_texture);
+        // draw_to_screen(color_texture);
+        draw_to_screen_ssao(color_texture, depth_texture, normal_texture);
 
         // if(show_fps) draw_debug_text(frame_time_text, -1080/5+10, 720/5-10);
-        if(show_fps) draw_text(frame_time_text, -(1.0*window_width/window_height)+0.1, 0.9, {1,1,1,1}, font);
-        draw_debug_text(rd.debug_log, -1080/5+10, -720/5+80);
-        draw_debug_text(ui.debug_log, -1080/5+10, -720/5+80);
+        if(show_fps) draw_text(frame_time_text, -(1.0*window_width/window_height)+0.15, 0.95, {1,1,1,1}, {}, font);
+        draw_text(rd.debug_log, -0.9, -0.8, {1,1,1,1}, {-1, 1}, font);
+        draw_text(ui.debug_log, -0.9, -0.8, {1,1,1,1}, {-1, 1}, font);
 
         for(int i = 0; i < ui.n_texts; i++)
-            draw_text(ui.texts[i].text, ui.texts[i].x.x, ui.texts[i].x.y, ui.texts[i].color, font);
+            draw_text(ui.texts[i].text, ui.texts[i].x.x, ui.texts[i].x.y, ui.texts[i].color, ui.texts[i].alignment, font);
 
         // ImGui::ShowDemoWindow();
 

@@ -1,0 +1,6 @@
+add_sprite(SPR_CURSOR, "resources/cursor.png", 1)
+add_sprite(SPR_MOVE, "resources/move_icon.png", 1)
+add_sprite(SPR_ROTATE, "resources/rotate_icon.png", 1)
+add_sprite(SPR_PENCIL, "resources/pencil_icon.png", 1)
+add_sprite(SPR_ERASER, "resources/eraser_icon.png", 1)
+add_sprite(SPR_JOINT, "resources/joint_icon.png", 1)

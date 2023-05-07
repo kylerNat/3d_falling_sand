@@ -16,9 +16,6 @@ layout(location = 6) uniform writeonly uimage3D occupied_regions_out;
 #define MATERIAL_PHYSICAL_PROPERTIES
 #include "include/materials_physical.glsl"
 
-#define EDITOR_DATA_BINDING 0
-#include "include/editor_data.glsl"
-
 bool c_active = false;
 bool u_active = false;
 bool d_active = false;
@@ -50,46 +47,6 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
 
     uvec4 out_voxel = c;
 
-    uint sel = selected(c);
-
-    // if(sel == 1)
-    // {
-    //     uvec4 from = texelFetch(materials, pos+sel_move, 0);
-    //     if(selected(from) == 1) out_voxel = from;
-    //     if(sel_fill >= 0) out_voxel.r = sel_fill;
-    // }
-
-    ivec3 sel_l = ivec3(new_selection.l_x, new_selection.l_y, new_selection.l_z);
-    ivec3 sel_u = ivec3(new_selection.u_x, new_selection.u_y, new_selection.u_z);
-    if(all(greaterThanEqual(pos, sel_l)) && all(lessThan(pos, sel_u)))
-    {
-        if(selection_mode == 1) sel = 1;
-        else if(selection_mode == 2) sel = 0;
-        else sel |= 2;
-    }
-    else sel &= 1;
-
-
-    vec3 x = vec3(pos);
-    for(int i = 0; i < n_strokes; i++)
-    {
-        brush_stroke stroke = strokes[i];
-        vec3 stroke_x = vec3(stroke.x, stroke.y, stroke.z);
-        switch(stroke.shape)
-        {
-            case BS_CUBE:
-            {
-                vec3 deltax = abs(x-stroke_x);
-                if(all(lessThanEqual(deltax, vec3(stroke.r)))) out_voxel.r = stroke.material;
-            }
-            case BS_SPHERE:
-            {
-                vec3 deltax = x-stroke_x;
-                if(dot(deltax, deltax) < stroke.r*stroke.r) out_voxel.r = stroke.material;
-            }
-        }
-    }
-
     int depth = MAX_DEPTH-1;
     uint solidity = solidity(c);
     if((solidity(u) != solidity) ||
@@ -108,8 +65,8 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
         depth = min(depth, depth(b)+1);
     }
 
-    out_voxel.g = uint(depth);
-    out_voxel.a = sel;
+    out_voxel.g = uint(depth) | 1<<5;
+    out_voxel.a = 0;
 
     bool changed = old_voxel != out_voxel;
     if(changed)

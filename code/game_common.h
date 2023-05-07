@@ -3,6 +3,8 @@
 
 #define N_SOLVER_ITERATIONS 20
 
+#define room_size 512
+
 size_t index_3D(int_3 pos, int_3 size)
 {
     return pos.x+size.x*(pos.y+size.y*pos.z);
@@ -23,6 +25,7 @@ enum ui_type
     ui_form_joint,
     ui_form_foot,
     ui_window,
+    ui_button,
     n_ui_elements
 };
 
@@ -39,7 +42,9 @@ struct user_input
     int16 mouse_wheel;
     int16 mouse_hwheel;
     byte buttons[32];
-    byte prev_buttons[32];
+    byte pressed_buttons[32];
+    byte released_buttons[32];
+    bool click_blocked;
     ui_element active_ui_element;
 };
 
@@ -58,11 +63,12 @@ struct user_input
 #define RARROW 0x27
 #define DARROW 0x28
 
-#define is_down(key_code, input) (((input)->buttons[(key_code)/8]>>((key_code)%8))&1)
-#define is_pressed(key_code, input) ((((input)->buttons[(key_code)/8] & ~(input)->prev_buttons[(key_code)/8])>>((key_code)%8))&1)
+#define is_down(key_code, input) ((((input)->buttons[(key_code)/8]>>((key_code)%8)) | ((input)->pressed_buttons[(key_code)/8]>>((key_code)%8)))&1) //check pressed_buttons in case there was a press and release within a single frame
+#define is_pressed(key_code, input) ((input)->pressed_buttons[(key_code)/8]>>((key_code)%8)&1)
+#define is_released(key_code, input) ((input)->released_buttons[(key_code)/8]>>((key_code)%8)&1)
 
-#define set_key_down(key_code, input) (input).buttons[(key_code)/8] |= 1<<((key_code)%8)
-#define set_key_up(key_code, input) (input).buttons[(key_code)/8] &= ~(1<<((key_code)%8))
+#define set_key_down(key_code, input) (((input).buttons[(key_code)/8] |= 1<<((key_code)%8)), ((input).pressed_buttons[(key_code)/8] |= 1<<((key_code)%8)))
+#define set_key_up(key_code, input) (((input).buttons[(key_code)/8] &= ~(1<<((key_code)%8))), ((input).released_buttons[(key_code)/8] |= 1<<((key_code)%8)))
 
 enum storage_mode
 {
@@ -133,22 +139,31 @@ struct ray_hit
     real dist;
 };
 
-ray_hit cast_ray(uint8* materials, real_3 ray_dir, real_3 ray_origin, int_3 size, int max_iterations)
+ray_hit cast_ray(uint8* materials, real_3 ray_origin, real_3 ray_dir, int_3 size, int max_iterations)
 {
     real_3 ray_sign = sign_not_zero_per_axis(ray_dir);
     real_3 inv_ray_dir = divide_components({1,1,1}, ray_dir);
     real_3 invabs_ray_dir = divide_components(ray_sign, ray_dir);
 
+    int_3 dir = {};
+
     int_3 bounding_planes = {ray_dir.x < 0 ? size.x:0, ray_dir.y < 0 ? size.y:0, ray_dir.z < 0 ? size.z:0};
     real_3 bounding_dists = multiply_components((real_cast(bounding_planes)-ray_origin), inv_ray_dir);
-    real skip_dist = max(max(max(bounding_dists.x, bounding_dists.y), bounding_dists.z), 0.0f);
+    real skip_dist = 0;
+    for(int i = 0; i < 3; i++)
+    {
+        if(bounding_dists[i] > skip_dist)
+        {
+            skip_dist = bounding_dists[i];
+            dir = {};
+            dir[i] = ray_sign[i];
+        }
+    }
     skip_dist += 0.001;
     real_3 pos = ray_origin + skip_dist*ray_dir;
     real total_dist = skip_dist;
 
-    int_3 ipos = int_cast(pos);
-
-    int_3 dir = {};
+    int_3 ipos = int_cast(floor_per_axis(pos));
 
     int i = 0;
     for ever
@@ -159,7 +174,7 @@ ray_hit cast_ray(uint8* materials, real_3 ray_dir, real_3 ray_origin, int_3 size
             return {false};
         }
 
-        if(materials[ipos.x+size.x*(ipos.y+size.y*ipos.z)] != 0)
+        if(materials[index_3D(ipos, size)] != 0)
         {
             return {true, ipos, dir, total_dist};
         }
@@ -185,7 +200,132 @@ ray_hit cast_ray(uint8* materials, real_3 ray_dir, real_3 ray_origin, int_3 size
     }
 }
 
+struct ring_hit
+{
+    bool hit;
+    real_3 nearest; //nearest position on the ring, regardless if there is a hit or not
+    real_3 pos; //position on the surface of the torus, if there was a hit
+    real dist; //distance the ray traveled to the nearest point/torus surface
+};
+
+ring_hit project_to_ring(real_3 ray_origin, real_3 ray_dir, real_3 center, real major_radius, real minor_radius, real_3 axis)
+{
+    real_3 circle_point = -major_radius*ray_dir;
+    real_3 initial_line_point = ray_origin-center;
+    real_3 line_point = initial_line_point;
+    real_3 d = {};
+
+    for(int i = 0; i < 50; i++)
+    {
+        //update line_point to nearst point on the line to circle_point
+        d = line_point-circle_point;
+        line_point -= dot(ray_dir, d)*ray_dir;
+
+        //update circle_point to nearst point on the circle to line_point
+        d = line_point-circle_point;
+        circle_point = major_radius*normalize_or_zero((line_point-dot(line_point, axis)*axis));
+    }
+    //if the line_point traveled net backwards, bring it back to the initial point
+    if(dot(line_point-initial_line_point, ray_dir) < 0) line_point = initial_line_point;
+    d = line_point-circle_point;
+
+    real_3 nearest = circle_point;
+    real dsq = normsq(d);
+    real nearest_dsq = dsq;
+
+    if(dsq > sq(minor_radius))
+    {
+        //check the minima that's away from the camera
+        circle_point = 2*major_radius*ray_dir;
+        line_point = initial_line_point;
+        d = {};
+
+        for(int i = 0; i < 50; i++)
+        {
+            //update line_point to nearst point on the line to circle_point
+            d = line_point-circle_point;
+            line_point -= dot(ray_dir, d)*ray_dir;
+
+            //update circle_point to nearst point on the circle to line_point
+            d = line_point-circle_point;
+            circle_point = major_radius*normalize_or_zero((line_point-dot(line_point, axis)*axis));
+        }
+        dsq = normsq(d);
+        if(dsq < nearest_dsq)
+        {
+            nearest = circle_point;
+            nearest_dsq = dsq;
+        }
+
+        //if neither minima matches then there is no intersection
+        if(dsq > sq(minor_radius))
+        {
+            return {false, nearest+center, nearest+center, max(0.0f, dot(nearest-initial_line_point, ray_dir))};
+        }
+    }
+    //if the line_point traveled net backwards, bring it back to the initial point
+    if(dot(line_point-initial_line_point, ray_dir) < 0) line_point = initial_line_point;
+    d = line_point-circle_point;
+
+    //iteratively find the surface of a sphere inside the torus centered at circle_point, this should converge to the torus surface
+    //using an ellipsoid might converge faster
+    for(int i = 0; i < 5; i++)
+    {
+        d = line_point-circle_point;
+        if(dot(d,d) > sq(minor_radius)) break;
+        line_point -= sqrt(sq(minor_radius)-dot(d,d))*ray_dir;
+
+        d = line_point-circle_point;
+        circle_point = major_radius*normalize_or_zero((line_point-dot(line_point, axis)*axis));
+    }
+    real ray_dist = dot(line_point-initial_line_point, ray_dir);
+    ray_dist = max(0.0f, ray_dist);
+    return {true, circle_point+center, line_point+center, ray_dist};
+}
+
+ring_hit project_to_line(real_3 ray_origin, real_3 ray_dir, real_3 start, real length, real radius, real_3 axis)
+{
+    real_3 d = start-ray_origin;
+    real_3 perp = normalize(cross(axis, ray_dir));
+    real_3 dplane = d-dot(perp, d)*perp;
+    real_3 dplaneperp = dplane-dot(dplane, axis)*axis;
+    real_3 planeperpdir = normalize(dplaneperp);
+    real   ray_dist = max(0.0f, dot(dplaneperp, planeperpdir)/dot(ray_dir, planeperpdir));
+    real_3 ray_point = ray_origin+ray_dist*ray_dir;
+    real   line_dist = clamp(dot(ray_point-start, axis), 0.0f, length);
+    real_3 line_point = start+line_dist*axis;
+
+    d = ray_point-line_point;
+    if(normsq(d) > sq(radius))
+    {
+        return {false, line_point, line_point, ray_dist};
+    }
+
+    //iteratively find the surface of a sphere inside the tube centered at line_point to converge to the surface of the tube
+    for(int i = 0; i < 5; i++)
+    {
+        d = ray_point-line_point;
+        if(normsq(d) > sq(radius)) break;
+        ray_point -= sqrt(sq(radius)-dot(d,d))*ray_dir;
+
+        real added_dist = clamp(dot(d, axis), 0.0f, length-line_dist);
+        line_point = line_point+added_dist*axis;
+        line_dist += added_dist;
+    }
+
+    ray_dist = dot(ray_point-ray_origin, ray_dir);
+    ray_dist = max(0.0f, ray_dist);
+    return {true, line_point, ray_point, ray_dist};
+}
+
+struct index_table_entry
+{
+    int id;
+    int index; //TODO: make indices above the bodies_cpu list size refer to unloaded bodies
+};
+
 #include "genetics.h"
+#include "editor.h"
 
 struct rational
 {
@@ -343,8 +483,8 @@ void resize_body(cpu_body_data* body_cpu, bounding_box new_region)
     bounding_box old_region = body_cpu->region;
     if(old_region == new_region) return;
 
-    int_3 new_size = new_region.u-new_region.l;
-    int_3 old_size = old_region.u-old_region.l;
+    int_3 new_size = dim(new_region);
+    int_3 old_size = dim(old_region);
 
     int_3 offset = new_region.l-body_cpu->region.l;
 
@@ -383,7 +523,7 @@ body_cell get_cell(cpu_body_data* body_cpu, int_3 pos)
 {
     if(all_less_than_eq(body_cpu->region.l, pos) && all_less_than(pos, body_cpu->region.u))
     {
-        return body_cpu->materials[index_3D(pos-body_cpu->region.l, body_cpu->region.u-body_cpu->region.l)];
+        return body_cpu->materials[index_3D(pos-body_cpu->region.l, dim(body_cpu->region))];
     }
     return {};
 }
@@ -395,7 +535,7 @@ void set_cell(cpu_body_data* body_cpu, int_3 pos, body_cell cell)
         bounding_box new_region = expand_to(body_cpu->region, pos);
         resize_body(body_cpu, new_region);
     }
-    body_cpu->materials[index_3D(pos-body_cpu->region.l, body_cpu->region.u-body_cpu->region.l)] = cell;
+    body_cpu->materials[index_3D(pos-body_cpu->region.l, dim(body_cpu->region))] = cell;
 }
 
 #define MAX_COYOTE_TIME 6.0f
@@ -470,12 +610,6 @@ struct brain
     int genome_id;
 };
 
-struct index_table_entry
-{
-    int id;
-    int index; //TODO: make indices above the bodies_cpu list size refer to unloaded bodies
-};
-
 struct entity
 {
     real_3 x;
@@ -528,25 +662,7 @@ struct ray_out
     int_3 pos;
     real dist;
 };
-
-struct editor_data_gpu
-{
-    bounding_box new_selection;
-    int selection_mode;
-    int_3 sel_move;
-    int sel_fill;
-    int n_strokes;
-    brush_stroke strokes[512];
-};
 #pragma pack(pop)
-
-struct editor_data
-{
-    editor_data_gpu gpu_data;
-    int ray_id;
-    bool selection_active;
-    int_3 selection_start;
-};
 
 struct world
 {
@@ -583,6 +699,8 @@ struct world
 
     genedit_window gew;
 
+    editor_data editor;
+
     cuboid_space form_space;
 
     cuboid_space body_space;
@@ -604,8 +722,6 @@ struct world
     int8_2 chunk_lookup[2*2*2];
 
     collision_cell* collision_grid;
-
-    editor_data world_editor;
 
     int frame_number;
 };
@@ -1556,9 +1672,9 @@ void iterate_joints_positions(memory_manager* manager, world* w, bool use_integr
 
 real_3 calculate_contact_impulse(contact_point* contact, real_3 u, real_3 normal, real_3x3 invK)
 {
-    // real COF = 2.0/(1.0/material_physicals[contact->material[0]].friction+1.0/material_physicals[contact->material[1]].friction);
-    real COF = 0.5*(material_physicals[contact->material[0]].friction+material_physicals[contact->material[1]].friction);
-    real COR = 0.5*(material_physicals[contact->material[0]].restitution+material_physicals[contact->material[1]].restitution);
+    // real COF = 2.0/(1.0/materials_list[contact->material[0]].friction+1.0/materials_list[contact->material[1]].friction);
+    real COF = 0.5*(materials_list[contact->material[0]].friction+materials_list[contact->material[1]].friction);
+    real COR = 0.5*(materials_list[contact->material[0]].restitution+materials_list[contact->material[1]].restitution);
     if(COF != COF) COF = 0;
     // log_output("coefficient of friction between body indices ", contact->body_index[0], " and ", contact->body_index[1], " with materials ", contact->material[0], " and ", contact->material[1], ": ", COF, "\n");
 
@@ -2034,7 +2150,7 @@ void simulate_body_voxels(world* w, render_data* rd)
                     if(form)
                     {
                         if(is_inside({x,y,z}, form->region))
-                            form_voxel = form->materials[index_3D((int_3){x,y,z}-form->region.l, form->region.u-form->region.l)];
+                            form_voxel = form->materials[index_3D((int_3){x,y,z}-form->region.l, dim(form->region))];
                     }
 
                     uint material_id = c.material;
@@ -2166,12 +2282,12 @@ void simulate_body_voxels(world* w, render_data* rd)
                     }
 
                     //TODO: spawn appropiate particles
-                    // if(c.temperature > material_physicals[material_id].melting_point) *c = {};
-                    // if(c.temperature > material_physicals[material_id].boiling_point) *c = {};
+                    // if(c.temperature > materials_list[material_id].melting_point) *c = {};
+                    // if(c.temperature > materials_list[material_id].boiling_point) *c = {};
 
                     if(c.material == 0) c.temperature = ROOM_TEMP;
 
-                    real cell_mass = material_physicals[material_id].density;
+                    real cell_mass = materials_list[material_id].density;
                     body_gpu->m += cell_mass;
 
                     real_3 pos = (real_3){x+0.5,y+0.5,z+0.5};

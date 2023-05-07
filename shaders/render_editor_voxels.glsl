@@ -22,28 +22,31 @@ layout(location = 0) out vec4 frag_color;
 layout(location = 0) uniform mat3 camera_axes;
 layout(location = 1) uniform vec3 camera_pos;
 layout(location = 2) uniform sampler2D material_visual_properties;
-layout(location = 3) uniform isampler3D form_materials;
+layout(location = 3) uniform isampler3D object_materials;
 layout(location = 4) uniform sampler2D blue_noise_texture;
 layout(location = 5) uniform int frame_number;
-layout(location = 6) uniform int n_forms;
-layout(location = 7) uniform int highlight_form;
-layout(location = 8) uniform ivec3 highlight_cell;
+layout(location = 6) uniform int n_objects;
+layout(location = 7) uniform float fov;
+layout(location = 8) uniform sampler2D lightprobe_color;
+layout(location = 9) uniform sampler2D lightprobe_depth;
+layout(location = 10) uniform sampler2D lightprobe_x;
+
 
 // #define DEBUG_DOTS
 #include "include/maths.glsl"
 #include "include/blue_noise.glsl"
-#include "include/form_data.glsl"
+#include "include/object_data.glsl"
 #include "include/materials_visual.glsl"
 #include "include/materials_physical.glsl"
 #define ACTIVE_REGIONS
 #define RAY_CAST_IGNORE_DEPTH
 #include "include/raycast.glsl"
+#include "include/lightprobe.glsl"
 
 smooth in vec2 screen_pos;
 
 void main()
 {
-    float fov = pi*120.0/180.0;
     float screen_dist = 1.0/tan(fov/2);
     vec3 ray_dir = (16.0/9.0*screen_pos.x*camera_axes[0]
                     +        screen_pos.y*camera_axes[1]
@@ -70,60 +73,100 @@ void main()
     vec3 hit_dir;
     vec3 normal;
     uvec4 voxel;
-    int hit_form = -2;
+    int hit_object = -2;
     bool hit = false;
 
-    for(int f = 0; f < n_forms; f++)
+    vec4 tint = vec4(1);
+    vec4 highlight = vec4(0);
+
+    for(int o = 0; o < n_objects; o++)
     {
-        vec3 form_x = vec3(forms[f].x_x, forms[f].x_y, forms[f].x_z);
-        vec4 form_orientation = vec4(forms[f].orientation_r, forms[f].orientation_x, forms[f].orientation_y, forms[f].orientation_z);
-        ivec3 form_texture_lower = ivec3(forms[f].lower_x,
-                                 forms[f].lower_y,
-                                 forms[f].lower_z);
-        ivec3 form_texture_upper = ivec3(forms[f].upper_x,
-                                 forms[f].upper_y,
-                                 forms[f].upper_z);
-        ivec3 form_origin_to_lower = ivec3(forms[f].origin_to_lower_x,
-                                           forms[f].origin_to_lower_y,
-                                           forms[f].origin_to_lower_z);
-        ivec3 form_size = form_texture_upper-form_texture_lower;
-        ivec3 form_origin = form_texture_lower;
+        vec3 object_x = vec3(objects[o].x_x, objects[o].x_y, objects[o].x_z);
+        vec4 object_orientation = vec4(objects[o].orientation_r, objects[o].orientation_x, objects[o].orientation_y, objects[o].orientation_z);
+        ivec3 object_texture_lower = ivec3(objects[o].lower_x,
+                                 objects[o].lower_y,
+                                 objects[o].lower_z);
+        ivec3 object_texture_upper = ivec3(objects[o].upper_x,
+                                 objects[o].upper_y,
+                                 objects[o].upper_z);
+        ivec3 object_origin_to_lower = ivec3(objects[o].origin_to_lower_x,
+                                           objects[o].origin_to_lower_y,
+                                           objects[o].origin_to_lower_z);
+        ivec3 object_size = object_texture_upper-object_texture_lower;
+        ivec3 object_origin = object_texture_lower;
 
-        //ray info in the forms frame
-        vec3 form_pos = apply_rotation(conjugate(form_orientation), pos-form_x)-form_origin_to_lower;
-        ivec3 iform_pos = ivec3(floor(form_pos));
-        vec3 form_ray_dir = apply_rotation(conjugate(form_orientation), ray_dir);
+        //ray info in the objects frame
+        vec3 object_pos = apply_rotation(conjugate(object_orientation), pos-object_x)-object_origin_to_lower;
+        ivec3 iobject_pos = ivec3(floor(object_pos));
+        vec3 object_ray_dir = apply_rotation(conjugate(object_orientation), ray_dir);
 
-        float form_jump_dist = 0.0;
-        //NOTE optimization: could probably reorder this for better superscalaring ie. max(max(),max()) instead of max(max(max()))
-        if(iform_pos.x < 0            && form_ray_dir.x > 0) form_jump_dist = max(form_jump_dist, epsilon+(-form_pos.x)/(form_ray_dir.x));
-        if(iform_pos.x >= form_size.x && form_ray_dir.x < 0) form_jump_dist = max(form_jump_dist, epsilon+(form_size.x-form_pos.x)/(form_ray_dir.x));
-        if(iform_pos.y < 0            && form_ray_dir.y > 0) form_jump_dist = max(form_jump_dist, epsilon+(-form_pos.y)/(form_ray_dir.y));
-        if(iform_pos.y >= form_size.y && form_ray_dir.y < 0) form_jump_dist = max(form_jump_dist, epsilon+(form_size.y-form_pos.y)/(form_ray_dir.y));
-        if(iform_pos.z < 0            && form_ray_dir.z > 0) form_jump_dist = max(form_jump_dist, epsilon+(-form_pos.z)/(form_ray_dir.z));
-        if(iform_pos.z >= form_size.z && form_ray_dir.z < 0) form_jump_dist = max(form_jump_dist, epsilon+(form_size.z-form_pos.z)/(form_ray_dir.z));
+        vec3 object_hit_dir = vec3(0,0,0);
+        float object_jump_dist = 0.0;
+        if(iobject_pos.x < 0              && object_ray_dir.x > 0) {
+            float new_jump_dist = epsilon+(-object_pos.x)/(object_ray_dir.x);
+            if(new_jump_dist > object_jump_dist){
+                object_hit_dir = vec3(1,0,0);
+                object_jump_dist = new_jump_dist;
+            }
+        }
+        if(iobject_pos.x >= object_size.x && object_ray_dir.x < 0) {
+            float new_jump_dist = epsilon+(object_size.x-object_pos.x)/(object_ray_dir.x);
+            if(new_jump_dist > object_jump_dist){
+                object_hit_dir = vec3(1,0,0);
+                object_jump_dist = new_jump_dist;
+            }
+        }
+        if(iobject_pos.y < 0              && object_ray_dir.y > 0) {
+            float new_jump_dist = epsilon+(-object_pos.y)/(object_ray_dir.y);
+            if(new_jump_dist > object_jump_dist){
+                object_hit_dir = vec3(0,1,0);
+                object_jump_dist = new_jump_dist;
+            }
+        }
+        if(iobject_pos.y >= object_size.y && object_ray_dir.y < 0) {
+            float new_jump_dist = epsilon+(object_size.y-object_pos.y)/(object_ray_dir.y);
+            if(new_jump_dist > object_jump_dist){
+                object_hit_dir = vec3(0,1,0);
+                object_jump_dist = new_jump_dist;
+            }
+        }
+        if(iobject_pos.z < 0              && object_ray_dir.z > 0) {
+            float new_jump_dist = epsilon+(-object_pos.z)/(object_ray_dir.z);
+            if(new_jump_dist > object_jump_dist){
+                object_hit_dir = vec3(0,0,1);
+                object_jump_dist = new_jump_dist;
+            }
+        }
+        if(iobject_pos.z >= object_size.z && object_ray_dir.z < 0) {
+            float new_jump_dist = epsilon+(object_size.z-object_pos.z)/(object_ray_dir.z);
+            if(new_jump_dist > object_jump_dist){
+                object_hit_dir = vec3(0,0,1);
+                object_jump_dist = new_jump_dist;
+            }
+        }
 
-        form_pos += form_jump_dist*form_ray_dir;
+        object_pos += object_jump_dist*object_ray_dir;
 
-        vec3 form_hit_pos;
-        float form_hit_dist;
-        ivec3 form_hit_cell;
-        vec3 form_hit_dir;
-        vec3 form_normal;
-        uvec4 form_voxel;
-        bool form_hit = cast_ray(form_materials, form_ray_dir, form_pos, form_size, form_origin, 0, false, form_hit_pos, form_hit_dist, form_hit_cell, form_hit_dir, form_normal, form_voxel, 100);
-        // if(form_hit && (!hit || form_jump_dist+form_hit_dist < hit_dist) && b != 13 && b != 12)
-        if(form_hit && (!hit || form_jump_dist+form_hit_dist < hit_dist))
+        vec3 object_hit_pos;
+        float object_hit_dist;
+        ivec3 object_hit_cell;
+        vec3 object_normal;
+        uvec4 object_voxel;
+        bool object_hit = cast_ray(object_materials, object_ray_dir, object_pos, object_size, object_origin, 0, false, object_hit_pos, object_hit_dist, object_hit_cell, object_hit_dir, object_normal, object_voxel, 100);
+        if(object_hit && (!hit || object_jump_dist+object_hit_dist < hit_dist))
         {
             hit = true;
-            hit_pos = apply_rotation(form_orientation, form_hit_pos)+form_x;
-            hit_dist = form_jump_dist+form_hit_dist;
-            hit_cell = form_hit_cell+form_origin_to_lower;
-            hit_dir = form_hit_dir;
-            hit_form = f;
-            normal = apply_rotation(form_orientation, form_normal);
-            voxel = form_voxel;
-            if(voxel.r >= BASE_CELL_MAT) voxel.r += forms[f].cell_material_id;
+            hit_pos = apply_rotation(object_orientation, object_hit_pos)+object_x;
+            hit_dist = object_jump_dist+object_hit_dist;
+            hit_cell = object_hit_cell+object_origin_to_lower;
+            hit_dir = object_hit_dir;
+            hit_object = o;
+            normal = apply_rotation(object_orientation, object_normal);
+            voxel = object_voxel;
+            // if(voxel.r >= BASE_CELL_MAT) voxel.r += objects[o].cell_material_id;
+
+            tint = vec4(objects[o].tint_r, objects[o].tint_g, objects[o].tint_b, objects[o].tint_a);
+            highlight = vec4(objects[o].highlight_r, objects[o].highlight_g, objects[o].highlight_b, objects[o].highlight_a);
         }
     }
 
@@ -142,21 +185,22 @@ void main()
 
         vec3 reflection_dir = normal;
 
-        float light_value = 0.5*dot(reflection_dir, spotlight_dir)+0.5+0.2;
-        light_value *= 0.5*dot(camera_pos, camera_pos)/sq(total_dist);
+        vec2 sample_depth;
+        vec3 light_value = sample_lightprobe_color(hit_pos, normal, vec_to_oct(reflection_dir), sample_depth);
+        // light_value *= 1.0f-0.05*total_dist;
+        // light_value = max(light_value, 0);
 
         frag_color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)*light_value;
+
+        frag_color.rgb *= 1.0-0.2*(int(dot(hit_cell, ivec3(1,1,1)))%2);
     }
     else
     {
         discard;
     }
 
-    if(hit_form == highlight_form && hit_cell == highlight_cell)
-    {
-        frag_color.rgb = clamp(frag_color.rgb, 0, 1);
-        frag_color.rgb += vec3(0.5,0.5,0.5);
-    }
+    frag_color *= tint;
+    frag_color += highlight;
 
-    frag_color.rgb = clamp(frag_color.rgb, 0, 1);
+    frag_color = clamp(frag_color, 0, 1);
 }

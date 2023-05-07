@@ -1,6 +1,3 @@
-#program circle_program
-
-///////////////////////////////////////////////////
 #shader GL_VERTEX_SHADER
 
 #include "include/header.glsl"
@@ -46,5 +43,3 @@ void main()
     frag_color.a *= alpha;
     gl_FragDepth = gl_FragCoord.z*alpha;
 }
-
-///////////////////////////////////////////////////

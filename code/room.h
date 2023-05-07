@@ -4,8 +4,6 @@
 #include <zlib.h>
 #include <lz4.h>
 
-#define room_size 512
-
 struct room_gpu_entry;
 
 struct room

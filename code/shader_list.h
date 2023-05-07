@@ -1,10 +1,14 @@
 add_shader(circle_program, "shaders/circle.glsl");
+add_shader(rectangle_program, "shaders/rectangle.glsl");
 add_shader(round_line_program, "shaders/round_line.glsl");
 add_shader(debug_text_program, "shaders/debug_text.glsl");
 add_shader(draw_text_program, "shaders/draw_text.glsl");
-add_shader(rectangle_program, "shaders/rectangle.glsl");
 add_shader(sprite_program, "shaders/sprite.glsl");
+add_shader(ring_program, "shaders/ring.glsl");
+add_shader(sphere_program, "shaders/sphere.glsl");
+add_shader(line_3d_program, "shaders/line_3D.glsl");
 add_shader(fullscreen_texture_program, "shaders/fullscreen_texture.glsl");
+add_shader(fullscreen_texture_ssao_program, "shaders/fullscreen_texture_ssao.glsl");
 add_shader(render_prepass_program, "shaders/render_prepass.glsl");
 add_shader(render_world_program, "shaders/render_world.glsl");
 add_shader(render_editor_voxels_program, "shaders/render_editor_voxels.glsl");

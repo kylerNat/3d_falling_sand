@@ -1,6 +1,3 @@
-#program rectangle_program
-
-///////////////////////////////////////////////////
 #shader GL_VERTEX_SHADER
 
 #include "include/header.glsl"

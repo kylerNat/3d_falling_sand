@@ -37,7 +37,6 @@ layout(location = 9) uniform sampler2D lightprobe_color;
 layout(location = 10) uniform sampler2D lightprobe_depth;
 layout(location = 11) uniform sampler2D lightprobe_x;
 layout(location = 12) uniform sampler2D blue_noise_texture;
-layout(location = 13) uniform int edit_mode;
 
 #include "include/maths.glsl"
 #include "include/blue_noise.glsl"
@@ -166,8 +165,7 @@ void main()
 
     frag_color.rgb = clamp(frag_color.rgb, 0, 1);
 
-    if(edit_mode != 0 && selected(voxel) != 0) frag_color.rgb = 0.5*frag_color.rgb+0.5;
-
+    normal = normal*camera_axes;
     // frag_color.rgb = normal;
     gl_FragDepth = 1.0f/total_dist;
 }

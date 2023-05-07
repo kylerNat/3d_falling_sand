@@ -96,13 +96,51 @@ void main()
 
     voxel_orientation = vec4(1,0,0,0);
 
+    vec3 hit_dir = vec3(0,0,0);
+    ivec3 ipos = ivec3(floor(pos));
     float bounding_jump_dist = 0.0;
-    if(pos.x < 0 && ray_dir.x > 0)      bounding_jump_dist = max(bounding_jump_dist, -epsilon+(-pos.x)/(ray_dir.x));
-    if(pos.x > size.x && ray_dir.x < 0) bounding_jump_dist = max(bounding_jump_dist, -epsilon+(size.x-pos.x)/(ray_dir.x));
-    if(pos.y < 0 && ray_dir.y > 0)      bounding_jump_dist = max(bounding_jump_dist, -epsilon+(-pos.y)/(ray_dir.y));
-    if(pos.y > size.y && ray_dir.y < 0) bounding_jump_dist = max(bounding_jump_dist, -epsilon+(size.y-pos.y)/(ray_dir.y));
-    if(pos.z < 0 && ray_dir.z > 0)      bounding_jump_dist = max(bounding_jump_dist, -epsilon+(-pos.z)/(ray_dir.z));
-    if(pos.z > size.z && ray_dir.z < 0) bounding_jump_dist = max(bounding_jump_dist, -epsilon+(size.z-pos.z)/(ray_dir.z));
+    if(ipos.x < 0       && ray_dir.x > 0) {
+        float new_jump_dist = epsilon+(-pos.x)/(ray_dir.x);
+        if(new_jump_dist > bounding_jump_dist){
+            hit_dir = vec3(1,0,0);
+            bounding_jump_dist = new_jump_dist;
+        }
+    }
+    if(ipos.x >= size.x && ray_dir.x < 0) {
+        float new_jump_dist = epsilon+(size.x-pos.x)/(ray_dir.x);
+        if(new_jump_dist > bounding_jump_dist){
+            hit_dir = vec3(1,0,0);
+            bounding_jump_dist = new_jump_dist;
+        }
+    }
+    if(ipos.y < 0       && ray_dir.y > 0) {
+        float new_jump_dist = epsilon+(-pos.y)/(ray_dir.y);
+        if(new_jump_dist > bounding_jump_dist){
+            hit_dir = vec3(0,1,0);
+            bounding_jump_dist = new_jump_dist;
+        }
+    }
+    if(ipos.y >= size.y && ray_dir.y < 0) {
+        float new_jump_dist = epsilon+(size.y-pos.y)/(ray_dir.y);
+        if(new_jump_dist > bounding_jump_dist){
+            hit_dir = vec3(0,1,0);
+            bounding_jump_dist = new_jump_dist;
+        }
+    }
+    if(ipos.z < 0       && ray_dir.z > 0) {
+        float new_jump_dist = epsilon+(-pos.z)/(ray_dir.z);
+        if(new_jump_dist > bounding_jump_dist){
+            hit_dir = vec3(0,0,1);
+            bounding_jump_dist = new_jump_dist;
+        }
+    }
+    if(ipos.z >= size.z && ray_dir.z < 0) {
+        float new_jump_dist = epsilon+(size.z-pos.z)/(ray_dir.z);
+        if(new_jump_dist > bounding_jump_dist){
+            hit_dir = vec3(0,0,1);
+            bounding_jump_dist = new_jump_dist;
+        }
+    }
 
     pos += bounding_jump_dist*ray_dir;
     total_dist += bounding_jump_dist;
@@ -110,7 +148,6 @@ void main()
     vec3 hit_pos;
     float hit_dist;
     ivec3 hit_cell;
-    vec3 hit_dir;
     vec3 normal;
     uvec4 voxel;
     bool hit = cast_ray(materials, ray_dir, pos, size, origin, medium, medium==0, hit_pos, hit_dist, hit_cell, hit_dir, normal, voxel, 300);

@@ -40,8 +40,7 @@ struct cell_type
     int genodes[N_MAX_GENES];
     int genes[N_MAX_GENES];
     int n_genes;
-    material_visual_info* visual;
-    material_physical_info* physical;
+    material_t* mat;
 
     trigger_t* triggers;
     int n_triggers;
@@ -186,8 +185,8 @@ void resize_form_storage(form_t* form, bounding_box new_region)
     bounding_box old_region = form->region;
     if(old_region == new_region) return;
 
-    int_3 new_size = new_region.u-new_region.l;
-    int_3 old_size = old_region.u-old_region.l;
+    int_3 new_size = dim(new_region);
+    int_3 old_size = dim(old_region);
 
     int_3 offset = new_region.l-form->region.l;
 
@@ -225,7 +224,7 @@ void resize_form_storage(form_t* form, bounding_box new_region)
 
 void fit_form_bounds(form_t* form)
 {
-    int_3 size = form->region.u-form->region.l;
+    int_3 size = dim(form->region);
     bounding_box b = {size, {0,0,0}};
     for(int z = 0; z < size.z; z++)
         for(int y = 0; y < size.y; y++)
@@ -240,7 +239,7 @@ void fit_form_bounds(form_t* form)
     resize_form_storage(form, b);
 }
 
-typedef void (*passive_function)(material_visual_info*, material_physical_info*);
+typedef void (*passive_function)(material_t*);
 
 struct gene_data
 {
@@ -260,35 +259,35 @@ struct gene_data
     int material_id;
 };
 
-void harden(material_visual_info* visual, material_physical_info* physical)
+void harden(material_t* mat)
 {
-    physical->hardness += 0.1;
+    mat->hardness += 0.1;
 }
 
-void conductify(material_visual_info* visual, material_physical_info* physical)
+void conductify(material_t* mat)
 {
-    physical->conductivity += 0.1;
-    visual->metalicity += 0.1;
+    mat->conductivity += 0.1;
+    mat->metalicity += 0.1;
 }
 
-void densify(material_visual_info* visual, material_physical_info* physical)
+void densify(material_t* mat)
 {
-    physical->density += 0.1;
+    mat->density += 0.1;
 }
 
-void color_cell_red(material_visual_info* visual, material_physical_info* physical)
+void color_cell_red(material_t* mat)
 {
-    visual->base_color -= {0,0.5,0.5};
+    mat->base_color -= {0,0.5,0.5};
 }
 
-void color_cell_green(material_visual_info* visual, material_physical_info* physical)
+void color_cell_green(material_t* mat)
 {
-    visual->base_color -= {0.5,0,0.5};
+    mat->base_color -= {0.5,0,0.5};
 }
 
-void color_cell_blue(material_visual_info* visual, material_physical_info* physical)
+void color_cell_blue(material_t* mat)
 {
-    visual->base_color -= {0.5,0.5,0};
+    mat->base_color -= {0.5,0.5,0};
 }
 
 gene_data gene_list[] =
@@ -460,13 +459,14 @@ struct genedit_window
     int active_material;
 };
 
+void update_material_properties_textures(int, int);
+
 void compile_genome(genome* gn, genode* genodes)
 {
     for(int c = 0; c < gn->n_cell_types; c++)
     {
         cell_type* cell = &gn->cell_types[c];
-        *cell->visual = base_cell_visual;
-        *cell->physical = base_cell_physical;
+        *cell->mat = base_cell_material;
         for(int g = 0; g < cell->n_genes; g++)
         {
             cell->genes[g] = genodes[cell->genodes[g]].gene_id;
@@ -479,7 +479,7 @@ void compile_genome(genome* gn, genode* genodes)
 
             cell->growth_time += gene.growth_time;
 
-            if(gene.passive_fun) gene.passive_fun(cell->visual, cell->physical);
+            if(gene.passive_fun) gene.passive_fun(cell->mat);
 
             if(gene.trigger_id)
             {
@@ -500,11 +500,7 @@ void compile_genome(genome* gn, genode* genodes)
     }
 
     //TODO: only need to reopload things that changed
-    glBindTexture(GL_TEXTURE_2D, material_visual_properties_texture);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, N_MAX_MATERIALS, GL_RGB, GL_FLOAT, material_visuals);
-
-    glBindTexture(GL_TEXTURE_2D, material_physical_properties_texture);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, N_PHYSICAL_PROPERTIES, N_MAX_MATERIALS, GL_RED, GL_FLOAT, material_physicals);
+    update_material_properties_textures(0, N_MAX_MATERIALS);
 }
 
 void solve_form_joints(genome* g)
@@ -548,12 +544,12 @@ bool set_form_cell(genome* g, int form_id, int_3 pos, int material)
 {
     memory_manager* manager = get_context()->manager;
     form_t* form = &g->forms[form_id];
-    if(material == 0 && form->region.u-form->region.l == (int_3){1,1,1} && pos == form->region.l)
+    if(material == 0 && dim(form->region) == (int_3){1,1,1} && pos == form->region.l)
     {
         delete_form(g, form_id);
         return false;
     }
-    int_3 size = form->region.u-form->region.l;
+    int_3 size = dim(form->region);
 
     if(!is_inside(pos, form->region))
     {
@@ -563,7 +559,7 @@ bool set_form_cell(genome* g, int form_id, int_3 pos, int material)
         }
         bounding_box new_region = form->region;
         new_region = expand_to(new_region, pos);
-        int_3 new_size = new_region.u-new_region.l;
+        int_3 new_size = dim(new_region);
         resize_form_storage(form, new_region);
         size = new_size;
     }
@@ -746,7 +742,7 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
 
         ray_dir = apply_rotation(conjugate(form->orientation), ray_dir);
         ray_pos = apply_rotation(conjugate(form->orientation), ray_pos - form->x)-real_cast(form->region.l);
-        ray_hit new_hit = cast_ray(form->materials, ray_dir, ray_pos, form->region.u-form->region.l, 100);
+        ray_hit new_hit = cast_ray(form->materials, ray_pos, ray_dir, dim(form->region), 100);
         new_hit.pos += form->region.l;
 
         if(new_hit.hit && (!hit.hit || new_hit.dist < hit.dist))
@@ -1213,7 +1209,7 @@ void do_edit_window(render_data* ui, user_input* input, genedit_window* gew)
         g->endpoints[e].form_id = new_id;
 
         form_t* form = &g->forms[new_id];
-        uint8 material = form->materials[index_3D(g->endpoints[e].pos, form->region.u-form->region.l)];
+        uint8 material = form->materials[index_3D(g->endpoints[e].pos, dim(form->region))];
         // if(material == 0)
         // {
         //     g->endpoints[e] = g->endpoints[--g->n_endpoints];
