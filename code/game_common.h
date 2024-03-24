@@ -447,14 +447,13 @@ struct body_cell
 {
     uint8 material;
     int8 depth;
-    int8 temperature;
+    uint8 temperature;
     int8 voltage;
 };
 
 struct cpu_body_data
 {
     int id;
-    gpu_body_data* gpu_data;
 
     int genome_id;
     int form_id;
@@ -825,7 +824,6 @@ int new_body_index(world* w)
             w->bodies_cpu[entry->index] = {};
             w->bodies_gpu[entry->index] = {};
             w->bodies_cpu[entry->index].id = id;
-            w->bodies_cpu[entry->index].gpu_data = &w->bodies_gpu[entry->index];
             return entry->index;
         }
     }
@@ -850,6 +848,7 @@ void delete_body(world* w, int id)
     {
         entry->id = 0;
 
+        if(w->bodies_cpu[entry->index].materials) dynamic_free(w->bodies_cpu[entry->index].materials);
         w->bodies_cpu[entry->index] = w->bodies_cpu[--w->n_bodies];
         w->bodies_gpu[entry->index] = w->bodies_gpu[  w->n_bodies];
 
@@ -1836,6 +1835,11 @@ void iterate_contact_points(memory_manager* manager, world* w, render_data* rd)
 
                 body_gpu->x_dot += ((a?-1:1)/body_gpu->m)*deltap;
                 body_gpu->omega += (a?-1:1)*(body_gpu->invI*cross(r, deltap));
+
+                if(body_gpu->omega.x != body_gpu->omega.x)
+                {
+                    assert(0, "nan omega ", b, ", ", K);
+                }
             }
         }
     next_contact_jump:;
@@ -2118,7 +2122,7 @@ void integrate_body_motion(cpu_body_data* bodies_cpu, gpu_body_data* bodies_gpu,
 
 void simulate_body_voxels(world* w, render_data* rd)
 {
-    for(int b = 0; b < w->n_bodies; b++)
+    for(int b = w->n_bodies-1; b >= 0; b--)
     {
         gpu_body_data* body_gpu = w->bodies_gpu+b;
         cpu_body_data* body_cpu = w->bodies_cpu+b;
@@ -2139,6 +2143,10 @@ void simulate_body_voxels(world* w, render_data* rd)
         body_cpu->I = {};
         body_gpu->m = 0;
 
+        bounding_box new_bb = {upper, lower};
+
+        int n_cells = 0;
+        bool floodfill_needed = false;
         for(int z = lower.z-1; z < upper.z+1; z++)
             for(int y = lower.y-1; y < upper.y+1; y++)
                 for(int x = lower.x-1; x < upper.x+1; x++)
@@ -2156,22 +2164,24 @@ void simulate_body_voxels(world* w, render_data* rd)
                     uint material_id = c.material;
                     bool is_cell = material_id >= BASE_CELL_MAT;
 
-                    //TODO: reimplement beams and explosions
+                    //TODO: reimplement explosions
 
-                    // vec3 voxel_x = apply_rotation(body_orientation(bi), voxel_pos)+body_x(bi);
+                    real_3 voxel_x = apply_rotation(body_gpu->orientation, (real_3){x,y,z}-body_gpu->x_cm)+body_gpu->x;
                     // //TODO: apply pushback force
-                    // for(int be = 0; be < n_beams; be++)
-                    // {
-                    //     vec3 delta = voxel_x-beam_x(be);
-                    //     vec3 dhat = normalize(beam_d(be));
-                    //     float d = clamp(dot(dhat, delta), 0.0, length(beam_d(be)));
-                    //     vec3 nearest_x = d*dhat+beam_x(be);
-                    //     vec3 r = voxel_x-nearest_x;
-                    //     if(dot(r, r) <= sq(beams[be].r))
-                    //     {
-                    //         temp = clamp(temp+100, 0u, 255u);
-                    //     }
-                    // }
+                    for(int be = 0; be < w->n_beams; be++)
+                    {
+                        beam_data* beam = w->beams+be;
+                        real_3 delta = voxel_x-beam->x;
+                        real_3 dhat = normalize(beam->dir);
+                        real d = clamp(dot(dhat, delta), 0.0, norm(beam->dir));
+                        real_3 nearest_x = d*dhat+beam->x;
+                        real_3 r = voxel_x-nearest_x;
+                        if(normsq(r) <= sq(beam->r))
+                        {
+                            // c.temperature = clamp((int) c.temperature+100, 0, 255);
+                            c.temperature = 255;
+                        }
+                    }
 
                     if(g)
                     {
@@ -2282,31 +2292,85 @@ void simulate_body_voxels(world* w, render_data* rd)
                     }
 
                     //TODO: spawn appropiate particles
-                    // if(c.temperature > materials_list[material_id].melting_point) *c = {};
-                    // if(c.temperature > materials_list[material_id].boiling_point) *c = {};
+                    if(c.temperature > materials_list[material_id].melting_point) c = {};
+                    if(c.temperature > materials_list[material_id].boiling_point) c = {};
 
                     if(c.material == 0) c.temperature = ROOM_TEMP;
+                    else
+                    {
+                        float C = materials_list[material_id].heat_capacity;
+                        float Q = 0;
+                        //NOTE: this would save some divisions by storing thermal resistivity,
+                        //      but it's nicer to define materials in terms of conductivity so 0 has well defined behavior
+                        float r_c = 1.0/materials_list[c.material].thermal_conductivity;
+                        float temp = c.temperature;
+                        {float k = 1.0/(r_c+1.0/materials_list[u.material].thermal_conductivity); Q += k*(float(u.temperature)-float(temp));}
+                        {float k = 1.0/(r_c+1.0/materials_list[d.material].thermal_conductivity); Q += k*(float(d.temperature)-float(temp));}
+                        {float k = 1.0/(r_c+1.0/materials_list[r.material].thermal_conductivity); Q += k*(float(r.temperature)-float(temp));}
+                        {float k = 1.0/(r_c+1.0/materials_list[l.material].thermal_conductivity); Q += k*(float(l.temperature)-float(temp));}
+                        {float k = 1.0/(r_c+1.0/materials_list[f.material].thermal_conductivity); Q += k*(float(f.temperature)-float(temp));}
+                        {float k = 1.0/(r_c+1.0/materials_list[b.material].thermal_conductivity); Q += k*(float(b.temperature)-float(temp));}
 
-                    real cell_mass = materials_list[material_id].density;
-                    body_gpu->m += cell_mass;
+                        //NOTE: there might be oscillations due to neighboring temperatures changing past each other,
+                        //      but fixing would require each voxel knowing how much heat it's neighbors are getting
+                        //      hopefully won't be a problem since everything will eventually converge to room temp
 
-                    real_3 pos = (real_3){x+0.5,y+0.5,z+0.5};
+                        float dtemp = Q/C;
+                        float dtemp_i = round(dtemp);
+                        float dtemp_f = 32.0*(dtemp-dtemp_i);
 
-                    x_cm += cell_mass*pos;
+                        if(dtemp_f < 0 && dtemp_f > -1.0) dtemp_f = -1.0;
 
-                    real_3 r_cm = pos - body_gpu->x_cm;
+                        if(rand(&w->seed,0,32) < int(abs(dtemp_f))) dtemp_i += sign(dtemp_f);
+                        temp = uint(clamp(float(temp)+dtemp_i, 0.0, 255.0));
 
-                    body_cpu->I += real_identity_3(cell_mass*(0.4*sq(0.5)+normsq(r_cm)));
-                    for(int i = 0; i < 3; i++)
-                        for(int j = 0; j < 3; j++)
-                            body_cpu->I[i][j] += -cell_mass*r_cm[i]*r_cm[j];
+                        // if(avg_temp.x > float(temp)) temp++;
+                        // else if(avg_temp.x < float(temp)) temp--;
+
+                        c.temperature = temp;
+                    }
+
+                    if(c.material)
+                    {
+                        real cell_mass = materials_list[material_id].density;
+                        body_gpu->m += cell_mass;
+
+                        real_3 pos = (real_3){x+0.5,y+0.5,z+0.5};
+
+                        x_cm += cell_mass*pos;
+
+                        real_3 r_cm = pos - body_gpu->x_cm;
+
+                        body_cpu->I += real_identity_3(cell_mass*(1.0f/6.0f+normsq(r_cm)));
+                        for(int i = 0; i < 3; i++)
+                            for(int j = 0; j < 3; j++)
+                                body_cpu->I[i][j] += -cell_mass*r_cm[i]*r_cm[j];
+
+                        expand_to(new_bb, {x,y,z});
+                        n_cells++;
+                    }
 
                     if(c.material || original_cell.material)
+                    {
                         set_cell(body_cpu, {x,y,z}, c);
+                        if(!c.material && original_cell.material)
+                        {
+                            floodfill_needed = true;
+                        }
+                    }
                 }
+        if(all_less_than(new_bb.l, new_bb.u))
+            resize_body(body_cpu, new_bb);
 
         x_cm /= body_gpu->m;
         body_gpu->x_cm = x_cm;
+
+        if(n_cells <= 1 || body_gpu->m <= 0)
+        {
+            assert(body_gpu->m <= 0.002);
+            delete_body(w, body_cpu->id);
+            continue;
+        }
 
         if(body_gpu->m == 0)
         {
@@ -2317,6 +2381,129 @@ void simulate_body_voxels(world* w, render_data* rd)
         }
 
         update_inertia(body_cpu, body_gpu);
+
+        if(floodfill_needed)
+        {
+            int_3 size = dim(body_cpu->region);
+            uint8* found_cells = (uint8*) stalloc_clear((size.x*size.y*size.z+7)/8);
+            int* stack = (int*) stalloc(size.x*size.y*size.z*sizeof(int));
+            int n_stack = 0;
+            int n_splits = 0;
+
+            real_3 old_x = body_gpu->x;
+            real_3 old_x_cm = body_gpu->x_cm;
+
+            for(int i = 0; i < size.x*size.y*size.z; i++)
+            {
+                if((found_cells[i/8]>>(i%8))&1) continue;
+                if(body_cpu->materials[i].material==0) continue;
+
+                n_splits++;
+
+                int nb = 0;
+                cpu_body_data* new_body_cpu = 0;
+                gpu_body_data* new_body_gpu = 0;
+                if(n_splits > 1)
+                {
+//create a new body
+                    nb = new_body_index(w);
+                    new_body_cpu = &w->bodies_cpu[nb];
+                    new_body_gpu = &w->bodies_gpu[nb];
+                    // memcpy(new_body_cpu, body_cpu, sizeof(cpu_body_data));
+                    // memcpy(new_body_gpu, body_gpu, sizeof(gpu_body_data));
+                    int new_id = new_body_cpu->id;
+                    *new_body_cpu = *body_cpu;
+                    *new_body_gpu = *body_gpu;
+                    new_body_cpu->id = new_id;
+                    new_body_gpu->brain_id = 0;
+                    new_body_cpu->form_id = 0;
+                    new_body_cpu->genome_id = 0;
+                    new_body_cpu->materials = (body_cell*) dynamic_alloc(size.x*size.y*size.z*sizeof(body_cell));
+                    memset(new_body_cpu->materials, 0, size.x*size.y*size.z*sizeof(body_cell));
+
+                    new_body_cpu->is_root = true;
+                    new_body_cpu->root = new_body_cpu->id;
+                }
+                else
+                {
+                    nb = b;
+                    new_body_cpu = body_cpu;
+                    new_body_gpu = body_gpu;
+                }
+
+                real_3 x_cm = {};
+
+                new_body_cpu->I = {};
+                new_body_gpu->m = 0;
+
+                //TODO: split joints correctly
+
+                int new_n_cells = 0;
+                n_stack = 0;
+                stack[n_stack++] = i;
+                found_cells[i/8] |= 1<<(i%8);
+                while(n_stack > 0)
+                {
+                    int c = stack[--n_stack];
+                    new_n_cells++;
+                    int_3 p = {c%size.x, (c/size.x)%size.y, c/(size.x*size.y)};
+                    for(int d = 0; d < 6; d++)
+                    {
+                        int_3 dp = (d%2?-1:1)*(int_3){d/2==0, d/2==1, d/2==2};
+                        int_3 n = p+dp;
+                        if(!is_inside(n, {{}, size})) continue;
+                        // int j = c+dp.x+size.x*dp.y+size.x*size.y*dp.z;
+                        int j = index_3D(n, size);
+                        if((found_cells[j/8]>>(j%8))&1) continue;
+                        found_cells[j/8] |= 1<<(j%8);
+                        if(body_cpu->materials[j].material==0) continue;
+                        stack[n_stack++] = j;
+                    }
+
+                    uint material_id = body_cpu->materials[c].material;
+                    bool is_cell = material_id >= BASE_CELL_MAT;
+
+                    if(g)
+                    {
+                        if(is_cell) material_id += body_gpu->cell_material_id;
+                    }
+
+                    real cell_mass = materials_list[material_id].density;
+                    real_3 pos = (real_3){0.5,0.5,0.5}+real_cast(p+new_body_cpu->region.l);
+
+                    new_body_gpu->m += cell_mass;
+
+                    x_cm += cell_mass*pos;
+
+                    real_3 r_cm = pos - new_body_gpu->x_cm;
+
+                    new_body_cpu->I += real_identity_3(cell_mass*(1.0f/6.0f+normsq(r_cm)));
+                    for(int i = 0; i < 3; i++)
+                        for(int j = 0; j < 3; j++)
+                            new_body_cpu->I[i][j] += -cell_mass*r_cm[i]*r_cm[j];
+
+                    if(n_splits > 1)
+                    {
+                        new_body_cpu->materials[c] = body_cpu->materials[c];
+                        body_cpu->materials[c] = {};
+                    }
+                }
+
+                x_cm /= new_body_gpu->m;
+                new_body_gpu->x_cm = x_cm;
+
+                assert(new_n_cells != 0 && new_body_gpu->m != 0, "n_splits = ", n_splits);
+
+                update_inertia(new_body_cpu, new_body_gpu);
+
+                new_body_gpu->x = old_x+apply_rotation(new_body_gpu->orientation, new_body_gpu->x_cm-old_x_cm);
+            }
+
+            if(n_splits == 0) delete_body(w, body_cpu->id);
+            // if(n_splits > 1) log_output("split body id ", body_cpu->id, " into ", n_splits, " parts\n");
+            stunalloc(stack);
+            stunalloc(found_cells);
+        }
     }
 }
 
@@ -2356,8 +2543,6 @@ void update_bodies(memory_manager* manager, world* w, render_data* rd)
     load_bodies_to_gpu(w);
     find_body_contacts(manager, w);
 
-    simulate_body_voxels(w, rd);
-
     for(int c = 0; c < w->n_contacts; c++)
     {
         contact_point* contact = &w->contacts[c];
@@ -2370,6 +2555,10 @@ void update_bodies(memory_manager* manager, world* w, render_data* rd)
     solve_velocity_constraints(manager, w, rd);
     integrate_body_motion(w->bodies_cpu, w->bodies_gpu, w->n_bodies);
     solve_position_constraints(manager, w, rd);
+
+    simulate_body_voxels(w, rd);
+
+    load_bodies_to_gpu(w);
 }
 
 #endif //GAME_COMMON

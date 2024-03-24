@@ -50,6 +50,39 @@ void main()
         float decay_fraction = 0.05*dot(mix(texel_color, new_color.rgb/new_color.a, 0.02), vec3(1)); //update more slowly for low light levels
         texel_color = mix(texel_color, new_color.rgb/new_color.a, decay_fraction*new_color.a);
     }
+
+    // //mix with neighboring probes
+    // ivec3 probe_pos = ivec3(probe_i%lightprobes_per_axis,(probe_i/lightprobes_per_axis)%lightprobes_per_axis, probe_i/(lightprobes_per_axis*lightprobes_per_axis));
+
+    // vec3 neighbor_texel_color = vec3(0.0);
+    // ivec3 strides = ivec3(1,lightprobes_per_axis,lightprobes_per_axis*lightprobes_per_axis);
+
+    // ivec3 e_pos = probe_pos+ivec3(+1,0,0);
+    // int e_index = int(dot(e_pos, strides));
+    // ivec2 e_coord = ivec2(e_index%lightprobes_w,e_index/lightprobes_w);
+    // neighbor_texel_color += texelFetch(lightprobe_color, lightprobe_padded_resolution*e_coord+1+o, 0).rgb;
+    // ivec3 w_pos =  probe_pos+ivec3(-1,0,0);
+    // int w_index = int(dot(w_pos, strides));
+    // ivec2 w_coord = ivec2(w_index%lightprobes_w,w_index/lightprobes_w);
+    // neighbor_texel_color += texelFetch(lightprobe_color, lightprobe_padded_resolution*w_coord+1+o, 0).rgb;
+    // ivec3 n_pos =  probe_pos+ivec3(0,+1,0);
+    // int n_index = int(dot(n_pos, strides));
+    // ivec2 n_coord = ivec2(n_index%lightprobes_w,n_index/lightprobes_w);
+    // neighbor_texel_color += texelFetch(lightprobe_color, lightprobe_padded_resolution*n_coord+1+o, 0).rgb;
+    // ivec3 s_pos =  probe_pos+ivec3(0,-1,0);
+    // int s_index = int(dot(s_pos, strides));
+    // ivec2 s_coord = ivec2(s_index%lightprobes_w,s_index/lightprobes_w);
+    // neighbor_texel_color += texelFetch(lightprobe_color, lightprobe_padded_resolution*s_coord+1+o, 0).rgb;
+    // ivec3 u_pos =  probe_pos+ivec3(0,0,+1);
+    // int u_index = int(dot(u_pos, strides));
+    // ivec2 u_coord = ivec2(u_index%lightprobes_w,u_index/lightprobes_w);
+    // neighbor_texel_color += texelFetch(lightprobe_color, lightprobe_padded_resolution*u_coord+1+o, 0).rgb;
+    // ivec3 d_pos =  probe_pos+ivec3(0,0,-1);
+    // int d_index = int(dot(d_pos, strides));
+    // ivec2 d_coord = ivec2(d_index%lightprobes_w,d_index/lightprobes_w);
+    // neighbor_texel_color += texelFetch(lightprobe_color, lightprobe_padded_resolution*d_coord+1+o, 0).rgb;
+    // texel_color = mix(texel_color, neighbor_texel_color/6.0, 0.001);
+
     imageStore(lightprobe_color_out, texel_coord+o, vec4(texel_color, 1));
 
     ivec2 o1 = ivec2(o.x, lightprobe_resolution-1-o.y);

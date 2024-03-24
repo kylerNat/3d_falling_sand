@@ -468,7 +468,7 @@ void gl_init_buffers()
 
     glGenBuffers(1, &beam_buffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, beam_buffer);
-    glBufferStorage(GL_SHADER_STORAGE_BUFFER, sizeof(int)+N_MAX_BEAMS*sizeof(beam_data), 0, GL_DYNAMIC_STORAGE_BIT);
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, sizeof(int)+N_MAX_BEAMS*sizeof(beam_data), 0, GL_DYNAMIC_STORAGE_BIT|GL_CLIENT_STORAGE_BIT);
 
     glGenBuffers(1, &rays_in_buffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, rays_in_buffer);
@@ -2178,6 +2178,9 @@ void update_beams(world* w)
     glDispatchCompute(w->n_beams,1,1);
 
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, beam_buffer);
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(beam_data)*w->n_beams, w->beams);
 }
 
 void simulate_world_cells(world* w, int update_cells)

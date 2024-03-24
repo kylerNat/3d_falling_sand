@@ -207,7 +207,7 @@ void init_materials_list()
         mat->friction = 1;
         mat->restitution = 0.5;
 
-        mat->melting_point = 256;
+        mat->melting_point = 200;
         mat->boiling_point = 256;
         mat->heat_capacity = 1.0;
         mat->thermal_conductivity = 0.05;
@@ -249,6 +249,84 @@ void init_materials_list()
         material_t* mat = materials_list+n_materials++;
         *mat = base_material;
 
+        mat->name = "red light";
+        mat->id = str_to_id("RLMP");
+
+        //physical
+        mat->density = 0.001;
+        mat->hardness = 1;
+        mat->friction = 1;
+        mat->restitution = 0.5;
+
+        mat->melting_point = 256;
+        mat->boiling_point = 256;
+        mat->heat_capacity = 1.0;
+        mat->thermal_conductivity = 0.05;
+
+        //visual
+        mat->base_color = {0,0,0};
+        mat->emission = {1,0,0};
+        mat->roughness = 1.0f;
+        mat->metalicity = 0.0f;
+        mat->opacity = 1;
+    }
+
+    {
+        material_t* mat = materials_list+n_materials++;
+        *mat = base_material;
+
+        mat->name = "green light";
+        mat->id = str_to_id("GLMP");
+
+        //physical
+        mat->density = 0.001;
+        mat->hardness = 1;
+        mat->friction = 1;
+        mat->restitution = 0.5;
+
+        mat->melting_point = 256;
+        mat->boiling_point = 256;
+        mat->heat_capacity = 1.0;
+        mat->thermal_conductivity = 0.05;
+
+        //visual
+        mat->base_color = {0,0,0};
+        mat->emission = {0,1,0};
+        mat->roughness = 1.0f;
+        mat->metalicity = 0.0f;
+        mat->opacity = 1;
+    }
+
+    {
+        material_t* mat = materials_list+n_materials++;
+        *mat = base_material;
+
+        mat->name = "blue light";
+        mat->id = str_to_id("BLMP");
+
+        //physical
+        mat->density = 0.001;
+        mat->hardness = 1;
+        mat->friction = 1;
+        mat->restitution = 0.5;
+
+        mat->melting_point = 256;
+        mat->boiling_point = 256;
+        mat->heat_capacity = 1.0;
+        mat->thermal_conductivity = 0.05;
+
+        //visual
+        mat->base_color = {0,0,0};
+        mat->emission = {0,0,1};
+        mat->roughness = 1.0f;
+        mat->metalicity = 0.0f;
+        mat->opacity = 1;
+    }
+
+    {
+        material_t* mat = materials_list+n_materials++;
+        *mat = base_material;
+
         mat->name = "glass";
         mat->id = str_to_id("GLSS");
 
@@ -258,7 +336,7 @@ void init_materials_list()
         mat->friction = 1;
         mat->restitution = 0.5;
 
-        mat->melting_point = 256;
+        mat->melting_point = 200;
         mat->boiling_point = 256;
         mat->heat_capacity = 1.0;
         mat->thermal_conductivity = 0.05;

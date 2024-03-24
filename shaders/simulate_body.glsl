@@ -157,6 +157,7 @@ void main()
 
         collision_cell cell = collision_grid[cell_coord.x+collision_cells_per_axis*(cell_coord.y+collision_cells_per_axis*cell_coord.z)];
 
+        //collide with other bodies
         for(int ci = cell.first_index; ci < cell.first_index+cell.n_bodies; ci++)
         {
             int bi1 = collision_indices[ci];

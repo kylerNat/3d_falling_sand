@@ -278,7 +278,7 @@ void simulate_voxel(ivec3 pos, ivec3 rpos)
     // temp = clamp(temp+abs((volt-int(volt(c)))), 0u, 255u);
     temp = clamp(temp+volt, 0u, 255u);
 
-    if(mat(c) == 6 && temp < 128) c.r = 0;
+    // if(mat(c) == 6 && temp < 128) c.r = 0;
 
     uint phase = phase_solid;
     if(hardness(mat(c)) == 0.0

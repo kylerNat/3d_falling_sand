@@ -43,7 +43,7 @@ void main()
     vec3 pos = depth*ray_dir;
 
     float sample_r = 2;
-    int n_samples = 16;
+    int n_samples = 4;
     float occlusion = 0.0;
     float max_dist = sample_r*1.5;
     for(int i = 0; i < n_samples; i++)

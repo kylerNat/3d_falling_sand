@@ -963,6 +963,8 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                 int sand = get_material_index("SAND");
                 int wall_mat = get_material_index("WALL");
                 int light = get_material_index("LAMP");
+                int red_light = get_material_index("RLMP");
+                int blue_light = get_material_index("BLMP");
                 int glass = get_material_index("GLSS");
 
                 int material = 0;
@@ -1000,9 +1002,15 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     // if(room_size-z <= 10) material = wall_mat;
                 }
 
+                if(z > 400 && x < 20 && material == 0) material = y >= 256 ? red_light : blue_light;
+
                 int glass_thickness = 3;
                 if(x > 400 && y > 400 && z > 100 && z < 200 &&
-                   (x < 400+glass_thickness || y < 400+glass_thickness || z < 100+glass_thickness)) material = glass;
+                   (x < 400+glass_thickness || y < 400+glass_thickness || z < 100+glass_thickness))
+                    material = glass;
+
+                if(x >= 400+glass_thickness && y >= 400+glass_thickness && z >= 100+glass_thickness && z < 180 && material == 0)
+                    material = water;
 
                 //inner walls
                 int wall_thickness = 20;
@@ -1122,9 +1130,9 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
                     if(x_middle && y_middle) material = 3;
                     if(y_middle && z_middle) material = 3;
                     if(z_middle && x_middle) material = 3;
-                    if(material == 3 && (x+y+z)%2==0 && (z <= 0 || z >= unpadded_size.z-1)) material = 1;
-                    if(material == 3 && (x+y+z)%2==0 && (x <= 0 || x >= unpadded_size.x-1)) material = 1;
-                    if(material == 3 && (x+y+z)%2==0 && (y <= 0 || y >= unpadded_size.y-1)) material = 1;
+                    if(material == 3 && (x+y+z)%2==0 && (z <= 0 || z >= unpadded_size.z-1)) material = 2;
+                    if(material == 3 && (x+y+z)%2==0 && (x <= 0 || x >= unpadded_size.x-1)) material = 2;
+                    if(material == 3 && (x+y+z)%2==0 && (y <= 0 || y >= unpadded_size.y-1)) material = 2;
 
                     // if(abs(y - 12) > 2 || abs(x - 12) > 2) material = 0;
 
@@ -1383,7 +1391,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
                     real_3 r = {x+0.5,y+0.5,z+0.5};
                     r += -body_gpu->x_cm;
-                    body_cpu->I += real_identity_3(m*(0.4*sq(0.5)+normsq(r)));
+                    body_cpu->I += real_identity_3(m*(1.0f/6.0f+normsq(r)));
                     for(int i = 0; i < 3; i++)
                         for(int j = 0; j < 3; j++)
                             body_cpu->I[i][j] += -m*r[i]*r[j];
@@ -1578,6 +1586,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
     bool do_draw_lightprobes = false;
     bool show_fps = true;
+    bool use_ssao = true;
     real smoothed_frame_time = 1.0;
 
     bool step_mode = false;
@@ -1683,6 +1692,7 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
             if(is_pressed('P', &wnd.input)) do_draw_lightprobes = !do_draw_lightprobes;
             if(is_pressed(VK_F1, &wnd.input)) show_fps = !show_fps;
+            if(is_pressed(VK_F4, &wnd.input)) use_ssao = !use_ssao;
 
             /*NOTE FOR NEXT TIME:
               render at lower resolution, use that for lighting/reflection info,
@@ -1721,6 +1731,13 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 
             render_world(rd.camera_axes, rd.camera_pos);
 
+            if(w.edit_mode)
+            {
+                glDisable(GL_BLEND);
+                render_editor_voxels(&w.editor);
+                glEnable(GL_BLEND);
+            }
+
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
             glDrawBuffers(1, buffers);
 
@@ -1753,33 +1770,16 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         // }
         // glEnable(GL_DEPTH_TEST);
 
-        if(w.edit_mode)
-        {
-            glDisable(GL_DEPTH_TEST);
-            render_editor_voxels(&w.editor);
-            glEnable(GL_DEPTH_TEST);
-        }
-
         glDisable(GL_DEPTH_TEST);
         draw_circles(rd.circles, rd.n_circles, rd.camera);
-        draw_circles(ui.circles, ui.n_circles, ui.camera);
         draw_rectangles(rd.rectangles, rd.n_rectangles, rd.camera);
-        draw_rectangles(ui.rectangles, ui.n_rectangles, ui.camera);
         draw_sprites(rd.sprites, rd.n_sprites, rd.camera);
-        draw_sprites(ui.sprites, ui.n_sprites, ui.camera);
 
         uint line_points_offset = 0;
         for(int l = 0; l < rd.n_lines; l++)
         {
             draw_round_line(manager, rd.line_points+line_points_offset, rd.n_line_points[l], rd.camera);
             line_points_offset += rd.n_line_points[l];
-        }
-
-        line_points_offset = 0;
-        for(int l = 0; l < ui.n_lines; l++)
-        {
-            draw_round_line(manager, ui.line_points+line_points_offset, ui.n_line_points[l], ui.camera);
-            line_points_offset += ui.n_line_points[l];
         }
         glEnable(GL_DEPTH_TEST);
 
@@ -1791,14 +1791,6 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         draw_rings(w.editor.rd.rings, w.editor.rd.n_rings, w.editor.rd.camera, w.editor.rd.camera_axes, w.editor.rd.camera_pos);
         draw_spheres(w.editor.rd.spheres, w.editor.rd.n_spheres, w.editor.rd.camera, w.editor.rd.camera_axes, w.editor.rd.camera_pos);
         draw_line_3ds(w.editor.rd.line_3ds, w.editor.rd.n_line_3ds, w.editor.rd.camera, w.editor.rd.camera_axes, w.editor.rd.camera_pos);
-
-        glDisable(GL_CULL_FACE);
-
-        if(do_draw_lightprobes)
-        {
-            glClear(GL_DEPTH_BUFFER_BIT);
-            draw_lightprobes(rd.camera);
-        }
 
         // glClear(GL_DEPTH_BUFFER_BIT);
         // draw_particles(rd.camera);
@@ -1812,13 +1804,34 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
         smoothed_frame_time = lerp(smoothed_frame_time, frame_time, 0.03);
         sprintf(frame_time_text, "%2.1f ms\n%2.1f fps", smoothed_frame_time*1000.0f, 1.0f/smoothed_frame_time);
 
+        glDisable(GL_CULL_FACE);
+
+        if(do_draw_lightprobes)
+        {
+            glClear(GL_DEPTH_BUFFER_BIT);
+            draw_lightprobes(rd.camera);
+        }
+
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, window_width, window_height);
         glDisable(GL_DEPTH_TEST);
-        // draw_to_screen(color_texture);
-        draw_to_screen_ssao(color_texture, depth_texture, normal_texture);
+        if(use_ssao && ! do_draw_lightprobes) draw_to_screen_ssao(color_texture, depth_texture, normal_texture);
+        else         draw_to_screen(color_texture);
+
+        glDisable(GL_DEPTH_TEST);
+        draw_circles(ui.circles, ui.n_circles, ui.camera);
+        draw_rectangles(ui.rectangles, ui.n_rectangles, ui.camera);
+        draw_sprites(ui.sprites, ui.n_sprites, ui.camera);
+
+        line_points_offset = 0;
+        for(int l = 0; l < ui.n_lines; l++)
+        {
+            draw_round_line(manager, ui.line_points+line_points_offset, ui.n_line_points[l], ui.camera);
+            line_points_offset += ui.n_line_points[l];
+        }
+        glEnable(GL_DEPTH_TEST);
 
         // if(show_fps) draw_debug_text(frame_time_text, -1080/5+10, 720/5-10);
         if(show_fps) draw_text(frame_time_text, -(1.0*window_width/window_height)+0.15, 0.95, {1,1,1,1}, {}, font);

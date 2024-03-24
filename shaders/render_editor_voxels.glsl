@@ -18,6 +18,7 @@ void main()
 #include "include/header.glsl"
 
 layout(location = 0) out vec4 frag_color;
+layout(location = 1) out vec3 normal_out;
 
 layout(location = 0) uniform mat3 camera_axes;
 layout(location = 1) uniform vec3 camera_pos;
@@ -174,6 +175,7 @@ void main()
     if(hit)
     {
         gl_FragDepth = 1.0f/total_dist;
+        normal_out = normal*camera_axes;
 
         uint material_id = mat(voxel);
         // float roughness = get_roughness(material_id);
@@ -192,7 +194,8 @@ void main()
 
         frag_color.rgb += fr(material_id, reflection_dir, -ray_dir, normal)*light_value;
 
-        frag_color.rgb *= 1.0-0.2*(int(dot(hit_cell, ivec3(1,1,1)))%2);
+        //checkerboarding for grid
+        // frag_color.rgb *= 1.0-0.2*(int(dot(hit_cell, ivec3(1,1,1)))%2);
     }
     else
     {

@@ -170,16 +170,15 @@ button_state do_image_button(render_data* ui, user_input* input, int sprite, rea
     return {clicked, hovered};
 }
 
-button_state do_color_button(render_data* ui, user_input* input, real_4 color, real_3 x, real_2 r)
+button_state do_color_button(render_data* ui, user_input* input, real_4 color, real_4 background_color, real_3 x, real_2 r)
 {
     bool hovered = all_less_than_eq(x.xy-r, input->mouse) && all_less_than(input->mouse, x.xy+r);
-    real_4 background_color = ui->background_color;
-    if(hovered) background_color = ui->highlight_color;
-    real_4 text_color = ui->foreground_color;
+    real_4 outline_color = ui->foreground_color;
+    if(hovered) outline_color = ui->highlight_color;
 
-    draw_rectangle(ui, x, 1.01*r, text_color);
+    draw_rectangle(ui, x, 1.1*r, outline_color);
     draw_rectangle(ui, x, r, background_color);
-    draw_rectangle(ui, x, 0.75*r, color);
+    draw_rectangle(ui, x, 0.6*r, color);
     bool clicked = (hovered && is_pressed(M1, input));
     if(clicked) input->click_blocked = true;
     return {clicked, hovered};
@@ -338,7 +337,7 @@ void update_editor(editor_data* ed, render_data* ui, user_input* input)
         }
         real_3 pos = current_pos;
         current_pos.y -= button_spacing;
-        button_state bs = do_color_button(ui, input, pad_4(mat->base_color, 1.0f), pos, {button_size, button_size});
+        button_state bs = do_color_button(ui, input, pad_4(mat->base_color, 1.0f), pad_4(mat->emission, 1.0f), pos, {button_size, button_size});
         ui->foreground_color = old_foreground_color;
         ui->background_color = old_background_color;
         if(bs.clicked) new_material = m;
@@ -654,7 +653,7 @@ void update_editor(editor_data* ed, render_data* ui, user_input* input)
                 {
                     static bool erase = false;
                     static bool pending_edit = false;
-                    erase = is_down(VK_SHIFT, input) || (erase && pending_edit);
+                    erase = is_down(VK_SHIFT, input);
                     int_3 pos = erase ? hit.pos : hit.pos-hit.dir;
                     ed->active_cell = pos;
                     if(!input->click_blocked && is_pressed(M1, input))

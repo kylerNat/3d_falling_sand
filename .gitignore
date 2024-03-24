@@ -1,6 +1,8 @@
 /build
 /models
+/data
 /sounds
+/reference
 **/backup
 *.zip
 **/#*.*#

@@ -213,6 +213,21 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
     //     }
     // }
 
+    static bool show_edit_window = false;
+    show_edit_window = show_edit_window!=is_pressed(VK_F5, input);
+    if(show_edit_window)
+    {
+        do_edit_window(ui, input, &w->gew);
+    }
+    // else
+    // {
+    //     if(toggle_edit)
+    //     {
+    //         genome* gn = w->gew.active_genome;
+    //         compile_genome(gn, w->gew.genodes);
+    //     }
+    // }
+
     if(w->edit_mode || w->world_edit_mode)
     {
         real_4 cursor_color = {1,1,1,1};
@@ -808,9 +823,10 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
     if(is_down('C', input))
     {
         real_3 pos = player->x;
-        real radius = 2;
+        real radius = 1;
+        if(is_down(VK_SHIFT, input)) radius = 5;
         pos -= radius*camera_y;
-        w->beams[w->n_beams++] = {pos, -camera_z, radius, 200, 100};
+        w->beams[w->n_beams++] = {pos, -camera_z, radius, 200, 300};
     }
 
     static int current_material = 1;
@@ -822,13 +838,13 @@ void update_game(memory_manager* manager, world* w, render_data* rd, render_data
         }
     }
 
-    // if(is_down(M1, input) && !w->edit_mode && !debug_menu_active)
-    // {
-    //     int brush_size = 50;
-    //     real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
-    //     pos = clamp_per_axis(pos, 0, room_size-brush_size-1);
-    //     set_room_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,1<<5,0,current_material==4?15:0});
-    // }
+    if(is_down(M1, input) && !w->edit_mode && !debug_menu_active)
+    {
+        int brush_size = 10;
+        real_3 pos = player->x-(placement_dist+brush_size/2)*camera_z-(real_3){brush_size/2,brush_size/2,brush_size/2};
+        pos = clamp_per_axis(pos, 0, room_size-brush_size-1);
+        set_room_region(manager, w, w->c, pos, {brush_size, brush_size, brush_size}, {current_material,1<<5,0,0});
+    }
 
     // if(is_down(M3, input) && !w->edit_mode)
     // {
